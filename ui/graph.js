@@ -61,8 +61,8 @@
         const q = nodes[j];
         let dx = q.x - p.x, dy = q.y - p.y;
         let d2 = dx * dx + dy * dy || 0.01;
-        if (d2 > 250000) continue;
-        const f = (1800 / d2) * alpha;
+        if (d2 > 640000) continue;
+        const f = (5200 / d2) * alpha;
         const d = Math.sqrt(d2);
         dx /= d; dy /= d;
         p.vx -= dx * f; p.vy -= dy * f; q.vx += dx * f; q.vy += dy * f;
@@ -72,12 +72,12 @@
     for (const e of edges) {
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const target = e.label === "requires" ? 140 : 90;
+      const target = e.label === "requires" ? 190 : 130;
       const f = ((d - target) / d) * 0.04 * alpha;
       e.a.vx += dx * f; e.a.vy += dy * f; e.b.vx -= dx * f; e.b.vy -= dy * f;
     }
     for (const p of nodes) {
-      p.vx -= p.x * 0.004 * alpha; p.vy -= p.y * 0.004 * alpha; // gravity
+      p.vx -= p.x * 0.0025 * alpha; p.vy -= p.y * 0.0025 * alpha; // gravity
       if (p.fixed || p === drag?.node) { p.vx = p.vy = 0; continue; }
       p.vx *= 0.82; p.vy *= 0.82;
       p.x += p.vx; p.y += p.vy;
