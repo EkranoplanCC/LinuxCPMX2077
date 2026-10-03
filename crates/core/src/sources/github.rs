@@ -29,16 +29,85 @@ const MAX_BODY_CHARS: usize = 5000;
 const DOWNLOAD_HOSTS: &[&str] =
     &["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "github-releases.githubusercontent.com"];
 
-/// Well-known mod frameworks and tools hosted on GitHub, shown before the
-/// user searches. (owner/repo, name, what it is)
-pub const FEATURED: &[(&str, &str, &str)] = &[
-    ("maximegmd/CyberEngineTweaks", "Cyber Engine Tweaks", "Scripting framework and in-game console; many mods need it."),
-    ("wopss/RED4ext", "RED4ext", "Script extender that loads native plugins."),
-    ("jac3km4/redscript", "redscript", "Compiler for .reds script mods."),
-    ("psiberx/cp2077-archive-xl", "ArchiveXL", "Loads custom resources and appearances without replacing game files."),
-    ("psiberx/cp2077-tweak-xl", "TweakXL", "Loads tweak (.yaml/.tweak) files that change game records."),
-    ("psiberx/cp2077-codeware", "Codeware", "Library that extends what redscript and CET mods can do."),
+/// A well-known framework hosted on GitHub, shown before the user searches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Featured {
+    /// `owner/repo`.
+    pub repo: &'static str,
+    pub name: &'static str,
+    /// What it is, in one line.
+    pub what: &'static str,
+    /// Id in [`crate::game::detect_frameworks`].
+    pub key: &'static str,
+    /// Keys of the frameworks it needs to load.
+    pub requires: &'static [&'static str],
+}
+
+/// Well-known mod frameworks hosted on GitHub, in the order they install
+/// (each after what it needs).
+pub const FEATURED: &[Featured] = &[
+    Featured {
+        repo: "maximegmd/CyberEngineTweaks",
+        name: "Cyber Engine Tweaks",
+        what: "Scripting framework and in-game console; many mods need it.",
+        key: "cet",
+        requires: &[],
+    },
+    Featured { repo: "wopss/RED4ext", name: "RED4ext", what: "Script extender that loads native plugins.", key: "red4ext", requires: &[] },
+    Featured { repo: "jac3km4/redscript", name: "redscript", what: "Compiler for .reds script mods.", key: "redscript", requires: &[] },
+    Featured {
+        repo: "psiberx/cp2077-archive-xl",
+        name: "ArchiveXL",
+        what: "Loads custom resources and appearances without replacing game files.",
+        key: "archivexl",
+        requires: &["red4ext"],
+    },
+    Featured {
+        repo: "psiberx/cp2077-tweak-xl",
+        name: "TweakXL",
+        what: "Loads tweak (.yaml/.tweak) files that change game records.",
+        key: "tweakxl",
+        requires: &["red4ext"],
+    },
+    Featured {
+        repo: "psiberx/cp2077-codeware",
+        name: "Codeware",
+        what: "Library that extends what redscript and CET mods can do.",
+        key: "codeware",
+        requires: &["red4ext", "redscript"],
+    },
 ];
+
+fn featured_by_key(key: &str) -> Option<&'static Featured> {
+    FEATURED.iter().find(|f| f.key.eq_ignore_ascii_case(key))
+}
+
+fn featured_by_repo(repo: &str) -> Option<&'static Featured> {
+    FEATURED.iter().find(|f| f.repo.eq_ignore_ascii_case(repo))
+}
+
+/// The frameworks to install for `wanted` (keys or `owner/repo`), with
+/// everything they need that isn't in `present` (installed framework keys),
+/// each after its requirements. Wanted frameworks are kept even if present,
+/// so a reinstall stays possible.
+pub fn install_plan(wanted: &[String], present: &[String]) -> Result<Vec<&'static Featured>> {
+    let is_present = |k: &str| present.iter().any(|p| p.eq_ignore_ascii_case(k));
+    let mut need: Vec<&'static Featured> = Vec::new();
+    let mut stack = Vec::new();
+    for w in wanted {
+        let f = featured_by_key(w).or_else(|| featured_by_repo(w)).ok_or_else(|| Error::Other(format!("{w} is not a known framework")))?;
+        stack.push((f, true));
+    }
+    while let Some((f, explicit)) = stack.pop() {
+        if need.contains(&f) || (!explicit && is_present(f.key)) {
+            continue;
+        }
+        need.push(f);
+        stack.extend(f.requires.iter().filter_map(|k| featured_by_key(k)).map(|d| (d, false)));
+    }
+    // FEATURED lists requirements first, so its order is an install order.
+    Ok(FEATURED.iter().filter(|f| need.contains(f)).collect())
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RepoCard {
@@ -438,6 +507,7 @@ impl GitHubSource {
             updated: card.updated,
             category: category.map(String::from),
             tags: card.topics.clone(),
+            requires: vec![],
             url: card.url.clone(),
         }
     }
@@ -469,6 +539,11 @@ impl GitHubSource {
     }
 }
 
+/// Display names of what `f` needs.
+fn requires_names(f: &Featured) -> Vec<String> {
+    f.requires.iter().filter_map(|k| featured_by_key(k)).map(|d| d.name.to_string()).collect()
+}
+
 fn split_ref(id: &str) -> Result<(String, String)> {
     parse_repo_ref(id).ok_or_else(|| Error::Other(format!("not a GitHub repository: {id}")))
 }
@@ -487,20 +562,21 @@ impl ModSource for GitHubSource {
     fn featured(&self) -> Result<Vec<Listing>> {
         Ok(FEATURED
             .iter()
-            .filter_map(|(repo, name, what)| {
-                let (owner, repo_name) = parse_repo_ref(repo)?;
+            .filter_map(|f| {
+                let (owner, repo_name) = parse_repo_ref(f.repo)?;
                 Some(Listing {
                     source: "github".into(),
                     id: format!("{owner}/{repo_name}"),
-                    name: (*name).into(),
+                    name: f.name.into(),
                     author: Some(owner.clone()),
-                    summary: Some((*what).into()),
+                    summary: Some(f.what.into()),
                     version: None,
                     popularity: None,
                     downloads: None,
                     updated: None,
                     category: Some("Framework".into()),
                     tags: vec![],
+                    requires: requires_names(f),
                     url: format!("https://github.com/{owner}/{repo_name}"),
                 })
             })
@@ -527,10 +603,11 @@ impl ModSource for GitHubSource {
         let (owner, repo) = split_ref(id)?;
         let card = self.client.repo(&owner, &repo)?;
         let releases = self.client.releases(&owner, &repo)?;
-        let featured = FEATURED.iter().find(|(r, ..)| r.eq_ignore_ascii_case(&card.repo));
+        let featured = featured_by_repo(&card.repo);
         let mut listing = Self::listing(&card, featured.map(|_| "Framework"));
-        if let Some((_, name, _)) = featured {
-            listing.name = (*name).into();
+        if let Some(f) = featured {
+            listing.name = f.name.into();
+            listing.requires = requires_names(f);
         }
         listing.version = releases.iter().find(|r| !r.prerelease).map(|r| r.tag.clone());
         let description = releases
@@ -615,6 +692,32 @@ mod tests {
         assert_eq!(r("a/.."), None);
         assert_eq!(r("a b/c"), None);
         assert_eq!(r("just-a-name"), None);
+    }
+
+    #[test]
+    fn plans_frameworks_with_their_requirements_first() {
+        let keys = |wanted: &[&str], present: &[&str]| {
+            let w: Vec<String> = wanted.iter().map(|s| s.to_string()).collect();
+            let p: Vec<String> = present.iter().map(|s| s.to_string()).collect();
+            install_plan(&w, &p).unwrap().iter().map(|f| f.key).collect::<Vec<_>>()
+        };
+        assert_eq!(keys(&["codeware"], &[]), ["red4ext", "redscript", "codeware"]);
+        assert_eq!(keys(&["codeware"], &["red4ext"]), ["redscript", "codeware"]);
+        assert_eq!(keys(&["archivexl", "tweakxl"], &[]), ["red4ext", "archivexl", "tweakxl"]);
+        assert_eq!(keys(&["psiberx/CP2077-Archive-XL"], &["red4ext"]), ["archivexl"], "by repo, any case");
+        assert_eq!(keys(&["red4ext"], &["red4ext"]), ["red4ext"], "asked for explicitly: reinstall");
+        assert!(install_plan(&["nope".into()], &[]).is_err());
+    }
+
+    #[test]
+    fn featured_order_is_an_install_order() {
+        for (i, f) in FEATURED.iter().enumerate() {
+            for r in f.requires {
+                let at = FEATURED.iter().position(|d| d.key == *r).expect("requirement is featured");
+                assert!(at < i, "{} must come after {r}", f.key);
+            }
+            assert!(crate::game::detect_frameworks(std::path::Path::new("/nonexistent")).iter().any(|d| d.id == f.key));
+        }
     }
 
     #[test]

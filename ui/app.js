@@ -979,6 +979,7 @@ async function runSourceList(id, q) {
     $("#source-list-title").textContent = q.text
       ? `Results for “${q.text}” on ${info.label}${page.total != null ? ` · ${page.total.toLocaleString()} found` : ""}`
       : `Featured on ${info.label}`;
+    $("#install-frameworks").classList.toggle("hidden", !!q.text || !listings.some((l) => l.category === "Framework"));
     $("#source-grid").replaceChildren(...listings.map((l) => listingCard(l, info, installed.has(l.id.toLowerCase()))));
     if (!listings.length) $("#source-grid").append(el("p", { class: "muted" }, "Nothing found."));
     const paged = page && (page.page > 1 || page.has_more);
@@ -1022,6 +1023,16 @@ async function searchSource() {
   await runSourceList(currentSource, { text, page: 1 });
 }
 
+// Queue frameworks (GitHub ids; none = every missing one) with whatever they
+// need first. The queue installs in order, so requirements land first.
+async function installFrameworks(wanted = []) {
+  if (!currentGame) throw "Select a game first";
+  const plan = await invoke("framework_plan", { gameId: currentGame.id, wanted });
+  if (!plan.length) return toast("All core frameworks are already installed");
+  enqueue(plan.map((f) => ({ kind: "source", name: f.name, source: f.source, ref: f.id })));
+}
+
+$("#install-frameworks").addEventListener("click", (e) => busy(e.target, () => installFrameworks()));
 $("#source-search-go").addEventListener("click", (e) => busy(e.target, searchSource));
 $("#source-search").addEventListener("keydown", (e) => {
   if (e.key === "Enter") busy(null, searchSource);
@@ -1078,7 +1089,12 @@ async function showSourceDetails(source, id, replacing = null) {
           l.updated ? el("span", {}, `Updated ${fmtDate(l.updated)}`) : null,
           l.category ? el("span", { class: "badge" }, l.category) : null,
           installed.has(l.id.toLowerCase()) ? el("span", { class: "badge ok" }, "installed") : null),
-        el("p", {}, l.summary || ""))),
+        el("p", {}, l.summary || ""),
+        l.requires.length ? el("p", { class: "muted" }, `Needs ${l.requires.join(" and ")} to load.`) : null,
+        l.requires.length && !replacing ? el("button", {
+          title: `Queue ${l.name} after whatever it needs that this game doesn't have yet`,
+          onclick: (e) => busy(e.target, () => installFrameworks([l.id])),
+        }, "Install with what it needs") : null)),
     replacing ? el("div", { class: "card notice" },
       `The new version has several files. Pick the one that updates ${replacing.name}; the installed version is replaced once it installs.`) : null,
     d.description ? el("h3", {}, "Latest release notes") : null,

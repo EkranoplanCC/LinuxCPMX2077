@@ -811,6 +811,40 @@ async fn source_featured(source: String) -> Result<Vec<sources::Listing>> {
     blocking(move || SOURCES.get(&source)?.featured()).await
 }
 
+#[derive(Serialize)]
+struct PlannedFramework {
+    source: &'static str,
+    id: &'static str,
+    name: &'static str,
+}
+
+/// GitHub frameworks to queue for `wanted`, each after what it needs; skips
+/// requirements the game already has. An empty `wanted` means every featured
+/// framework the game doesn't have yet.
+#[tauri::command]
+async fn framework_plan(app: AppHandle, game_id: i64, wanted: Vec<String>) -> Result<Vec<PlannedFramework>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let row = state.db.lock().unwrap().game(game_id)?;
+        let present: Vec<String> = game::detect_frameworks(std::path::Path::new(&row.path))
+            .into_iter()
+            .filter(|f| f.installed)
+            .map(|f| f.id)
+            .collect();
+        let wanted = if wanted.is_empty() {
+            let missing = sources::github::FEATURED.iter().filter(|f| !present.iter().any(|p| p == f.key));
+            missing.map(|f| f.key.to_string()).collect()
+        } else {
+            wanted
+        };
+        Ok(sources::github::install_plan(&wanted, &present)?
+            .into_iter()
+            .map(|f| PlannedFramework { source: "github", id: f.repo, name: f.name })
+            .collect())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn source_search(source: String, query: SourceQuery) -> Result<ListingPage> {
     blocking(move || SOURCES.get(&source)?.search(&query)).await
@@ -1030,6 +1064,7 @@ fn main() {
             register_nxm_handler,
             source_list,
             source_featured,
+            framework_plan,
             source_search,
             source_resolve,
             source_details,

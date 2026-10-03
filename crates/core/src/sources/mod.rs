@@ -48,6 +48,8 @@ pub struct Listing {
     pub updated: Option<i64>,
     pub category: Option<String>,
     pub tags: Vec<String>,
+    /// Names of frameworks it needs, when the source knows.
+    pub requires: Vec<String>,
     /// The mod's web page (opened with [`crate::desktop::open_url`]).
     pub url: String,
 }
