@@ -55,6 +55,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${name}`));
   if (name === "downloads") loadDownloads();
   if (name === "analysis") runAnalysis();
+  if (name === "graph" && currentGame) busy(null, async () => window.showGraph(await invoke("analyze_game", { gameId: currentGame.id })));
 }
 
 // ---- game ---------------------------------------------------------------

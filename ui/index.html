@@ -24,6 +24,7 @@
     <nav>
       <button data-tab="mods" class="active">Installed mods</button>
       <button data-tab="analysis">Compatibility</button>
+      <button data-tab="graph">Graph</button>
       <button data-tab="nexus">Nexus Mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
@@ -59,6 +60,21 @@
         <thead><tr><th>Mod</th><th>Game resources</th><th>Replaces base game</th><th>Script hooks</th><th>Tweaks</th><th>Needs</th></tr></thead>
         <tbody id="mod-summary"></tbody>
       </table>
+    </section>
+
+    <section id="tab-graph" class="tab">
+      <header>
+        <h2>How your mods connect</h2>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
+          <button id="graph-reset">Re-layout</button>
+        </div>
+      </header>
+      <div id="graph-wrap">
+        <canvas id="graph"></canvas>
+        <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
+        <div id="graph-legend"></div>
+      </div>
     </section>
 
     <section id="tab-nexus" class="tab">
@@ -153,5 +169,6 @@
 
   <div id="toast" class="hidden"></div>
   <script src="app.js"></script>
+  <script src="graph.js"></script>
 </body>
 </html>
