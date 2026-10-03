@@ -3,6 +3,9 @@
 A Linux-native mod manager for Cyberpunk 2077 running under Proton (Steam) or
 Heroic (GOG), shipped as an AppImage.
 
+Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases),
+make it executable (`chmod +x`) and run it.
+
 ![screenshot](docs/screenshot.png)
 
 ## What works in v0.1
@@ -115,7 +118,9 @@ cd src-tauri && cargo tauri build --bundles appimage
 ```
 
 The AppImage lands in `target/release/bundle/appimage/`. CI builds it on every
-push (see `.github/workflows/build.yml`).
+push (see `.github/workflows/build.yml`). Pushing a version tag that matches
+the version in `src-tauri/tauri.conf.json` (e.g. `v0.1.0`) publishes that
+build as a release, with a SHA256SUMS file.
 
 ## Layout
 
