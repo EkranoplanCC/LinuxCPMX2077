@@ -112,14 +112,48 @@
         </div>
       </div>
       <div id="nexus-user" class="card hidden"></div>
-      <div class="card">
-        <p>Paste a mod page URL or ID, or an <code>nxm://</code> link from the “Mod Manager Download” button.</p>
-        <div class="row">
-          <input id="nexus-query" placeholder="https://www.nexusmods.com/cyberpunk2077/mods/107  or  nxm://…">
-          <button id="nexus-go" class="primary">Look up</button>
+      <div id="nexus-browse" class="hidden">
+        <div class="card">
+          <div class="row">
+            <input id="nexus-search" type="search" placeholder="Search Cyberpunk 2077 mods by name" maxlength="100">
+            <select id="nexus-sort" class="inline">
+              <option value="relevance">Best match</option>
+              <option value="endorsements">Most endorsed</option>
+              <option value="downloads">Most downloaded</option>
+              <option value="updated">Recently updated</option>
+              <option value="created">Newest</option>
+            </select>
+            <button id="nexus-search-go" class="primary">Search</button>
+          </div>
+          <div class="row chips">
+            <button data-list="trending">Trending</button>
+            <button data-list="latest_added">Latest added</button>
+            <button data-list="latest_updated">Latest updated</button>
+            <button data-sort="endorsements">Most endorsed</button>
+            <button data-sort="downloads">Most downloaded</button>
+            <span class="spacer"></span>
+            <span id="nexus-quota" class="muted"></span>
+          </div>
         </div>
+        <div id="nexus-list">
+          <p id="nexus-list-title" class="muted"></p>
+          <div id="nexus-grid" class="mod-grid"></div>
+          <div id="nexus-pager" class="row hidden">
+            <button id="nexus-prev">Previous</button>
+            <span id="nexus-page" class="muted"></span>
+            <button id="nexus-next">Next</button>
+          </div>
+        </div>
+        <div id="nexus-result" class="hidden"></div>
+        <details class="card">
+          <summary>Have a link?</summary>
+          <p>Paste a mod page URL or ID, or an <code>nxm://</code> link from the “Mod Manager Download” button.</p>
+          <div class="row">
+            <input id="nexus-query" placeholder="https://www.nexusmods.com/cyberpunk2077/mods/107  or  nxm://…">
+            <button id="nexus-go">Look up</button>
+          </div>
+        </details>
       </div>
-      <div id="nexus-result"></div>
     </section>
 
     <section id="tab-downloads" class="tab">
@@ -153,6 +187,10 @@
           <input id="sso-slug" placeholder="application slug">
           <button id="save-slug">Save</button>
         </div>
+      </div>
+      <div class="card">
+        <h3>Nexus browsing</h3>
+        <label class="check"><input type="checkbox" id="show-adult"> Show mods marked as adult content</label>
       </div>
       <div class="card">
         <h3>Nexus account</h3>

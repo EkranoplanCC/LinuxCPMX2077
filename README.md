@@ -58,9 +58,22 @@ Heroic (GOG), shipped as an AppImage.
   log in on nexusmods.com in your browser and the app receives an API key; your
   password never goes through the app. Pasting a personal API key works too.
   Keys live only in the system keyring (Secret Service), never in a file.
-- **Nexus downloads**: look up mods and files, download directly (Premium) or
-  through “Mod Manager Download” `nxm://` links (free accounts; enable in
-  Settings → Handle nxm:// links).
+- **Browse Nexus Mods in the app**: search by name, sort by best match,
+  endorsements, downloads or date (paged), and open Nexus' Trending, Latest
+  added and Latest updated lists. A mod's page shows its description as plain
+  text, stats and files grouped as on the website (old versions folded away),
+  with mods you already have marked “installed”. Adult-flagged mods are hidden
+  unless you turn them on in Settings.
+- **Nexus downloads**: Premium accounts download and install straight from a
+  mod's file list. Free accounts click “Get from Nexus”, which opens that file
+  on nexusmods.com; its “Mod Manager Download” button sends an `nxm://` link
+  back and the download continues in the app (enable Settings → Handle nxm://
+  links). Pasting a mod URL, ID or `nxm://` link still works.
+- **API quota**: the app reads Nexus' `X-RL-*` rate-limit headers, shows how
+  many requests are left, stops sending when Nexus says the quota is used up
+  (or returns 429) until it resets, and pauses browsing when fewer than 25
+  requests remain so downloads and checksum checks still work. Lists and mod
+  pages are cached for a few minutes.
 
 ### Nexus SSO slug
 

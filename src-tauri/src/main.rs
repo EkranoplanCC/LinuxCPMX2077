@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use cp2077mm_core::archive::Limits;
 use cp2077mm_core::db::{Db, DownloadRow, ModRow, NewMod};
@@ -13,6 +13,7 @@ use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::fomod;
 use cp2077mm_core::install::{FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
 use cp2077mm_core::nexus::{self, NxmLink};
+use cp2077mm_core::nexus_browse::{self, List, ModDetails, Page, Search};
 use cp2077mm_core::{Error, Result, paths, secrets, sso};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -94,9 +95,12 @@ fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| Error::Other("HOME is not set".into()))
 }
 
+/// Quota tracking and the browse cache live as long as the app.
+static NEXUS: LazyLock<Arc<nexus::Shared>> = LazyLock::new(nexus::Shared::new);
+
 fn nexus_client() -> Result<nexus::Client> {
     let (key, _) = secrets::load_api_key()?.ok_or_else(|| Error::Nexus("no Nexus API key set".into()))?;
-    nexus::Client::new(&key)
+    nexus::Client::with_shared(&key, NEXUS.clone())
 }
 
 #[tauri::command]
@@ -319,7 +323,7 @@ async fn nexus_status() -> Result<NexusStatus> {
         let Some((key, storage)) = secrets::load_api_key()? else {
             return Ok(NexusStatus { user: None, storage: None, error: None });
         };
-        match nexus::Client::new(&key)?.validate() {
+        match nexus::Client::with_shared(&key, NEXUS.clone())?.validate() {
             Ok(u) => Ok(NexusStatus { user: Some(u), storage: Some(storage), error: None }),
             Err(e) => Ok(NexusStatus { user: None, storage: Some(storage), error: Some(e.to_string()) }),
         }
@@ -331,8 +335,9 @@ async fn nexus_status() -> Result<NexusStatus> {
 #[tauri::command]
 async fn nexus_set_key(key: String) -> Result<NexusStatus> {
     blocking(move || {
-        let user = nexus::Client::new(&key)?.validate()?;
+        let user = nexus::Client::with_shared(&key, NEXUS.clone())?.validate()?;
         let storage = secrets::store_api_key(&key)?;
+        NEXUS.clear_cache();
         Ok(NexusStatus { user: Some(user), storage: Some(storage), error: None })
     })
     .await
@@ -377,6 +382,7 @@ async fn nexus_sso_login(app: AppHandle) -> Result<NexusStatus> {
         let key = key?;
         let user = nexus::Client::new(&key)?.validate()?;
         let storage = secrets::store_api_key(&key)?;
+        NEXUS.clear_cache();
         Ok(NexusStatus { user: Some(user), storage: Some(storage), error: None })
     })
     .await
@@ -391,7 +397,61 @@ fn nexus_sso_cancel(state: State<'_, AppState>) {
 
 #[tauri::command]
 fn nexus_clear_key() -> Result<()> {
+    NEXUS.clear_cache();
     secrets::delete_api_key()
+}
+
+const SHOW_ADULT_SETTING: &str = "nexus_show_adult";
+
+fn show_adult(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    db.get_setting(SHOW_ADULT_SETTING).ok().flatten().as_deref() == Some("1")
+}
+
+#[tauri::command]
+fn nexus_show_adult(app: AppHandle) -> bool {
+    show_adult(&app)
+}
+
+#[tauri::command]
+fn set_nexus_show_adult(state: State<'_, AppState>, show: bool) -> Result<()> {
+    state.db.lock().unwrap().set_setting(SHOW_ADULT_SETTING, if show { "1" } else { "0" })
+}
+
+/// Nexus' curated lists: trending, latest added, latest updated.
+#[tauri::command]
+async fn nexus_browse_list(app: AppHandle, list: List) -> Result<Page> {
+    blocking(move || nexus_client()?.browse_list(list, show_adult(&app))).await
+}
+
+/// Name search and sorted lists (endorsements, downloads, dates), paged.
+#[tauri::command]
+async fn nexus_search(app: AppHandle, query: Search) -> Result<Page> {
+    blocking(move || nexus_client()?.search(&query, show_adult(&app))).await
+}
+
+#[tauri::command]
+async fn nexus_mod_details(mod_id: i64) -> Result<ModDetails> {
+    blocking(move || nexus_client()?.mod_details(mod_id)).await
+}
+
+/// The API quota as Nexus last reported it.
+#[tauri::command]
+fn nexus_rate() -> nexus::RateLimit {
+    NEXUS.rate()
+}
+
+/// Open a mod's page (or one file on its Files tab) in the browser. The URL
+/// is built here so the UI can't open arbitrary links.
+#[tauri::command]
+fn nexus_open_page(app: AppHandle, mod_id: i64, file_id: Option<i64>) -> Result<()> {
+    if mod_id <= 0 || file_id.is_some_and(|f| f <= 0) {
+        return Err(Error::Nexus("bad mod or file id".into()));
+    }
+    app.opener()
+        .open_url(nexus_browse::mod_page_url(mod_id, file_id), None::<&str>)
+        .map_err(|e| Error::Other(format!("could not open browser: {e}")))
 }
 
 #[tauri::command]
@@ -553,6 +613,13 @@ fn main() {
             nexus_sso_cancel,
             nexus_mod,
             nexus_download,
+            nexus_show_adult,
+            set_nexus_show_adult,
+            nexus_browse_list,
+            nexus_search,
+            nexus_mod_details,
+            nexus_rate,
+            nexus_open_page,
             parse_nxm,
             register_nxm_handler,
             startup_links,

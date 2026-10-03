@@ -1,0 +1,32 @@
+{
+ "name": "Cyber Engine Tweaks",
+ "summary": "A mod.",
+ "description": "[center][size=6][b]Cyber Engine Tweaks[/b][/size][/center]<br />\n<br />\n[size=4]Requirements[/size]<br />[list]\n[*]RED4ext &amp; friends\n[*][url=https://www.nexusmods.com/cyberpunk2077/mods/2380]redscript[/url]\n[/list][img]https://i.imgur.com/abc.png[/img]<script>alert(1)</script>",
+ "picture_url": "https://staticdelivery.nexusmods.com/mods/3333/images/107/107-1600000000-1.png",
+ "mod_downloads": 4123456,
+ "mod_unique_downloads": 800,
+ "uid": 14318922000107,
+ "mod_id": 107,
+ "game_id": 3333,
+ "allow_rating": true,
+ "domain_name": "cyberpunk2077",
+ "category_id": 5,
+ "version": "1.37.1",
+ "endorsement_count": 91234,
+ "created_timestamp": 1607500000,
+ "created_time": "2020-12-09T07:46:40.000+00:00",
+ "updated_timestamp": 1757000000,
+ "updated_time": "2025-09-04T15:33:20.000+00:00",
+ "author": "yamashi",
+ "uploaded_by": "someone",
+ "uploaded_users_profile_url": "https://www.nexusmods.com/users/1",
+ "contains_adult_content": false,
+ "status": "published",
+ "available": true,
+ "user": {
+  "member_id": 1,
+  "member_group_id": 27,
+  "name": "someone"
+ },
+ "endorsement": null
+}

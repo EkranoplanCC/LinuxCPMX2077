@@ -1,0 +1,86 @@
+{
+ "files": [
+  {
+   "id": [
+    98765,
+    3333
+   ],
+   "uid": 14000000098765,
+   "file_id": 98765,
+   "name": "Cyber Engine Tweaks",
+   "version": "1.37.1",
+   "category_id": 1,
+   "category_name": "MAIN",
+   "is_primary": true,
+   "size": 4321,
+   "file_name": "cet_1_37_1-107-1-37-1-1757000000.zip",
+   "uploaded_timestamp": 1757000000,
+   "uploaded_time": "2025-09-04T15:33:20.000+00:00",
+   "mod_version": "1.37.1",
+   "external_virus_scan_url": "https://www.virustotal.com/gui/file/abc",
+   "description": "x",
+   "size_kb": 4321,
+   "size_in_bytes": 4424160,
+   "changelog_html": null,
+   "content_preview_link": "https://file-metadata.nexusmods.com/file/x.json"
+  },
+  {
+   "id": [
+    98000,
+    3333
+   ],
+   "uid": 14000000098000,
+   "file_id": 98000,
+   "name": "CET old",
+   "version": "1.36",
+   "category_id": 4,
+   "category_name": "OLD_VERSION",
+   "is_primary": false,
+   "size": 4321,
+   "file_name": "cet_1_36-107-1-36-1750000000.zip",
+   "uploaded_timestamp": 1757000000,
+   "uploaded_time": "2025-09-04T15:33:20.000+00:00",
+   "mod_version": "1.36",
+   "external_virus_scan_url": "https://www.virustotal.com/gui/file/abc",
+   "description": "x",
+   "size_kb": 4321,
+   "size_in_bytes": 4424160,
+   "changelog_html": null,
+   "content_preview_link": "https://file-metadata.nexusmods.com/file/x.json"
+  },
+  {
+   "id": [
+    98766,
+    3333
+   ],
+   "uid": 14000000098766,
+   "file_id": 98766,
+   "name": "Optional fonts",
+   "version": "1.0",
+   "category_id": 3,
+   "category_name": "OPTIONAL",
+   "is_primary": false,
+   "size": 4321,
+   "file_name": "fonts-107-1-0.7z",
+   "uploaded_timestamp": 1757000000,
+   "uploaded_time": "2025-09-04T15:33:20.000+00:00",
+   "mod_version": "1.0",
+   "external_virus_scan_url": "https://www.virustotal.com/gui/file/abc",
+   "description": "x",
+   "size_kb": 4321,
+   "size_in_bytes": 4424160,
+   "changelog_html": null,
+   "content_preview_link": "https://file-metadata.nexusmods.com/file/x.json"
+  }
+ ],
+ "file_updates": [
+  {
+   "old_file_id": 98000,
+   "new_file_id": 98765,
+   "old_file_name": "a",
+   "new_file_name": "b",
+   "uploaded_timestamp": 1757000000,
+   "uploaded_time": "2025-09-04T15:33:20.000+00:00"
+  }
+ ]
+}

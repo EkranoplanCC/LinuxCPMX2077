@@ -5,15 +5,22 @@
 //! which opens an `nxm://` link that this app handles. Premium accounts can
 //! download straight from the app.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{APP_NAME, APP_VERSION, Error, NEXUS_GAME_DOMAIN, Result, hash};
 
 pub const API_BASE: &str = "https://api.nexusmods.com/v1";
+pub const GRAPHQL_URL: &str = "https://api.nexusmods.com/v2/graphql";
+
+/// Browsing stops when fewer than this many API requests are left, so the
+/// remaining quota still covers downloads and checksum verification.
+pub const BROWSE_RESERVE: u32 = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -37,6 +44,20 @@ pub struct ModInfo {
     pub contains_adult_content: bool,
     pub status: Option<String>,
     pub updated_timestamp: Option<i64>,
+    pub created_timestamp: Option<i64>,
+    pub uploaded_by: Option<String>,
+    pub endorsement_count: Option<i64>,
+    pub mod_downloads: Option<i64>,
+    pub mod_unique_downloads: Option<i64>,
+    pub category_id: Option<i64>,
+    /// BBCode/HTML from the mod page. Never render as HTML.
+    pub description: Option<String>,
+    #[serde(default = "yes")]
+    pub available: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,10 +163,206 @@ pub struct Downloaded {
     pub virus_scan_url: Option<String>,
 }
 
+/// Nexus' API quota as last reported in the `X-RL-*` response headers.
+/// Requests are allowed while either the daily or the hourly allowance has
+/// requests left.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RateLimit {
+    pub hourly_limit: Option<u32>,
+    pub hourly_remaining: Option<u32>,
+    pub hourly_reset: Option<i64>,
+    pub daily_limit: Option<u32>,
+    pub daily_remaining: Option<u32>,
+    pub daily_reset: Option<i64>,
+    /// Unix time before which no request is sent (after a 429 or when both
+    /// allowances are used up).
+    pub blocked_until: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Priority {
+    /// Sign-in, download links and checksum checks: allowed until the quota
+    /// is actually exhausted.
+    Essential,
+    /// Search and lists: stop at [`BROWSE_RESERVE`].
+    Browse,
+}
+
+pub(crate) fn now_unix() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+impl RateLimit {
+    fn header<T: std::str::FromStr>(h: &reqwest::header::HeaderMap, name: &str) -> Option<T> {
+        h.get(name)?.to_str().ok()?.trim().parse().ok()
+    }
+
+    fn reset(h: &reqwest::header::HeaderMap, name: &str) -> Option<i64> {
+        parse_time(h.get(name)?.to_str().ok()?)
+    }
+
+    pub fn update(&mut self, h: &reqwest::header::HeaderMap, now: i64) {
+        if let Some(v) = Self::header(h, "x-rl-hourly-limit") {
+            self.hourly_limit = Some(v);
+        }
+        if let Some(v) = Self::header(h, "x-rl-hourly-remaining") {
+            self.hourly_remaining = Some(v);
+        }
+        if let Some(v) = Self::reset(h, "x-rl-hourly-reset") {
+            self.hourly_reset = Some(v);
+        }
+        if let Some(v) = Self::header(h, "x-rl-daily-limit") {
+            self.daily_limit = Some(v);
+        }
+        if let Some(v) = Self::header(h, "x-rl-daily-remaining") {
+            self.daily_remaining = Some(v);
+        }
+        if let Some(v) = Self::reset(h, "x-rl-daily-reset") {
+            self.daily_reset = Some(v);
+        }
+        if self.hourly_remaining == Some(0) && self.daily_remaining == Some(0) {
+            // The hourly allowance comes back first.
+            let until = self.hourly_reset.filter(|t| *t > now).unwrap_or(now + 3600);
+            self.blocked_until = Some(until);
+        } else if self.blocked_until.is_some_and(|t| t <= now) {
+            self.blocked_until = None;
+        }
+    }
+
+    /// Called on HTTP 429.
+    pub fn throttled(&mut self, h: &reqwest::header::HeaderMap, now: i64) {
+        self.update(h, now);
+        let retry = Self::header::<i64>(h, "retry-after").map(|s| now + s.clamp(1, 86400));
+        let until = retry
+            .or(self.blocked_until.filter(|t| *t > now))
+            .or(self.hourly_reset.filter(|t| *t > now))
+            .unwrap_or(now + 60);
+        self.blocked_until = Some(until);
+    }
+
+    /// Requests left before Nexus starts refusing, if known.
+    pub fn remaining(&self) -> Option<u32> {
+        match (self.hourly_remaining, self.daily_remaining) {
+            (None, None) => None,
+            (h, d) => Some(h.unwrap_or(0).max(d.unwrap_or(0))),
+        }
+    }
+
+    pub fn check(&self, prio: Priority, now: i64) -> Result<()> {
+        if let Some(until) = self.blocked_until.filter(|t| *t > now) {
+            return Err(Error::Nexus(format!(
+                "Nexus API request limit reached; try again in {}",
+                fmt_wait(until - now)
+            )));
+        }
+        if prio == Priority::Browse && self.remaining().is_some_and(|r| r <= BROWSE_RESERVE) {
+            return Err(Error::Nexus(format!(
+                "Only {} Nexus API requests left; browsing is paused to keep them for downloads",
+                self.remaining().unwrap_or(0)
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn fmt_wait(secs: i64) -> String {
+    if secs < 90 {
+        format!("{secs} s")
+    } else if secs < 5400 {
+        format!("{} min", (secs + 59) / 60)
+    } else {
+        format!("{} h", (secs + 1799) / 3600)
+    }
+}
+
+/// Parse the timestamps Nexus uses: `2024-02-01 13:00:00 +0000` in rate-limit
+/// headers and RFC 3339 (`2024-02-01T13:00:00Z`, fractional seconds allowed)
+/// in GraphQL. Returns Unix seconds.
+pub fn parse_time(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let b = s.as_bytes();
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !(b[10] == b'T' || b[10] == b' ') || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d, h, mi, se) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+        return None;
+    }
+    let mut rest = s[19..].trim_start();
+    if let Some(r) = rest.strip_prefix('.') {
+        rest = r.trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    let rest = rest.trim();
+    let offset = match rest {
+        "" | "Z" | "z" | "UTC" => 0,
+        _ => {
+            let r = rest.replace(':', "");
+            let (sign, digits) = match r.as_bytes().first()? {
+                b'+' => (1, &r[1..]),
+                b'-' => (-1, &r[1..]),
+                _ => return None,
+            };
+            if digits.len() != 4 {
+                return None;
+            }
+            let oh: i64 = digits[..2].parse().ok()?;
+            let om: i64 = digits[2..].parse().ok()?;
+            sign * (oh * 3600 + om * 60)
+        }
+    };
+    // Days from civil date (Howard Hinnant's algorithm).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + h * 3600 + mi * 60 + se - offset)
+}
+
+/// State that outlives a single [`Client`]: the quota and a small response
+/// cache for browsing, so flipping between lists doesn't spend requests.
+#[derive(Default)]
+pub struct Shared {
+    pub(crate) rate: Mutex<RateLimit>,
+    cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
+}
+
+impl Shared {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn rate(&self) -> RateLimit {
+        self.rate.lock().unwrap().clone()
+    }
+
+    pub fn clear_cache(&self) {
+        self.cache.lock().unwrap().clear();
+    }
+
+    pub(crate) fn cached(&self, key: &str, ttl: Duration) -> Option<serde_json::Value> {
+        let c = self.cache.lock().unwrap();
+        c.get(key).filter(|(at, _)| at.elapsed() < ttl).map(|(_, v)| v.clone())
+    }
+
+    pub(crate) fn store(&self, key: String, v: serde_json::Value) {
+        let mut c = self.cache.lock().unwrap();
+        if c.len() > 300 {
+            c.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(600));
+        }
+        c.insert(key, (Instant::now(), v));
+    }
+}
+
 pub struct Client {
-    http: reqwest::blocking::Client,
-    api_key: String,
+    pub(crate) http: reqwest::blocking::Client,
+    pub(crate) api_key: String,
     base: String,
+    pub(crate) graphql: String,
+    pub(crate) shared: Arc<Shared>,
 }
 
 /// Only fetch archives from Nexus' own hosts, over HTTPS.
@@ -173,30 +390,67 @@ pub fn safe_file_name(name: &str) -> String {
 
 impl Client {
     pub fn new(api_key: &str) -> Result<Self> {
-        Self::with_base(api_key, API_BASE)
+        Self::with_shared(api_key, Shared::new())
+    }
+
+    /// A client that shares quota tracking and cache with other clients.
+    pub fn with_shared(api_key: &str, shared: Arc<Shared>) -> Result<Self> {
+        Self::with_endpoints(api_key, API_BASE, GRAPHQL_URL, shared)
     }
 
     pub fn with_base(api_key: &str, base: &str) -> Result<Self> {
+        let graphql = format!("{}/v2/graphql", base.trim_end_matches('/').trim_end_matches("/v1"));
+        Self::with_endpoints(api_key, base, &graphql, Shared::new())
+    }
+
+    pub fn with_endpoints(api_key: &str, base: &str, graphql: &str, shared: Arc<Shared>) -> Result<Self> {
         let http = reqwest::blocking::Client::builder()
             .user_agent(format!("{APP_NAME}/{APP_VERSION} (Linux)"))
             .https_only(base.starts_with("https://"))
             .connect_timeout(Duration::from_secs(20))
             .timeout(None)
             .build()?;
-        Ok(Self { http, api_key: api_key.trim().to_string(), base: base.trim_end_matches('/').to_string() })
+        Ok(Self {
+            http,
+            api_key: api_key.trim().to_string(),
+            base: base.trim_end_matches('/').to_string(),
+            graphql: graphql.to_string(),
+            shared,
+        })
     }
 
-    fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, query: &[(&str, String)]) -> Result<T> {
-        let resp = self
-            .http
-            .get(format!("{}{}", self.base, path))
-            .header("apikey", &self.api_key)
+    pub fn rate(&self) -> RateLimit {
+        self.shared.rate()
+    }
+
+    /// Send an API request, honouring and recording Nexus' rate limits.
+    pub(crate) fn send_api(&self, prio: Priority, req: reqwest::blocking::RequestBuilder) -> Result<reqwest::blocking::Response> {
+        self.shared.rate.lock().unwrap().check(prio, now_unix())?;
+        let mut req = req
             .header("Application-Name", APP_NAME)
             .header("Application-Version", APP_VERSION)
             .header("Accept", "application/json")
-            .query(query)
-            .timeout(Duration::from_secs(30))
-            .send()?;
+            .timeout(Duration::from_secs(30));
+        if !self.api_key.is_empty() {
+            req = req.header("apikey", &self.api_key);
+        }
+        let resp = req.send()?;
+        let mut rate = self.shared.rate.lock().unwrap();
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            rate.throttled(resp.headers(), now_unix());
+            let wait = rate.blocked_until.map(|t| fmt_wait(t - now_unix())).unwrap_or_default();
+            return Err(Error::Nexus(format!("429: Nexus API request limit reached; try again in {wait}")));
+        }
+        rate.update(resp.headers(), now_unix());
+        Ok(resp)
+    }
+
+    fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, query: &[(&str, String)]) -> Result<T> {
+        self.get_with(Priority::Essential, path, query)
+    }
+
+    pub(crate) fn get_with<T: for<'de> Deserialize<'de>>(&self, prio: Priority, path: &str, query: &[(&str, String)]) -> Result<T> {
+        let resp = self.send_api(prio, self.http.get(format!("{}{}", self.base, path)).query(query))?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().unwrap_or_default();
