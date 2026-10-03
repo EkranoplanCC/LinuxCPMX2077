@@ -119,8 +119,9 @@ cd src-tauri && cargo tauri build --bundles appimage
 
 The AppImage lands in `target/release/bundle/appimage/`. CI builds it on every
 push (see `.github/workflows/build.yml`). Pushing a version tag that matches
-the version in `src-tauri/tauri.conf.json` (e.g. `v0.1.0`) publishes that
-build as a release, with a SHA256SUMS file.
+the version in `src-tauri/tauri.conf.json` (e.g. `v0.1.0`), or running the
+workflow from the Actions tab with "release" ticked, publishes that build as a
+release with a SHA256SUMS file.
 
 ## Layout
 
