@@ -53,7 +53,8 @@ nav button.active { border-left: 3px solid var(--yellow); background: var(--pane
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
-td.actions { white-space: nowrap; text-align: right; }
+td.actions { text-align: right; }
+td.actions button { margin: 2px 0 2px 4px; }
 code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12px; }
 #frameworks, .warnings { list-style: none; padding: 0; margin: 0; }
 #frameworks li::before { content: "○ "; color: var(--muted); }
@@ -141,3 +142,36 @@ tr.off td { color: var(--muted); }
 tr.off b { font-weight: normal; }
 tr.off .badge { margin-left: 6px; }
 input.switch { width: 16px; height: 16px; accent-color: var(--yellow); cursor: pointer; }
+
+/* Source picker on the Get mods page. */
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; background: var(--panel); padding: 6px 14px; }
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button.active { background: var(--yellow); color: #111; font-weight: 600; }
+.pager { justify-content: center; margin-bottom: 14px; }
+.filters { margin-bottom: 10px; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th.sortable.asc::after { content: " ▲"; font-size: 9px; }
+th.sortable.desc::after { content: " ▼"; font-size: 9px; }
+button.update { border-color: var(--cyan); color: var(--cyan); }
+.mod-card .badge { margin-right: 4px; }
+.notice { border-left: 3px solid var(--cyan); }
+
+/* Download queue and picking several mods. */
+#queue { position: sticky; top: -20px; z-index: 5; border-left: 3px solid var(--yellow); box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+#queue-now { overflow-wrap: anywhere; }
+.queue-track { height: 4px; background: var(--panel-2); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+#queue-bar { height: 100%; width: 0; background: var(--yellow); transition: width .3s; }
+#queue-items { list-style: none; margin: 10px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+#queue-items li { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--border); }
+#queue-items li:first-child { border-top: 0; }
+#queue-items .q-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-head p { margin: 0; }
+.list-head { margin-bottom: 8px; }
+button.select-mode.active { border-color: var(--yellow); color: var(--yellow); }
+.mod-card { position: relative; }
+.mod-card.selected { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.mod-card.selected::after { content: "✓"; position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--yellow); color: #111; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+#select-bar { position: sticky; bottom: -20px; z-index: 4; border-left: 3px solid var(--yellow); box-shadow: 0 -6px 18px rgba(0, 0, 0, .45); }

@@ -497,6 +497,18 @@ impl Client {
 
     /// Download a mod file into `dest_dir` and verify it against Nexus.
     /// `progress` gets (bytes_done, bytes_total).
+    /// Nexus' file hosts, or the API server itself (a test server when the
+    /// client was built with another base).
+    fn allowed_download(&self, u: &str) -> bool {
+        if is_allowed_download_url(u) {
+            return true;
+        }
+        match (url::Url::parse(u), url::Url::parse(&self.base)) {
+            (Ok(u), Ok(b)) => u.scheme() == b.scheme() && u.host_str() == b.host_str() && u.port_or_known_default() == b.port_or_known_default(),
+            _ => false,
+        }
+    }
+
     pub fn download(
         &self,
         mod_id: i64,
@@ -510,7 +522,7 @@ impl Client {
         let links = self.download_links(mod_id, file_id, key, expires)?;
         let link = links
             .iter()
-            .find(|l| is_allowed_download_url(&l.uri))
+            .find(|l| self.allowed_download(&l.uri))
             .ok_or_else(|| Error::Nexus("no download link on an allowed Nexus host".into()))?;
 
         let file_name = safe_file_name(&info.file_name);
@@ -520,7 +532,7 @@ impl Client {
 
         let mut resp = self.http.get(&link.uri).send()?;
         // Redirects must stay on Nexus' hosts too.
-        if !is_allowed_download_url(resp.url().as_str()) {
+        if !self.allowed_download(resp.url().as_str()) {
             return Err(Error::Nexus(format!("download redirected to untrusted host {}", resp.url())));
         }
         if !resp.status().is_success() {
@@ -589,6 +601,29 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::serve;
+
+    #[test]
+    fn free_download_with_nxm_key_is_fetched_and_verified() {
+        // md5("hello world")
+        let md5 = "5eb63bbbe01eeed093cb22bb8f5acdc3";
+        let (base, seen) = serve(vec![
+            ("/download_link.json", 200, vec![], r#"[{"name":"CDN","short_name":"cdn","URI":"{addr}/cdn/f.zip"},{"name":"x","short_name":"x","URI":"https://evil.example/f.zip"}]"#.into()),
+            ("/games/cyberpunk2077/mods/7/files/9.json", 200, vec![], r#"{"file_id":9,"name":"Main","file_name":"f.zip","size_in_bytes":11}"#.into()),
+            ("/cdn/f.zip", 200, vec![], "hello world".into()),
+            ("/md5_search/", 200, vec![], format!(r#"[{{"mod":{{"mod_id":7,"name":"M"}},"file_details":{{"file_id":9,"md5":"{md5}"}}}}]"#)),
+        ]);
+        let c = Client::with_base("k", &base).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let d = c.download(7, 9, Some("abc"), Some(1_900_000_000), dir.path(), |_, _| {}).unwrap();
+        assert!(d.verified);
+        assert_eq!(d.md5, md5);
+        assert_eq!(std::fs::read_to_string(&d.path).unwrap(), "hello world");
+        let seen = seen.lock().unwrap();
+        let link = seen.iter().find(|s| s.line.contains("download_link.json")).unwrap();
+        assert!(link.line.contains("key=abc") && link.line.contains("expires=1900000000"), "{}", link.line);
+        assert!(!is_allowed_download_url(&format!("{base}/cdn/f.zip")), "only the client's own server is let through");
+    }
 
     #[test]
     fn parses_nxm_links() {

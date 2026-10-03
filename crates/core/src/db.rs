@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS mods (
     game_version    TEXT,
     status          TEXT NOT NULL DEFAULT 'installed', -- 'installed' (enabled) | 'disabled'
     installed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    -- More columns are added by MIGRATIONS.
 );
 CREATE TABLE IF NOT EXISTS mod_files (
     mod_id      INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
@@ -92,10 +93,33 @@ CREATE TABLE IF NOT EXISTS downloads (
     sha256         TEXT NOT NULL,
     md5            TEXT NOT NULL,
     size           INTEGER NOT NULL,
-    verified       INTEGER NOT NULL DEFAULT 0, -- md5 matched Nexus' record
+    verified       INTEGER NOT NULL DEFAULT 0, -- checksum matched the source's record
     downloaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    -- More columns are added by MIGRATIONS.
 );
 "#;
+
+/// Columns added after v0.1, as (table, column, declaration). Applied to
+/// existing libraries on open.
+const MIGRATIONS: &[(&str, &str, &str)] = &[
+    // Category shown and sorted on in the mod list.
+    ("mods", "category", "TEXT"),
+    // For sources other than Nexus: the source's id for the mod (e.g.
+    // `owner/repo` on GitHub) and the file that was installed.
+    ("mods", "source_ref", "TEXT"),
+    ("mods", "source_file", "TEXT"),
+    ("downloads", "source", "TEXT NOT NULL DEFAULT 'nexus'"),
+    ("downloads", "source_ref", "TEXT"),
+    ("downloads", "source_file", "TEXT"),
+    ("downloads", "mod_name", "TEXT"),
+    ("downloads", "version", "TEXT"),
+    // Game version current when the file was downloaded.
+    ("downloads", "game_version", "TEXT"),
+    // How the file was verified, e.g. "MD5 matches Nexus".
+    ("downloads", "checked", "TEXT"),
+    // The mod's category, kept for installing the file later.
+    ("downloads", "category", "TEXT"),
+];
 
 pub struct Db {
     pub conn: Connection,
@@ -128,6 +152,9 @@ pub struct ModRow {
     pub status: String,
     pub installed_at: String,
     pub file_count: i64,
+    pub category: Option<String>,
+    pub source_ref: Option<String>,
+    pub source_file: Option<String>,
 }
 
 pub const STATUS_ENABLED: &str = "installed";
@@ -159,9 +186,12 @@ pub struct NewMod {
     pub archive_name: String,
     pub archive_sha256: String,
     pub archive_md5: String,
+    pub category: Option<String>,
+    pub source_ref: Option<String>,
+    pub source_file: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DownloadRow {
     pub id: i64,
     pub nexus_mod_id: Option<i64>,
@@ -173,6 +203,14 @@ pub struct DownloadRow {
     pub size: i64,
     pub verified: bool,
     pub downloaded_at: String,
+    pub source: String,
+    pub source_ref: Option<String>,
+    pub source_file: Option<String>,
+    pub mod_name: Option<String>,
+    pub version: Option<String>,
+    pub game_version: Option<String>,
+    pub checked: Option<String>,
+    pub category: Option<String>,
 }
 
 impl Db {
@@ -198,6 +236,16 @@ impl Db {
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
+        for (table, column, decl) in MIGRATIONS {
+            let exists: bool = conn.query_row(
+                &format!("SELECT count(*) > 0 FROM pragma_table_info('{table}') WHERE name = ?1"),
+                [column],
+                |r| r.get(0),
+            )?;
+            if !exists {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+            }
+        }
         Ok(Self { conn })
     }
 
@@ -268,8 +316,9 @@ impl Db {
     pub fn insert_mod(&self, game: &GameRow, m: &NewMod) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO mods (game_id, name, version, source, nexus_mod_id, nexus_file_id,
-               archive_name, archive_sha256, archive_md5, game_build_id, game_version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+               archive_name, archive_sha256, archive_md5, game_build_id, game_version,
+               category, source_ref, source_file)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 game.id,
                 m.name,
@@ -282,6 +331,9 @@ impl Db {
                 m.archive_md5,
                 game.build_id,
                 game.exe_product_version.clone().or(game.exe_file_version.clone()),
+                m.category,
+                m.source_ref,
+                m.source_file,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -297,7 +349,8 @@ impl Db {
             "SELECT m.id, m.game_id, m.name, m.version, m.source, m.nexus_mod_id, m.nexus_file_id,
                     m.archive_name, m.archive_sha256, m.archive_md5, m.game_build_id, m.game_version,
                     m.status, m.installed_at,
-                    (SELECT count(*) FROM mod_files f WHERE f.mod_id = m.id)
+                    (SELECT count(*) FROM mod_files f WHERE f.mod_id = m.id),
+                    m.category, m.source_ref, m.source_file
              FROM mods m WHERE m.game_id = ?1 ORDER BY m.id",
         )?;
         let rows = st.query_map([game_id], |r| {
@@ -317,6 +370,9 @@ impl Db {
                 status: r.get(12)?,
                 installed_at: r.get(13)?,
                 file_count: r.get(14)?,
+                category: r.get(15)?,
+                source_ref: r.get(16)?,
+                source_file: r.get(17)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -412,16 +468,35 @@ impl Db {
 
     pub fn insert_download(&self, d: &DownloadRow) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO downloads (nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![d.nexus_mod_id, d.nexus_file_id, d.file_name, d.path, d.sha256, d.md5, d.size, d.verified],
+            "INSERT INTO downloads (nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified,
+               source, source_ref, source_file, mod_name, version, game_version, checked, category)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                d.nexus_mod_id,
+                d.nexus_file_id,
+                d.file_name,
+                d.path,
+                d.sha256,
+                d.md5,
+                d.size,
+                d.verified,
+                if d.source.is_empty() { "nexus" } else { d.source.as_str() },
+                d.source_ref,
+                d.source_file,
+                d.mod_name,
+                d.version,
+                d.game_version,
+                d.checked,
+                d.category,
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn downloads(&self) -> Result<Vec<DownloadRow>> {
         let mut st = self.conn.prepare(
-            "SELECT id, nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified, downloaded_at
+            "SELECT id, nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified, downloaded_at,
+                    source, source_ref, source_file, mod_name, version, game_version, checked, category
              FROM downloads ORDER BY id DESC",
         )?;
         let rows = st.query_map([], |r| {
@@ -436,6 +511,14 @@ impl Db {
                 size: r.get(7)?,
                 verified: r.get(8)?,
                 downloaded_at: r.get(9)?,
+                source: r.get(10)?,
+                source_ref: r.get(11)?,
+                source_file: r.get(12)?,
+                mod_name: r.get(13)?,
+                version: r.get(14)?,
+                game_version: r.get(15)?,
+                checked: r.get(16)?,
+                category: r.get(17)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -517,4 +600,52 @@ impl Db {
 
 fn map_file(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModFile> {
     Ok(ModFile { mod_id: r.get(0)?, rel_path: r.get(1)?, staged_path: r.get(2)?, sha256: r.get(3)?, size: r.get(4)? })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_a_v01_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        {
+            // The v0.1 tables, before the source/category columns existed.
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE mods (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, name TEXT NOT NULL, version TEXT,
+                   source TEXT NOT NULL, nexus_mod_id INTEGER, nexus_file_id INTEGER, archive_name TEXT NOT NULL,
+                   archive_sha256 TEXT NOT NULL, archive_md5 TEXT NOT NULL, game_build_id TEXT, game_version TEXT,
+                   status TEXT NOT NULL DEFAULT 'installed', installed_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 CREATE TABLE downloads (id INTEGER PRIMARY KEY, nexus_mod_id INTEGER, nexus_file_id INTEGER,
+                   file_name TEXT NOT NULL, path TEXT NOT NULL, sha256 TEXT NOT NULL, md5 TEXT NOT NULL,
+                   size INTEGER NOT NULL, verified INTEGER NOT NULL DEFAULT 0,
+                   downloaded_at TEXT NOT NULL DEFAULT (datetime('now')));
+                 INSERT INTO downloads (nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified)
+                   VALUES (107, 1, 'cet.zip', '/x/cet.zip', 'aa', 'bb', 3, 1);",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let d = &db.downloads().unwrap()[0];
+        assert_eq!(d.source, "nexus", "old downloads came from Nexus");
+        assert_eq!(d.version, None);
+        db.insert_download(&DownloadRow {
+            file_name: "ArchiveXL.zip".into(),
+            path: "/x/a.zip".into(),
+            sha256: "cc".into(),
+            md5: "dd".into(),
+            size: 1,
+            source: "github".into(),
+            source_ref: Some("psiberx/cp2077-archive-xl".into()),
+            version: Some("1.21.0".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(db.downloads().unwrap()[0].source_ref.as_deref(), Some("psiberx/cp2077-archive-xl"));
+        drop(db);
+        // Opening again doesn't try to add the columns twice.
+        Db::open(&path).unwrap();
+    }
 }

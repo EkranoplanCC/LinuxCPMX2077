@@ -6,6 +6,7 @@ pub mod analysis;
 pub mod archive;
 pub mod crash;
 pub mod db;
+pub mod desktop;
 pub mod error;
 pub mod fomod;
 pub mod game;
@@ -16,7 +17,11 @@ pub mod nexus;
 pub mod nexus_browse;
 pub mod paths;
 pub mod secrets;
+pub mod sources;
 pub mod sso;
+#[cfg(test)]
+mod testutil;
+pub mod updates;
 pub mod vdf;
 
 pub use error::{Error, Result};

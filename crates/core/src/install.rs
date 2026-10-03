@@ -431,6 +431,35 @@ impl Installer<'_> {
         }
     }
 
+    /// Install `p` as the new version of `old`. The old version is taken out
+    /// first so its files don't count as conflicts, and is put back if the
+    /// new one fails to install. A disabled old version stays disabled.
+    pub fn finish_replacing(&self, game: &GameRow, p: &Prepared, opts: InstallOptions, old: i64) -> Result<InstallReport> {
+        let old_mod = self.db.get_mod(old)?;
+        if old_mod.game_id != game.id {
+            return Err(Error::Other(format!("{} belongs to another game install", old_mod.name)));
+        }
+        let was_enabled = old_mod.enabled();
+        if was_enabled {
+            self.disable(old)?;
+        }
+        match self.finish(game, p, opts) {
+            Ok(r) => {
+                self.uninstall(old)?;
+                if !was_enabled {
+                    self.disable(r.mod_id)?;
+                }
+                Ok(r)
+            }
+            Err(e) => {
+                if was_enabled && let Err(back) = self.enable(old, true) {
+                    log::warn!("could not re-enable {} after a failed update: {back}", old_mod.name);
+                }
+                Err(e)
+            }
+        }
+    }
+
     pub fn discard(&self, p: &Prepared) {
         let _ = std::fs::remove_dir_all(&p.dir);
     }
@@ -942,6 +971,47 @@ mod tests {
         inst.uninstall(ra.mod_id).unwrap();
         assert_eq!(std::fs::read(&ini).unwrap(), b"vanilla");
         assert!(!shared.exists());
+    }
+
+    #[test]
+    fn update_replaces_the_old_version_or_rolls_back() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let game_dir = PathBuf::from(&f.game.path);
+        let v1 = f.root.join("v1.zip");
+        zip_with(&v1, &[("archive/pc/mod/x.archive", b"v1"), ("r6/scripts/m/old.reds", b"// old")]);
+        let r1 = inst.install(&f.game, &v1, meta("Mod")).unwrap();
+
+        let v2 = f.root.join("v2.zip");
+        zip_with(&v2, &[("archive/pc/mod/x.archive", b"v2"), ("r6/scripts/m/new.reds", b"// new")]);
+        let p = inst.prepare(&f.game, &v2).unwrap();
+        let mut opts = meta("Mod");
+        opts.meta.version = Some("2.0".into());
+        let r2 = inst.finish_replacing(&f.game, &p, opts, r1.mod_id).unwrap();
+        assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/x.archive")).unwrap(), b"v2");
+        assert!(!game_dir.join("r6/scripts/m/old.reds").exists(), "files the new version dropped are gone");
+        assert!(game_dir.join("r6/scripts/m/new.reds").exists());
+        let mods = f.db.mods(f.game.id).unwrap();
+        assert_eq!(mods.len(), 1);
+        assert_eq!(mods[0].id, r2.mod_id);
+        assert_eq!(mods[0].version.as_deref(), Some("2.0"));
+
+        // A failed update (here: a clash with another mod) puts v2 back.
+        let other = f.root.join("other.zip");
+        zip_with(&other, &[("r6/scripts/m/clash.reds", b"// other")]);
+        inst.install(&f.game, &other, meta("Other")).unwrap();
+        let v3 = f.root.join("v3.zip");
+        zip_with(&v3, &[("archive/pc/mod/x.archive", b"v3"), ("r6/scripts/m/clash.reds", b"// v3")]);
+        let p = inst.prepare(&f.game, &v3).unwrap();
+        let err = inst.finish_replacing(&f.game, &p, meta("Mod"), r2.mod_id).unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/x.archive")).unwrap(), b"v2");
+        assert!(f.db.get_mod(r2.mod_id).unwrap().enabled());
     }
 
     #[test]

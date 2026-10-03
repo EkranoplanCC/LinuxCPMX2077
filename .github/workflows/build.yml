@@ -48,7 +48,7 @@ jobs:
       - name: Name the AppImage and checksum it
         working-directory: target/release/bundle/appimage
         run: |
-          for f in *.AppImage; do mv "$f" "${f// /-}"; done
+          for f in *.AppImage; do [ "$f" = "${f// /-}" ] || mv "$f" "${f// /-}"; done
           sha256sum *.AppImage > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:

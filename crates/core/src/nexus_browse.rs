@@ -35,6 +35,8 @@ pub struct ModCard {
     pub created: Option<i64>,
     pub updated: Option<i64>,
     pub adult: bool,
+    /// Nexus category (v1 lists only; search results don't carry it).
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +82,51 @@ pub struct Search {
     pub offset: u32,
     #[serde(default)]
     pub count: u32,
+    /// Only mods in this Nexus category (by name, as `categories()` lists it).
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// A mod category on Nexus, e.g. "Gameplay" or "Appearance".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Category {
+    pub category_id: i64,
+    pub name: String,
+    pub parent: Option<i64>,
+}
+
+/// One step of a file's update chain: the author marked `new_file_id` as
+/// the replacement of `old_file_id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileUpdate {
+    pub old_file_id: i64,
+    pub new_file_id: i64,
+    pub uploaded_timestamp: Option<i64>,
+}
+
+/// The newest file that replaces `installed`, following the author's update
+/// chain; without a chain, a newer main file with the same name.
+pub fn newer_file<'a>(installed: i64, files: &'a [FileInfo], updates: &[FileUpdate]) -> Option<&'a FileInfo> {
+    let gone = |f: &FileInfo| matches!(f.category_name.as_deref(), Some("ARCHIVED" | "DELETED"));
+    let mut cur = installed;
+    let mut seen = vec![cur];
+    while let Some(u) = updates.iter().find(|u| u.old_file_id == cur) {
+        if seen.contains(&u.new_file_id) {
+            break;
+        }
+        cur = u.new_file_id;
+        seen.push(cur);
+    }
+    if cur != installed {
+        return files.iter().find(|f| f.file_id == cur && !gone(f));
+    }
+    let old = files.iter().find(|f| f.file_id == installed)?;
+    let old_time = old.uploaded_timestamp.unwrap_or(0);
+    files
+        .iter()
+        .filter(|f| f.file_id != installed && !gone(f) && f.category_name.as_deref() == Some("MAIN"))
+        .filter(|f| f.name.is_some() && f.name == old.name && f.uploaded_timestamp.unwrap_or(0) > old_time)
+        .max_by_key(|f| f.uploaded_timestamp.unwrap_or(0))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,6 +135,7 @@ pub struct ModDetails {
     /// The mod page description with BBCode/HTML removed.
     pub description_text: String,
     pub files: Vec<FileInfo>,
+    pub file_updates: Vec<FileUpdate>,
     pub page_url: String,
 }
 
@@ -128,6 +176,7 @@ fn card_from_v1(m: &ModInfo) -> Option<ModCard> {
         created: m.created_timestamp,
         updated: m.updated_timestamp,
         adult: m.contains_adult_content,
+        category_id: m.category_id,
     })
 }
 
@@ -146,6 +195,7 @@ fn card_from_graphql(n: &Value) -> Option<ModCard> {
         created: s("createdAt").and_then(parse_time),
         updated: s("updatedAt").and_then(parse_time),
         adult: n.get("adultContent").and_then(Value::as_bool).unwrap_or(false),
+        category_id: None,
     })
 }
 
@@ -188,6 +238,9 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
             let wild = text.replace(['*', '?'], " ");
             filter["name"] = json!([{ "value": format!("*{}*", wild.trim()), "op": "WILDCARD" }]);
         }
+    }
+    if let Some(cat) = q.category.as_deref().map(clean_query).filter(|c| !c.is_empty()) {
+        filter["categoryName"] = json!([{ "value": cat, "op": "EQUALS" }]);
     }
     let key = match q.sort {
         Sort::Relevance if !text.is_empty() => "relevance",
@@ -274,13 +327,44 @@ impl Client {
     /// Mod page and file list, for browsing (cached).
     pub fn mod_details(&self, mod_id: i64) -> Result<ModDetails> {
         let info: ModInfo = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}.json"), DETAIL_TTL)?;
+        let (files, file_updates) = self.files_with_updates(mod_id)?;
+        let description_text = info.description.as_deref().map(bbcode_to_text).unwrap_or_default();
+        Ok(ModDetails { info, description_text, files, file_updates, page_url: mod_page_url(mod_id, None) })
+    }
+
+    /// A mod's files and the author's update chain between them (cached).
+    pub fn files_with_updates(&self, mod_id: i64) -> Result<(Vec<FileInfo>, Vec<FileUpdate>)> {
         #[derive(Deserialize)]
         struct Files {
             files: Vec<FileInfo>,
+            #[serde(default)]
+            file_updates: Vec<FileUpdate>,
         }
-        let files: Files = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL)?;
-        let description_text = info.description.as_deref().map(bbcode_to_text).unwrap_or_default();
-        Ok(ModDetails { info, description_text, files: files.files, page_url: mod_page_url(mod_id, None) })
+        let f: Files = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL)?;
+        Ok((f.files, f.file_updates))
+    }
+
+    /// Nexus' mod categories for the game (cached for a day).
+    pub fn categories(&self) -> Result<Vec<Category>> {
+        let v: Value = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}.json"), Duration::from_secs(24 * 3600))?;
+        let mut out: Vec<Category> = v
+            .get("categories")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| {
+                        Some(Category {
+                            category_id: c.get("category_id")?.as_i64()?,
+                            name: clean_line(c.get("name")?.as_str(), 100)?,
+                            // `false` for top-level categories.
+                            parent: c.get("parent_category").and_then(Value::as_i64),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort_by_key(|c| c.name.to_lowercase());
+        Ok(out)
     }
 }
 
@@ -435,79 +519,7 @@ pub fn bbcode_to_text(src: &str) -> String {
 mod tests {
     use super::*;
     use crate::nexus::{BROWSE_RESERVE, Shared};
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::TcpListener;
-    use std::sync::{Arc, Mutex};
-
-    /// A canned response: (path substring, status, extra headers, body).
-    type Canned = (&'static str, u16, Vec<(&'static str, String)>, String);
-
-    #[derive(Debug, Clone)]
-    struct Seen {
-        line: String,
-        headers: Vec<(String, String)>,
-        body: String,
-    }
-
-    /// Minimal HTTP/1.1 server answering from recorded fixtures.
-    fn serve(responses: Vec<Canned>) -> (String, Arc<Mutex<Vec<Seen>>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let log = seen.clone();
-        let responses = Arc::new(Mutex::new(responses));
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let mut headers = Vec::new();
-                let mut len = 0;
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).unwrap();
-                    let h = h.trim_end();
-                    if h.is_empty() {
-                        break;
-                    }
-                    let (k, v) = h.split_once(':').unwrap();
-                    let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
-                    if k == "content-length" {
-                        len = v.parse().unwrap();
-                    }
-                    headers.push((k, v));
-                }
-                let mut body = vec![0; len];
-                reader.read_exact(&mut body).unwrap();
-                let body = String::from_utf8(body).unwrap();
-                log.lock().unwrap().push(Seen { line: line.trim().to_string(), headers, body: body.clone() });
-                let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
-                let mut rs = responses.lock().unwrap();
-                // First matching response is used once, unless it's the last match.
-                let idx = rs.iter().position(|(p, ..)| path.contains(p));
-                let (status, extra, out) = match idx {
-                    Some(i) => {
-                        let matches = rs.iter().filter(|(p, ..)| path.contains(p)).count();
-                        let r = if matches > 1 { rs.remove(i) } else { rs[i].clone() };
-                        (r.1, r.2, r.3)
-                    }
-                    None => (404, vec![], r#"{"message":"No route"}"#.to_string()),
-                };
-                let mut resp = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
-                    out.len()
-                );
-                for (k, v) in extra {
-                    resp.push_str(&format!("{k}: {v}\r\n"));
-                }
-                resp.push_str("\r\n");
-                resp.push_str(&out);
-                let _ = stream.write_all(resp.as_bytes());
-            }
-        });
-        (addr, seen)
-    }
+    use crate::testutil::serve;
 
     fn rl(hourly: u32, daily: u32) -> Vec<(&'static str, String)> {
         vec![
@@ -563,10 +575,47 @@ mod tests {
     }
 
     #[test]
+    fn lists_categories_and_filters_search_by_one() {
+        let (addr, _) = serve(vec![("/games/cyberpunk2077.json", 200, vec![], fixture("game.json"))]);
+        let cats = client(&addr).categories().unwrap();
+        let names: Vec<_> = cats.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Appearance", "Cyberpunk 2077", "Gameplay", "Utilities"]);
+        assert_eq!(cats[0].parent, Some(1));
+        assert_eq!(cats[1].parent, None);
+        let v = graphql_variables(&Search { category: Some("Gameplay".into()), ..Default::default() }, true);
+        assert_eq!(v["filter"]["categoryName"][0]["value"], "Gameplay");
+        assert_eq!(v["filter"]["categoryName"][0]["op"], "EQUALS");
+    }
+
+    #[test]
+    fn follows_update_chains_to_the_newest_file() {
+        let (addr, _) = serve(vec![("/mods/107/files.json", 200, vec![], fixture("files_107.json"))]);
+        let (files, updates) = client(&addr).files_with_updates(107).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(newer_file(98000, &files, &updates).map(|f| f.file_id), Some(98765));
+        assert!(newer_file(98765, &files, &updates).is_none(), "already the newest");
+        assert!(newer_file(98766, &files, &updates).is_none(), "optional file without a chain");
+        // No chain: a later main file with the same name counts as the update.
+        let mut f2 = files.clone();
+        let mut newer = files[0].clone();
+        newer.file_id = 99000;
+        newer.version = Some("1.38".into());
+        newer.uploaded_timestamp = Some(1758000000);
+        f2.push(newer);
+        assert_eq!(newer_file(98765, &f2, &[]).map(|f| f.file_id), Some(99000));
+        // Loops in the chain don't hang.
+        let looped = vec![
+            FileUpdate { old_file_id: 1, new_file_id: 2, uploaded_timestamp: None },
+            FileUpdate { old_file_id: 2, new_file_id: 1, uploaded_timestamp: None },
+        ];
+        assert!(newer_file(1, &files, &looped).is_none());
+    }
+
+    #[test]
     fn search_uses_graphql_with_filters_and_paging() {
         let (addr, seen) = serve(vec![("graphql", 200, vec![], fixture("search.json"))]);
         let c = client(&addr);
-        let q = Search { text: "  vehicle\u{7}  handling ".into(), sort: Sort::Relevance, offset: 20, count: 500 };
+        let q = Search { text: "  vehicle\u{7}  handling ".into(), sort: Sort::Relevance, offset: 20, count: 500, category: None };
         let page = c.search(&q, false).unwrap();
         assert_eq!(page.total, Some(57));
         assert_eq!(page.offset, 20);
