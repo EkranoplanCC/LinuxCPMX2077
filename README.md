@@ -1,6 +1,6 @@
-# CP2077 Mod Manager
+# CPMX2077
 
-A Linux-native mod manager for Cyberpunk 2077 running under Proton (Steam) or
+CPMX2077 is a Linux-native mod manager for Cyberpunk 2077 running under Proton (Steam) or
 Heroic (GOG), shipped as an AppImage.
 
 Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases),
@@ -8,7 +8,7 @@ make it executable (`chmod +x`) and run it.
 
 ![screenshot](docs/screenshot.png)
 
-## What works in v0.1
+## What it does
 
 - **Finds the game**: scans every Steam library (native, Flatpak, Snap) and
   Heroic's GOG installs, reads the Steam build id and the executable's version,
@@ -49,7 +49,7 @@ make it executable (`chmod +x`) and run it.
   patches, CET `Override`/`Observe` hooks and RED4ext plugins. The
   Compatibility tab lists hard clashes, overlaps (with which archive wins the
   load order) and frameworks a mod needs that aren't installed.
-- **Agent access (read-only MCP)**: `CP2077-Mod-Manager.AppImage --mcp`
+- **Agent access (read-only MCP)**: `CPMX2077_<version>_amd64.AppImage --mcp`
   serves the mod list, file hashes, the compatibility index and the game's
   logs to an agent such as Claude Code
   (`claude mcp add cp2077-mods -- /path/to/AppImage --mcp`). The database is
@@ -74,10 +74,38 @@ make it executable (`chmod +x`) and run it.
   with mods you already have marked “installed”. Adult-flagged mods are hidden
   unless you turn them on in Settings.
 - **Nexus downloads**: Premium accounts download and install straight from a
-  mod's file list. Free accounts click “Get from Nexus”, which opens that file
-  on nexusmods.com; its “Mod Manager Download” button sends an `nxm://` link
-  back and the download continues in the app (enable Settings → Handle nxm://
-  links). Pasting a mod URL, ID or `nxm://` link still works.
+  mod's file list. Free accounts click “Get from Nexus”: the file's page opens
+  in a Nexus window inside the app, you sign in and click “Slow download”
+  there yourself, and the app catches the `nxm://` link the page sends and
+  downloads, verifies and installs the file. Nexus doesn't let free accounts
+  download through its API, so that one click on their page is required. “Or
+  use your browser” opens the page in your normal browser instead; the app
+  offers to register itself as the `nxm://` handler first (also in
+  Settings). Pasting a mod URL, ID or `nxm://` link still works.
+- **GitHub as a second source**: the core frameworks (CET, RED4ext,
+  redscript, ArchiveXL, TweakXL, Codeware) and many mods ship as GitHub
+  releases. Switch “Get mods” to GitHub to search, or paste `owner/repo` or a
+  repository URL, see its releases and download an asset. A download is only
+  accepted from GitHub's own hosts and must match the SHA-256 digest GitHub
+  publishes for the asset; it then goes through the same installer. Sources
+  sit behind one `ModSource` interface (`crates/core/src/sources/`), so more
+  can be added. Release lists are cached for 10 minutes to stay within
+  GitHub's 60 requests an hour without a token, so a brand-new release can
+  take that long to show up.
+- **Download queue**: “Select” on the Get mods page lets you pick many mods,
+  then “Download all” queues them. GitHub mods and Premium Nexus downloads run
+  straight through. For a free account one Nexus window steps through the
+  file pages in turn (“Mod 3 of 12”): you click the download button on each,
+  and the app downloads and installs that mod in the background while moving
+  on to the next page. Skip and Cancel are in the window's “Download queue”
+  menu and in the queue panel. Update all uses the same queue.
+- **Categories, versions and updates**: the Installed tab can be filtered by
+  category and sorted by name, category, version or source. Downloads show
+  the mod version, the game version they were downloaded on, the source and
+  how the file was verified. “Check for updates” (also run at start-up) asks
+  Nexus and GitHub for newer files; outdated mods get an Update button in the
+  Installed and Downloads tabs, and an update replaces the old version in
+  place.
 - **API quota**: the app reads Nexus' `X-RL-*` rate-limit headers, shows how
   many requests are left, stops sending when Nexus says the quota is used up
   (or returns 429) until it resets, and pauses browsing when fewer than 25
@@ -105,6 +133,11 @@ field is the way to connect.
   `nexus-cdn.com` (redirects included), must match the advertised size, and
   their MD5 must be recognised by Nexus for that exact mod and file, otherwise
   the file is discarded.
+- GitHub downloads are only fetched over HTTPS from `github.com` and its
+  release-asset hosts and must match the asset's published SHA-256 digest.
+  Older assets without a digest are marked unverified.
+- The in-app Nexus window has no access to the app's commands. It only hands
+  over `nxm://` links; links to other sites open in your browser.
 
 ## Building
 
@@ -132,6 +165,7 @@ release with a SHA256SUMS file.
 
 ## Roadmap
 
-- Browse and search Nexus inside the app, and Nexus collections (modpacks),
-  via the v2 GraphQL API
+- Nexus collections (modpacks) via the v2 GraphQL API, fed into the
+  download queue
+- A one-click list of the core frameworks from GitHub
 - Load order for `.archive` files

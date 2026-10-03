@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CP2077 Mod Manager",
+  "productName": "CPMX2077",
   "mainBinaryName": "cp2077-modmanager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "io.github.cp2077modmanager",
   "build": {
     "frontendDist": "../ui"
@@ -11,7 +11,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "CP2077 Mod Manager",
+        "title": "CPMX2077",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CP2077 Mod Manager</title>
+  <title>CPMX2077</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside id="sidebar">
-    <h1>CP2077<span>MOD MANAGER</span></h1>
+    <h1>CPMX2077<span>MOD MANAGER</span></h1>
     <section id="game-panel">
       <h2>Game</h2>
       <select id="game-select"></select>
@@ -26,26 +26,54 @@
       <button data-tab="analysis">Compatibility</button>
       <button data-tab="graph">Graph</button>
       <button data-tab="crashes">Crashes &amp; logs</button>
-      <button data-tab="nexus">Nexus Mods</button>
+      <button data-tab="nexus">Get mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
     </nav>
   </aside>
 
   <main>
+    <section id="queue" class="card hidden" aria-live="polite">
+      <div class="row">
+        <b id="queue-title"></b>
+        <span id="queue-now" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="queue-show">Show Nexus window</button>
+        <button id="queue-skip">Skip this mod</button>
+        <button id="queue-cancel" class="danger">Cancel</button>
+        <button id="queue-clear" class="hidden">Clear</button>
+        <button id="queue-toggle" class="link">Show list</button>
+      </div>
+      <div class="queue-track"><div id="queue-bar"></div></div>
+      <ul id="queue-items" class="hidden"></ul>
+    </section>
+
     <section id="tab-mods" class="tab active">
       <header>
         <h2>Installed mods</h2>
         <div class="row">
           <label class="check"><input type="checkbox" id="overwrite"> Allow overwriting other mods</label>
+          <button id="check-updates">Check for updates</button>
+          <button id="update-all" class="update hidden">Update all</button>
           <button id="install-file" class="primary">Install from archive…</button>
         </div>
       </header>
+      <div class="row filters">
+        <select id="mods-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
+        <span id="updates-note" class="muted small"></span>
+      </div>
       <table>
-        <thead><tr><th title="Turn a mod off without uninstalling it">On</th><th>Name</th><th>Version</th><th>Source</th><th>Files</th><th>Installed on game</th><th></th></tr></thead>
+        <thead><tr>
+          <th title="Turn a mod off without uninstalling it">On</th>
+          <th class="sortable" data-sort="name">Name</th>
+          <th class="sortable" data-sort="category">Category</th>
+          <th class="sortable" data-sort="version">Version</th>
+          <th class="sortable" data-sort="source">Source</th>
+          <th>Files</th><th>Installed on game</th><th></th>
+        </tr></thead>
         <tbody id="mods-body"></tbody>
       </table>
-      <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or download from Nexus.</p>
+      <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or get one from Nexus or GitHub.</p>
     </section>
 
     <section id="tab-analysis" class="tab">
@@ -95,7 +123,20 @@
     </section>
 
     <section id="tab-nexus" class="tab">
-      <header><h2>Nexus Mods</h2></header>
+      <header>
+        <h2>Get mods</h2>
+        <div id="source-switch" class="segmented" role="tablist" aria-label="Where to get mods from">
+          <button data-source="nexus" class="active" role="tab">Nexus Mods</button>
+        </div>
+      </header>
+      <div id="source-nexus">
+      <div id="nxm-prompt" class="card finding info hidden">
+        <p>Downloads you start on nexusmods.com in your normal browser don't reach CPMX2077 yet. Downloads from CPMX2077's own Nexus window work either way.</p>
+        <div class="row">
+          <button id="nxm-prompt-yes" class="primary">Send Nexus downloads to CPMX2077</button>
+          <button id="nxm-prompt-no">Not now</button>
+        </div>
+      </div>
       <div id="nexus-login" class="card">
         <p>Sign in on nexusmods.com in your browser and approve this app. Your password never passes through the manager.</p>
         <div class="row">
@@ -123,6 +164,7 @@
               <option value="updated">Recently updated</option>
               <option value="created">Newest</option>
             </select>
+            <select id="nexus-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
             <button id="nexus-search-go" class="primary">Search</button>
           </div>
           <div class="row chips">
@@ -136,7 +178,11 @@
           </div>
         </div>
         <div id="nexus-list">
-          <p id="nexus-list-title" class="muted"></p>
+          <div class="row list-head">
+            <p id="nexus-list-title" class="muted"></p>
+            <span class="spacer"></span>
+            <button class="select-mode" title="Pick several mods and download them in one go">Select several</button>
+          </div>
           <div id="nexus-grid" class="mod-grid"></div>
           <div id="nexus-pager" class="row hidden">
             <button id="nexus-prev">Previous</button>
@@ -147,12 +193,43 @@
         <div id="nexus-result" class="hidden"></div>
         <details class="card">
           <summary>Have a link?</summary>
-          <p>Paste a mod page URL or ID, or an <code>nxm://</code> link from the “Mod Manager Download” button.</p>
+          <p>Paste a Nexus mod page URL or ID, an <code>nxm://</code> link from the “Mod Manager Download” button, or a GitHub repository link.</p>
           <div class="row">
-            <input id="nexus-query" placeholder="https://www.nexusmods.com/cyberpunk2077/mods/107  or  nxm://…">
+            <input id="nexus-query" placeholder="https://www.nexusmods.com/cyberpunk2077/mods/107  or  nxm://…  or  github.com/owner/repo">
             <button id="nexus-go">Look up</button>
           </div>
         </details>
+      </div>
+      </div>
+      <div id="source-other" class="hidden">
+        <div class="card">
+          <p id="source-desc" class="muted"></p>
+          <div class="row">
+            <input id="source-search" type="search" maxlength="100">
+            <button id="source-search-go" class="primary">Search</button>
+          </div>
+        </div>
+        <div id="source-list">
+          <div class="row list-head">
+            <p id="source-list-title" class="muted"></p>
+            <span class="spacer"></span>
+            <button class="select-mode" title="Pick several mods and download them in one go">Select several</button>
+          </div>
+          <div id="source-grid" class="mod-grid"></div>
+          <div id="source-pager" class="row pager hidden">
+            <button id="source-prev">Previous</button>
+            <span id="source-page" class="muted"></span>
+            <button id="source-next">Next</button>
+          </div>
+        </div>
+        <div id="source-result" class="hidden"></div>
+      </div>
+      <div id="select-bar" class="card row hidden">
+        <span id="select-count"></span>
+        <span id="select-note" class="muted small"></span>
+        <span class="spacer"></span>
+        <button id="select-clear">Clear</button>
+        <button id="select-queue" class="primary">Download all</button>
       </div>
     </section>
 
@@ -160,17 +237,19 @@
       <header><h2>Downloads</h2></header>
       <div id="progress" class="hidden"><div id="progress-bar"></div><span id="progress-text"></span></div>
       <table>
-        <thead><tr><th>File</th><th>Nexus mod / file</th><th>Size</th><th>Verified</th><th>SHA-256</th><th></th></tr></thead>
+        <thead><tr><th>Mod</th><th>Version</th><th>Game version</th><th>Source</th><th>Size</th><th>Verified</th><th></th></tr></thead>
         <tbody id="downloads-body"></tbody>
       </table>
+      <p id="downloads-empty" class="muted">Nothing downloaded yet.</p>
     </section>
 
     <section id="tab-settings" class="tab">
       <header><h2>Settings</h2></header>
       <div class="card">
-        <h3>Nexus download links</h3>
-        <p>Make this app open “Mod Manager Download” (nxm://) links from your browser.
-           This replaces any other handler you had set.</p>
+        <h3>Nexus downloads from your browser</h3>
+        <p>CPMX2077's own Nexus window always works. To also catch “Mod Manager Download” (nxm://) links you click
+           in your normal browser, make CPMX2077 handle them. This replaces any other app that handled them.</p>
+        <p id="nxm-status" class="muted"></p>
         <button id="register-nxm">Handle nxm:// links</button>
       </div>
       <div class="card">

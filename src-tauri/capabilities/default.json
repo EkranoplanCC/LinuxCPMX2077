@@ -8,7 +8,6 @@
     "dialog:allow-open",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "opener:default",
     "deep-link:default"
   ]
 }

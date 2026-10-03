@@ -13,12 +13,12 @@ use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::fomod;
 use cp2077mm_core::install::{EnableReport, FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
 use cp2077mm_core::nexus::{self, NxmLink};
-use cp2077mm_core::nexus_browse::{self, List, ModDetails, Page, Search};
-use cp2077mm_core::{Error, Result, paths, secrets, sso};
+use cp2077mm_core::nexus_browse::{self, Category, List, ModDetails, Page, Search};
+use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
+use cp2077mm_core::{Error, Result, desktop, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_opener::OpenerExt;
 
 struct AppState {
     db: Mutex<Db>,
@@ -57,6 +57,8 @@ struct NexusMod {
 #[derive(Serialize)]
 struct DownloadResult {
     download: nexus::Downloaded,
+    /// The row in the Downloads tab, for installing it later.
+    download_id: i64,
     install: Option<InstallOutcome>,
 }
 
@@ -64,6 +66,23 @@ struct PendingInstall {
     game_id: i64,
     prepared: Prepared,
     meta: NewMod,
+    /// An update: the installed mod this replaces.
+    replaces: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct SourceDownloadResult {
+    download: sources::Downloaded,
+    download_id: i64,
+    install: Option<InstallOutcome>,
+}
+
+/// Where the download queue is, for the Nexus window's title and menu.
+#[derive(serde::Deserialize)]
+struct QueueStep {
+    position: u32,
+    total: u32,
+    name: String,
 }
 
 /// Either the mod is installed, or it has a FOMOD installer and the UI must
@@ -97,10 +116,34 @@ fn home() -> Result<PathBuf> {
 
 /// Quota tracking and the browse cache live as long as the app.
 static NEXUS: LazyLock<Arc<nexus::Shared>> = LazyLock::new(nexus::Shared::new);
+/// GitHub and any other non-Nexus sources (with their caches).
+static SOURCES: LazyLock<sources::Registry> = LazyLock::new(|| sources::Registry::new().expect("HTTP client"));
+
+/// The game version to record with a download.
+fn game_version(db: &Db, game_id: Option<i64>) -> Option<String> {
+    let g = match game_id {
+        Some(id) => db.game(id).ok()?,
+        None => db.games().ok()?.into_iter().next()?,
+    };
+    g.exe_product_version.or(g.exe_file_version)
+}
+
+/// Test servers for a debug build (`CPMX_NEXUS_API`, `CPMX_NEXUS_WEB`);
+/// release builds always talk to Nexus.
+fn debug_override(var: &str) -> Option<String> {
+    if cfg!(debug_assertions) { std::env::var(var).ok() } else { None }
+}
 
 fn nexus_client() -> Result<nexus::Client> {
     let (key, _) = secrets::load_api_key()?.ok_or_else(|| Error::Nexus("no Nexus API key set".into()))?;
-    nexus::Client::with_shared(&key, NEXUS.clone())
+    nexus_client_for(&key)
+}
+
+fn nexus_client_for(key: &str) -> Result<nexus::Client> {
+    match debug_override("CPMX_NEXUS_API") {
+        Some(base) => nexus::Client::with_endpoints(key, &format!("{base}/v1"), &format!("{base}/v2/graphql"), NEXUS.clone()),
+        None => nexus::Client::with_shared(key, NEXUS.clone()),
+    }
 }
 
 #[tauri::command]
@@ -151,13 +194,47 @@ async fn install_archive(app: AppHandle, game_id: i64, path: String, name: Optio
     blocking(move || {
         let path = PathBuf::from(path);
         let meta = NewMod { name: name.unwrap_or_default(), source: "manual".into(), ..Default::default() };
-        begin_install(&app, game_id, &path, meta, overwrite)
+        begin_install(&app, game_id, &path, meta, overwrite, None)
+    })
+    .await
+}
+
+/// Install a file from the Downloads tab, keeping where it came from.
+#[tauri::command]
+async fn install_download(app: AppHandle, download_id: i64, game_id: i64, overwrite: bool, replaces: Option<i64>) -> Result<InstallOutcome> {
+    blocking(move || {
+        let d = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            db.downloads()?.into_iter().find(|d| d.id == download_id).ok_or_else(|| Error::Other("download not found".into()))?
+        };
+        let source = if d.source.is_empty() { "nexus".to_string() } else { d.source.clone() };
+        let meta = NewMod {
+            name: d.mod_name.clone().unwrap_or_default(),
+            version: d.version.clone(),
+            source: if source == "nexus" && d.nexus_mod_id.is_none() { "manual".into() } else { source },
+            nexus_mod_id: d.nexus_mod_id,
+            nexus_file_id: d.nexus_file_id,
+            archive_name: d.file_name.clone(),
+            source_ref: d.source_ref.clone(),
+            source_file: d.source_file.clone(),
+            category: d.category.clone(),
+            ..Default::default()
+        };
+        begin_install(&app, game_id, &PathBuf::from(&d.path), meta, overwrite, replaces)
     })
     .await
 }
 
 /// Extract an archive; install right away unless it has a FOMOD installer.
-fn begin_install(app: &AppHandle, game_id: i64, path: &std::path::Path, mut meta: NewMod, overwrite: bool) -> Result<InstallOutcome> {
+fn begin_install(
+    app: &AppHandle,
+    game_id: i64,
+    path: &std::path::Path,
+    mut meta: NewMod,
+    overwrite: bool,
+    replaces: Option<i64>,
+) -> Result<InstallOutcome> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let game = db.game(game_id)?;
@@ -177,10 +254,14 @@ fn begin_install(app: &AppHandle, game_id: i64, path: &std::path::Path, mut meta
             Some(fomod) => {
                 let token = prepared.id.clone();
                 let name = meta.name.clone();
-                Ok((InstallOutcome::NeedsChoices { token, name, fomod }, Some(PendingInstall { game_id, prepared, meta })))
+                Ok((InstallOutcome::NeedsChoices { token, name, fomod }, Some(PendingInstall { game_id, prepared, meta, replaces })))
             }
             None => {
-                let r = i.finish(&game, &prepared, InstallOptions { meta, overwrite, fomod_choices: None });
+                let opts = InstallOptions { meta, overwrite, fomod_choices: None };
+                let r = match replaces {
+                    Some(old) => i.finish_replacing(&game, &prepared, opts, old),
+                    None => i.finish(&game, &prepared, opts),
+                };
                 if r.is_err() {
                     i.discard(&prepared);
                 }
@@ -244,7 +325,10 @@ async fn finish_install(app: AppHandle, token: String, selections: fomod::Select
         let db = state.db.lock().unwrap();
         let game = db.game(p.game_id)?;
         let opts = InstallOptions { meta: p.meta.clone(), overwrite, fomod_choices: Some(selections) };
-        let r = with_installer(&db, |i| i.finish(&game, &p.prepared, opts));
+        let r = with_installer(&db, |i| match p.replaces {
+            Some(old) => i.finish_replacing(&game, &p.prepared, opts, old),
+            None => i.finish(&game, &p.prepared, opts),
+        });
         match &r {
             Err(Error::Conflict(_)) => {}
             Err(_) if p.prepared.dir.exists() => {} // e.g. invalid choices: let the user fix them
@@ -344,7 +428,7 @@ async fn nexus_status() -> Result<NexusStatus> {
         let Some((key, storage)) = secrets::load_api_key()? else {
             return Ok(NexusStatus { user: None, storage: None, error: None });
         };
-        match nexus::Client::with_shared(&key, NEXUS.clone())?.validate() {
+        match nexus_client_for(&key)?.validate() {
             Ok(u) => Ok(NexusStatus { user: Some(u), storage: Some(storage), error: None }),
             Err(e) => Ok(NexusStatus { user: None, storage: Some(storage), error: Some(e.to_string()) }),
         }
@@ -356,7 +440,7 @@ async fn nexus_status() -> Result<NexusStatus> {
 #[tauri::command]
 async fn nexus_set_key(key: String) -> Result<NexusStatus> {
     blocking(move || {
-        let user = nexus::Client::with_shared(&key, NEXUS.clone())?.validate()?;
+        let user = nexus_client_for(&key)?.validate()?;
         let storage = secrets::store_api_key(&key)?;
         NEXUS.clear_cache();
         Ok(NexusStatus { user: Some(user), storage: Some(storage), error: None })
@@ -393,15 +477,10 @@ async fn nexus_sso_login(app: AppHandle) -> Result<NexusStatus> {
         if let Some(old) = state.sso_cancel.lock().unwrap().replace(cancel.clone()) {
             old.store(true, Ordering::Relaxed);
         }
-        let opener = app.clone();
-        let key = sso::login(
-            &slug,
-            |url| opener.opener().open_url(url, None::<&str>).map_err(|e| Error::Other(format!("could not open browser: {e}"))),
-            cancel,
-        );
+        let key = sso::login(&slug, desktop::open_url, cancel);
         state.sso_cancel.lock().unwrap().take();
         let key = key?;
-        let user = nexus::Client::new(&key)?.validate()?;
+        let user = nexus_client_for(&key)?.validate()?;
         let storage = secrets::store_api_key(&key)?;
         NEXUS.clear_cache();
         Ok(NexusStatus { user: Some(user), storage: Some(storage), error: None })
@@ -446,6 +525,12 @@ async fn nexus_browse_list(app: AppHandle, list: List) -> Result<Page> {
     blocking(move || nexus_client()?.browse_list(list, show_adult(&app))).await
 }
 
+/// Nexus' mod categories, for the category filter.
+#[tauri::command]
+async fn nexus_categories() -> Result<Vec<Category>> {
+    blocking(move || nexus_client()?.categories()).await
+}
+
 /// Name search and sorted lists (endorsements, downloads, dates), paged.
 #[tauri::command]
 async fn nexus_search(app: AppHandle, query: Search) -> Result<Page> {
@@ -463,16 +548,152 @@ fn nexus_rate() -> nexus::RateLimit {
     NEXUS.rate()
 }
 
-/// Open a mod's page (or one file on its Files tab) in the browser. The URL
-/// is built here so the UI can't open arbitrary links.
-#[tauri::command]
-fn nexus_open_page(app: AppHandle, mod_id: i64, file_id: Option<i64>) -> Result<()> {
+/// The page for a mod, or the "Mod Manager Download" page for one file.
+/// Built here so the UI can't open arbitrary links.
+fn nexus_page(mod_id: i64, file_id: Option<i64>) -> Result<String> {
     if mod_id <= 0 || file_id.is_some_and(|f| f <= 0) {
         return Err(Error::Nexus("bad mod or file id".into()));
     }
-    app.opener()
-        .open_url(nexus_browse::mod_page_url(mod_id, file_id), None::<&str>)
-        .map_err(|e| Error::Other(format!("could not open browser: {e}")))
+    let url = match file_id {
+        Some(f) => desktop::nexus_download_page(mod_id, f),
+        None => nexus_browse::mod_page_url(mod_id, None),
+    };
+    Ok(match debug_override("CPMX_NEXUS_WEB") {
+        Some(web) => url.replacen("https://www.nexusmods.com", &web, 1),
+        None => url,
+    })
+}
+
+/// Open a Nexus page in the user's browser. For a file, the download then
+/// reaches the app through the system nxm:// handler.
+#[tauri::command]
+async fn nexus_open_page(mod_id: i64, file_id: Option<i64>) -> Result<()> {
+    let url = nexus_page(mod_id, file_id)?;
+    blocking(move || desktop::open_url(&url)).await
+}
+
+const NEXUS_WINDOW: &str = "nexus";
+
+/// Show a Nexus page in a window of the app. The user signs in and starts
+/// the download there like in a browser; the nxm:// link the page opens is
+/// caught here and handed to the main window, so no system handler is
+/// needed. The page runs untouched (no capability, so no access to the
+/// app's commands); only nxm:// and non-web navigations are intercepted.
+///
+/// With `queue`, the window steps through the download queue: its title says
+/// which mod is up, and its menu has Skip and Cancel (sent to the main window
+/// as `queue-control`).
+#[tauri::command]
+async fn nexus_open_in_app(app: AppHandle, mod_id: i64, file_id: Option<i64>, queue: Option<QueueStep>) -> Result<()> {
+    let url: tauri::Url = nexus_page(mod_id, file_id)?.parse().map_err(|e| Error::Other(format!("bad url: {e}")))?;
+    if let Some(w) = app.get_webview_window(NEXUS_WINDOW) {
+        w.navigate(url).map_err(|e| Error::Other(e.to_string()))?;
+        queue_chrome(&app, &w, queue.as_ref())?;
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let nav_app = app.clone();
+    let popup_app = app.clone();
+    let window = tauri::WebviewWindowBuilder::new(&app, NEXUS_WINDOW, tauri::WebviewUrl::External(url))
+        .title(NEXUS_TITLE)
+        .inner_size(1180.0, 860.0)
+        .min_inner_size(640.0, 480.0)
+        .on_navigation(move |u| match u.scheme() {
+            "nxm" => {
+                let app = nav_app.clone();
+                let link = u.to_string();
+                std::thread::spawn(move || forward_urls(&app, vec![link]));
+                false
+            }
+            "https" | "http" | "about" | "blob" | "data" => true,
+            _ => false,
+        })
+        .on_new_window(move |u, _| {
+            let link = u.to_string();
+            if u.scheme() == "nxm" {
+                let app = popup_app.clone();
+                std::thread::spawn(move || forward_urls(&app, vec![link]));
+            } else if u.scheme() == "https" && is_nexus_host(u.host_str().unwrap_or_default()) {
+                // Keep Nexus (including its sign-in) in this window.
+                if let Some(w) = popup_app.get_webview_window(NEXUS_WINDOW) {
+                    let _ = w.navigate(u);
+                }
+            } else {
+                std::thread::spawn(move || {
+                    if let Err(e) = desktop::open_link(&link) {
+                        log::warn!("{e}");
+                    }
+                });
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()
+        .map_err(|e| Error::Other(format!("could not open the Nexus window: {e}")))?;
+    let closed_app = app.clone();
+    window.on_window_event(move |e| {
+        if let tauri::WindowEvent::Destroyed = e {
+            let _ = closed_app.emit_to("main", "nexus-window-closed", ());
+        }
+    });
+    let menu_app = app.clone();
+    window.on_menu_event(move |_, e| {
+        let action = match e.id().as_ref() {
+            "queue-skip" => "skip",
+            "queue-cancel" => "cancel",
+            _ => return,
+        };
+        let _ = menu_app.emit_to("main", "queue-control", action);
+    });
+    queue_chrome(&app, &window, queue.as_ref())
+}
+
+const NEXUS_TITLE: &str = "Nexus Mods · sign in, then start the download (CPMX2077 picks it up)";
+
+fn queue_chrome(app: &AppHandle, w: &tauri::WebviewWindow, queue: Option<&QueueStep>) -> Result<()> {
+    use tauri::menu::{Menu, MenuItem, Submenu};
+    let err = |e: tauri::Error| Error::Other(e.to_string());
+    let Some(q) = queue else {
+        let _ = w.set_title(NEXUS_TITLE);
+        let _ = w.remove_menu();
+        return Ok(());
+    };
+    let step = format!("Mod {} of {}: {}", q.position, q.total, q.name);
+    let _ = w.set_title(&format!("CPMX2077 queue · {step} · click “Slow download”"));
+    // A dropdown: a click on a bare menu-bar item only highlights it in GTK.
+    let queue_menu = Submenu::with_items(
+        app,
+        format!("Download queue · {step} ▾"),
+        true,
+        &[
+            &MenuItem::with_id(app, "queue-skip", "Skip this mod", true, None::<&str>).map_err(err)?,
+            &MenuItem::with_id(app, "queue-cancel", "Cancel the queue", true, None::<&str>).map_err(err)?,
+        ],
+    )
+    .map_err(err)?;
+    let menu = Menu::with_items(app, &[&queue_menu]).map_err(err)?;
+    w.set_menu(menu).map_err(err)?;
+    Ok(())
+}
+
+/// Close the Nexus window (the queue finished or was cancelled).
+#[tauri::command]
+fn nexus_window_close(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(NEXUS_WINDOW) {
+        let _ = w.close();
+    }
+}
+
+fn is_nexus_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "nexusmods.com" || host.ends_with(".nexusmods.com")
+}
+
+/// Open a mod's page from another source in the browser (github.com only).
+#[tauri::command]
+async fn open_url(url: String) -> Result<()> {
+    blocking(move || desktop::open_url(&url)).await
 }
 
 #[tauri::command]
@@ -487,6 +708,7 @@ async fn nexus_mod(mod_id: i64) -> Result<NexusMod> {
 /// Download a Nexus file (premium, or with key/expires from an nxm link) and
 /// optionally install it into `game_id`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn nexus_download(
     app: AppHandle,
     mod_id: i64,
@@ -495,10 +717,12 @@ async fn nexus_download(
     expires: Option<i64>,
     install_to: Option<i64>,
     overwrite: Option<bool>,
+    replaces: Option<i64>,
 ) -> Result<DownloadResult> {
-    blocking(move || run_download(&app, mod_id, file_id, key, expires, install_to, overwrite.unwrap_or(false))).await
+    blocking(move || run_download(&app, mod_id, file_id, key, expires, install_to, overwrite.unwrap_or(false), replaces)).await
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_download(
     app: &AppHandle,
     mod_id: i64,
@@ -507,42 +731,186 @@ fn run_download(
     expires: Option<i64>,
     install_to: Option<i64>,
     overwrite: bool,
+    replaces: Option<i64>,
 ) -> Result<DownloadResult> {
     let c = nexus_client()?;
     let dl = c.download(mod_id, file_id, key.as_deref(), expires, &paths::downloads_dir()?, |done, total| {
         let _ = app.emit("download-progress", Progress { mod_id, file_id, done, total });
     })?;
+    // Shown in the Downloads tab and kept for installing later. Best effort:
+    // the download itself already succeeded.
+    let info = c.mod_info(mod_id).ok();
+    let file = c.file_info(mod_id, file_id).ok();
+    let category = info.as_ref().and_then(|i| i.category_id).and_then(|id| {
+        c.categories().ok()?.into_iter().find(|cat| cat.category_id == id).map(|cat| cat.name)
+    });
+    let name = info.as_ref().and_then(|i| i.name.clone());
+    let version = file.as_ref().and_then(|f| f.version.clone().or(f.mod_version.clone()));
     let state = app.state::<AppState>();
-    state.db.lock().unwrap().insert_download(&DownloadRow {
-        id: 0,
-        nexus_mod_id: Some(mod_id),
-        nexus_file_id: Some(file_id),
-        file_name: dl.file_name.clone(),
-        path: dl.path.to_string_lossy().into_owned(),
-        sha256: dl.sha256.clone(),
-        md5: dl.md5.clone(),
-        size: dl.size as i64,
-        verified: dl.verified,
-        downloaded_at: String::new(),
-    })?;
+    let download_id = {
+        let db = state.db.lock().unwrap();
+        db.insert_download(&DownloadRow {
+            nexus_mod_id: Some(mod_id),
+            nexus_file_id: Some(file_id),
+            file_name: dl.file_name.clone(),
+            path: dl.path.to_string_lossy().into_owned(),
+            sha256: dl.sha256.clone(),
+            md5: dl.md5.clone(),
+            size: dl.size as i64,
+            verified: dl.verified,
+            source: "nexus".into(),
+            mod_name: name.clone(),
+            version: version.clone(),
+            category: category.clone(),
+            game_version: game_version(&db, install_to),
+            checked: Some(if dl.verified { "MD5 matches Nexus" } else { "unverified: Nexus checksum lookup failed" }.into()),
+            ..Default::default()
+        })?
+    };
     let install = match install_to {
         Some(game_id) => {
-            let info = c.mod_info(mod_id).ok();
-            let file = c.file_info(mod_id, file_id).ok();
             let meta = NewMod {
-                name: info.as_ref().and_then(|i| i.name.clone()).unwrap_or_else(|| dl.file_name.clone()),
-                version: file.as_ref().and_then(|f| f.version.clone().or(f.mod_version.clone())),
+                name: name.unwrap_or_else(|| dl.file_name.clone()),
+                version,
                 source: "nexus".into(),
                 nexus_mod_id: Some(mod_id),
                 nexus_file_id: Some(file_id),
                 archive_name: dl.file_name.clone(),
+                category,
                 ..Default::default()
             };
-            Some(begin_install(app, game_id, &dl.path, meta, overwrite)?)
+            Some(begin_install(app, game_id, &dl.path, meta, overwrite, replaces)?)
         }
         None => None,
     };
-    Ok(DownloadResult { download: dl, install })
+    Ok(DownloadResult { download: dl, download_id, install })
+}
+
+#[derive(Serialize, Clone)]
+struct SourceProgress {
+    source: String,
+    id: String,
+    file_id: String,
+    done: u64,
+    total: u64,
+}
+
+#[derive(Serialize)]
+struct SourceRef {
+    source: &'static str,
+    id: String,
+}
+
+#[tauri::command]
+fn source_list() -> Vec<SourceInfo> {
+    SOURCES.list()
+}
+
+#[tauri::command]
+async fn source_featured(source: String) -> Result<Vec<sources::Listing>> {
+    blocking(move || SOURCES.get(&source)?.featured()).await
+}
+
+#[tauri::command]
+async fn source_search(source: String, query: SourceQuery) -> Result<ListingPage> {
+    blocking(move || SOURCES.get(&source)?.search(&query)).await
+}
+
+/// Which source a pasted link or id belongs to.
+#[tauri::command]
+fn source_resolve(input: String) -> Option<SourceRef> {
+    SOURCES.list().into_iter().find_map(|info| {
+        let id = SOURCES.get(info.id).ok()?.parse_ref(&input)?;
+        Some(SourceRef { source: info.id, id })
+    })
+}
+
+#[tauri::command]
+async fn source_details(source: String, id: String) -> Result<Details> {
+    blocking(move || SOURCES.get(&source)?.details(&id)).await
+}
+
+/// Download a file from a source, verified as far as it allows, and
+/// optionally install it (replacing `replaces` for an update).
+#[tauri::command]
+async fn source_download(
+    app: AppHandle,
+    source: String,
+    id: String,
+    file_id: String,
+    install_to: Option<i64>,
+    overwrite: Option<bool>,
+    replaces: Option<i64>,
+) -> Result<SourceDownloadResult> {
+    blocking(move || {
+        let src = SOURCES.get(&source)?;
+        let details = src.details(&id)?;
+        let file = details
+            .files
+            .iter()
+            .find(|f| f.id == file_id)
+            .cloned()
+            .ok_or_else(|| Error::Other("that file is no longer listed".into()))?;
+        let mut progress = |done, total| {
+            let _ = app.emit(
+                "source-progress",
+                SourceProgress { source: source.clone(), id: id.clone(), file_id: file_id.clone(), done, total },
+            );
+        };
+        let dl = src.download(&id, &file_id, &paths::downloads_dir()?, &mut progress)?;
+        let version = file.version.clone().or(details.listing.version.clone());
+        let download_id = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            db.insert_download(&DownloadRow {
+                file_name: dl.file_name.clone(),
+                path: dl.path.to_string_lossy().into_owned(),
+                sha256: dl.sha256.clone(),
+                md5: dl.md5.clone(),
+                size: dl.size as i64,
+                verified: dl.verified,
+                source: source.clone(),
+                source_ref: Some(id.clone()),
+                source_file: Some(file_id.clone()),
+                mod_name: Some(details.listing.name.clone()),
+                version: version.clone(),
+                category: details.listing.category.clone(),
+                game_version: game_version(&db, install_to),
+                checked: Some(dl.check.clone()),
+                ..Default::default()
+            })?
+        };
+        let install = match install_to {
+            Some(game_id) => {
+                let meta = NewMod {
+                    name: details.listing.name.clone(),
+                    version,
+                    source: source.clone(),
+                    archive_name: file.file_name.clone(),
+                    category: details.listing.category.clone(),
+                    source_ref: Some(id.clone()),
+                    source_file: Some(file_id.clone()),
+                    ..Default::default()
+                };
+                Some(begin_install(&app, game_id, &dl.path, meta, overwrite.unwrap_or(false), replaces)?)
+            }
+            None => None,
+        };
+        Ok(SourceDownloadResult { download: dl, download_id, install })
+    })
+    .await
+}
+
+/// Look for newer versions of the installed mods on Nexus and the other
+/// sources. Nexus is skipped without an API key.
+#[tauri::command]
+async fn check_updates(app: AppHandle, game_id: i64) -> Result<updates::Report> {
+    blocking(move || {
+        let mods = app.state::<AppState>().db.lock().unwrap().mods(game_id)?;
+        let nexus = nexus_client().ok();
+        Ok(updates::check(&mods, nexus.as_ref(), &SOURCES))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -550,11 +918,17 @@ fn parse_nxm(url: String) -> Result<NxmLink> {
     NxmLink::parse(&url)
 }
 
+/// Whether "Mod Manager Download" links in the browser reach this app.
+#[tauri::command]
+async fn nxm_status() -> Result<desktop::NxmStatus> {
+    blocking(|| Ok(desktop::nxm_status())).await
+}
+
 /// Make this app the handler for "Mod Manager Download" links. Opt-in, since
 /// it replaces whatever handled nxm:// before.
 #[tauri::command]
-fn register_nxm_handler(app: AppHandle) -> Result<()> {
-    app.deep_link().register_all().map_err(|e| Error::Other(e.to_string()))
+async fn register_nxm_handler() -> Result<desktop::NxmStatus> {
+    blocking(|| desktop::register_nxm(&home()?)).await
 }
 
 fn forward_urls(app: &AppHandle, urls: Vec<String>) {
@@ -601,9 +975,12 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .manage(AppState { db: Mutex::new(db), pending: Mutex::new(HashMap::new()), sso_cancel: Mutex::new(None) })
         .setup(|app| {
+            // An updated AppImage lives at a new path: keep nxm links working.
+            if let Ok(h) = home() {
+                let _ = desktop::refresh_nxm_entry(&h);
+            }
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 forward_urls(&handle, event.urls().iter().map(|u| u.to_string()).collect());
@@ -616,6 +993,7 @@ fn main() {
             list_mods,
             list_downloads,
             install_archive,
+            install_download,
             fomod_evaluate,
             fomod_image,
             finish_install,
@@ -640,11 +1018,23 @@ fn main() {
             set_nexus_show_adult,
             nexus_browse_list,
             nexus_search,
+            nexus_categories,
             nexus_mod_details,
             nexus_rate,
             nexus_open_page,
+            nexus_open_in_app,
+            nexus_window_close,
+            open_url,
             parse_nxm,
+            nxm_status,
             register_nxm_handler,
+            source_list,
+            source_featured,
+            source_search,
+            source_resolve,
+            source_details,
+            source_download,
+            check_updates,
             startup_links,
         ])
         .run(tauri::generate_context!())
