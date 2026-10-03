@@ -141,7 +141,7 @@ pub fn archive_hashes(path: &Path) -> Result<Vec<u64>> {
     }
     let mut table = vec![0u8; (count * 56) as usize];
     f.read_exact(&mut table)?;
-    Ok(table.chunks_exact(56).map(|e| u64::from_le_bytes(e[0..8].try_into().unwrap())).collect())
+    Ok(table.as_chunks::<56>().0.iter().map(|e| u64::from_le_bytes(e[0..8].try_into().unwrap())).collect())
 }
 
 /// Hashes of every resource in the base game's archives.
