@@ -40,6 +40,12 @@ Heroic (GOG), shipped as an AppImage.
   patches, CET `Override`/`Observe` hooks and RED4ext plugins. The
   Compatibility tab lists hard clashes, overlaps (with which archive wins the
   load order) and frameworks a mod needs that aren't installed.
+- **Agent access (read-only MCP)**: `CP2077-Mod-Manager.AppImage --mcp`
+  serves the mod list, file hashes, the compatibility index and the game's
+  logs to an agent such as Claude Code
+  (`claude mcp add cp2077-mods -- /path/to/AppImage --mcp`). The database is
+  opened read-only, there are no tools that change or run anything, and logs
+  are only readable from a fixed list of known locations.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
   overridden ones.
 - **Nexus Mods sign-in**: “Sign in with Nexus Mods” uses Nexus SSO, so you
@@ -97,7 +103,5 @@ push (see `.github/workflows/build.yml`).
 
 - Nexus collections (modpacks) via the v2 GraphQL API
 - Mod interaction graph canvas
-- Read-only MCP server so an external agent (e.g. Claude) can query the
-  compatibility index, mod metadata and crash logs
 - Crash log analysis (CET, RED4ext, redscript and game logs in the prefix)
 - Enable/disable without uninstalling, load order for `.archive` files

@@ -163,6 +163,16 @@ impl Db {
         Self::init(conn)
     }
 
+    /// Open without the ability to change anything (for the agent server).
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.pragma_update(None, "query_only", true)?;
+        Ok(Self { conn })
+    }
+
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }

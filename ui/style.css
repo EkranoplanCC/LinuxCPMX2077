@@ -97,3 +97,4 @@ legend { padding: 0 6px; font-weight: 600; }
 .finding.warning { border-left: 3px solid var(--yellow); }
 .finding.info { border-left: 3px solid var(--cyan); }
 .finding.ok { border-left: 3px solid var(--green); }
+pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 8px; }

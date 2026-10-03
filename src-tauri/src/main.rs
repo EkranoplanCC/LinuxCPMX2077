@@ -473,7 +473,27 @@ fn forward_urls(app: &AppHandle, urls: Vec<String>) {
     }
 }
 
+/// How to launch the read-only agent server for this install.
+#[tauri::command]
+fn mcp_command() -> String {
+    let exe = std::env::var("APPIMAGE")
+        .ok()
+        .or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "cp2077-modmanager".into());
+    format!("claude mcp add cp2077-mods -- \"{exe}\" --mcp")
+}
+
 fn main() {
+    // `--mcp`: serve the read-only agent API on stdin/stdout, no window.
+    if std::env::args().skip(1).any(|a| a == "--mcp") {
+        let result = cp2077mm_core::mcp::Server::open_default()
+            .and_then(|s| s.serve(std::io::stdin().lock(), std::io::stdout().lock()));
+        if let Err(e) = result {
+            eprintln!("cp2077-modmanager --mcp: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let db = Db::open(&paths::db_path().expect("data dir")).expect("open library database");
     // Drop half-finished installs from a previous run.
     let _ = with_installer(&db, |i| {
@@ -509,6 +529,7 @@ fn main() {
             cancel_install,
             uninstall_mod,
             analyze_game,
+            mcp_command,
             verify_mod,
             nexus_status,
             nexus_set_key,

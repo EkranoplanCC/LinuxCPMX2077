@@ -662,7 +662,7 @@ pub fn index_mod(db: &crate::db::Db, staging_root: &Path, mod_id: i64) -> Result
 /// Analyse every mod installed in a game, indexing any that aren't yet.
 pub fn report_for_game(db: &crate::db::Db, staging_root: &Path, game: &crate::db::GameRow) -> Result<Report> {
     let game_dir = Path::new(&game.path);
-    let build = game.build_id.clone().or(game.exe_file_version.clone()).unwrap_or_else(|| "unknown".into());
+    let build = build_key(game);
     let base = match db.base_resources(game.id, &build)? {
         Some(b) => b,
         None => {
@@ -671,16 +671,38 @@ pub fn report_for_game(db: &crate::db::Db, staging_root: &Path, game: &crate::db
             b
         }
     };
-    let mods = db.mods(game.id)?;
     let mut indexes = Vec::new();
-    for m in &mods {
+    for m in db.mods(game.id)? {
         let touches = if db.index_version(m.id)? == Some(SCANNER_VERSION) { db.touches(m.id)? } else { index_mod(db, staging_root, m.id)? };
-        indexes.push((m.id, m.name.clone(), touches));
+        indexes.push((m.id, m.name, touches));
     }
+    Ok(build_report(game_dir, &base, &indexes))
+}
+
+/// The same report from what's already stored, without writing anything.
+/// Returns the names of mods that haven't been indexed yet.
+pub fn report_from_index(db: &crate::db::Db, game: &crate::db::GameRow) -> Result<(Report, Vec<String>)> {
+    let base = db.base_resources(game.id, &build_key(game))?.unwrap_or_default();
+    let mut indexes = Vec::new();
+    let mut unindexed = Vec::new();
+    for m in db.mods(game.id)? {
+        if db.index_version(m.id)?.is_none() {
+            unindexed.push(m.name.clone());
+        }
+        indexes.push((m.id, m.name.clone(), db.touches(m.id)?));
+    }
+    Ok((build_report(Path::new(&game.path), &base, &indexes), unindexed))
+}
+
+fn build_key(game: &crate::db::GameRow) -> String {
+    game.build_id.clone().or(game.exe_file_version.clone()).unwrap_or_else(|| "unknown".into())
+}
+
+fn build_report(game_dir: &Path, base: &BTreeSet<u64>, indexes: &[(i64, String, Vec<Touch>)]) -> Report {
     let frameworks: BTreeSet<String> =
         crate::game::detect_frameworks(game_dir).into_iter().filter(|f| f.installed).map(|f| f.id).collect();
     let views: Vec<ModIndex> = indexes.iter().map(|(id, name, t)| ModIndex { mod_id: *id, name, touches: t }).collect();
-    Ok(analyze(&views, &base, &frameworks))
+    analyze(&views, base, &frameworks)
 }
 
 #[cfg(test)]

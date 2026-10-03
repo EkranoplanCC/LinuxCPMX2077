@@ -10,6 +10,7 @@ pub mod fomod;
 pub mod game;
 pub mod hash;
 pub mod install;
+pub mod mcp;
 pub mod nexus;
 pub mod paths;
 pub mod secrets;

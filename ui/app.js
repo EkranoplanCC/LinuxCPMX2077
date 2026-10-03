@@ -452,11 +452,18 @@ async function loadDownloads() {
   )));
 }
 
+// ---- agent access ------------------------------------------------------
+$("#copy-mcp").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#mcp-cmd").textContent); toast("Copied"); }
+  catch { toast("Select the command and copy it manually", true); }
+});
+
 // ---- boot ---------------------------------------------------------------
 (async () => {
   await busy(null, detect);
   await busy(null, refreshNexus);
   await busy(null, refreshSso);
+  $("#mcp-cmd").textContent = await invoke("mcp_command");
   const links = await invoke("startup_links");
   for (const l of links) await busy(null, () => handleNxm(l));
 })();
