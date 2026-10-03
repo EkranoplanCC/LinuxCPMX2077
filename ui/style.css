@@ -40,7 +40,7 @@ input, select {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   padding: 7px 10px; border-radius: 4px; font: inherit; min-width: 0;
 }
-input:not([type=checkbox]) { flex: 1; }
+input:not([type=checkbox]):not([type=radio]) { flex: 1; }
 select { width: 100%; margin-bottom: 8px; }
 .check { display: flex; gap: 6px; align-items: center; color: var(--muted); }
 nav { display: flex; flex-direction: column; gap: 4px; margin-top: 20px; }
@@ -70,3 +70,24 @@ code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size:
 #toast { position: fixed; right: 20px; bottom: 20px; max-width: 460px; background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--cyan); padding: 12px 14px; border-radius: 4px; white-space: pre-wrap; }
 #toast.error { border-left-color: var(--red); }
 #game-info, .warnings li { overflow-wrap: anywhere; }
+
+#wizard { position: fixed; inset: 0; background: rgba(5, 5, 10, .75); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.wiz-panel { width: min(960px, 94vw); height: min(640px, 90vh); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--yellow); border-radius: 6px; padding: 18px 20px; }
+.wiz-panel header { margin-bottom: 12px; }
+#wiz-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+#wiz-steps span { font-size: 12px; padding: 3px 8px; border-radius: 3px; background: var(--panel-2); color: var(--muted); }
+#wiz-steps span.active { background: var(--yellow); color: #111; }
+.wiz-main { flex: 1; display: flex; gap: 18px; min-height: 0; }
+#wiz-body { flex: 1; overflow-y: auto; padding-right: 6px; }
+.wiz-side { width: 320px; flex-shrink: 0; overflow-y: auto; }
+#wiz-image img { max-width: 100%; border-radius: 4px; border: 1px solid var(--border); }
+#wiz-desc { white-space: pre-wrap; }
+fieldset { border: 1px solid var(--border); border-radius: 4px; margin: 0 0 12px; padding: 8px 12px 10px; }
+legend { padding: 0 6px; font-weight: 600; }
+.plugin { display: flex; align-items: center; gap: 6px; padding: 5px 4px; border-radius: 3px; cursor: pointer; }
+.plugin:hover { background: var(--panel-2); }
+.plugin.unusable { opacity: .55; }
+.plugin .badge { margin-left: 6px; }
+.wiz-panel footer { margin-top: 14px; }
+.spacer { flex: 1; }
+.wiz-panel h2 { font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; margin: 0; }

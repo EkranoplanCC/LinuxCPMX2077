@@ -16,9 +16,20 @@ Heroic (GOG), shipped as an AppImage.
 - **Tracks everything** in a SQLite library (`~/.local/share/cp2077-modmanager/`):
   each mod, its source, the game build it was installed on, the archive's
   SHA-256/MD5, and every file it put into the game with its SHA-256.
-- **Installs archives** (`.zip`, `.7z`; `.rar` via system `bsdtar`/`unrar`),
-  recognising game-root layouts (even wrapped in a folder), loose `.archive`
-  / `.xl` / `.reds` / tweak files, and REDmod folders.
+- **Installs archives** (`.zip`, `.7z`; `.rar` via system `bsdtar`/`unrar`)
+  the way each mod expects:
+  - **FOMOD installers** run as an in-app wizard: steps, option groups and
+    their pick-one/pick-any rules, recommended/required/not-usable options
+    (including ones that depend on files already in the game, e.g. "needs
+    CET"), condition flags, hidden steps, conditional files and priorities.
+    Installer images are shown; UTF-16 XML is handled.
+  - Game-root layouts (even wrapped in a folder): CET, RED4ext, redscript,
+    ArchiveXL/TweakXL, `engine/` configs.
+  - Standalone CET mod folders (with `init.lua`) go to
+    `bin/x64/plugins/cyber_engine_tweaks/mods/`.
+  - REDmod folders (`info.json` + `archives/`, `scripts/`, …) go to `mods/`,
+    with a warning if the `-modded` launch option is missing.
+  - Loose `.archive` / `.xl` / `.reds` / tweak files.
 - **Conflicts**: refuses to overwrite another mod's files unless you allow it;
   uninstalling the winner restores the loser's copy, and original game files
   are backed up and restored.

@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::archive::{self, Limits};
 use crate::db::{Db, GameRow, ModFile, NewMod};
+use crate::fomod;
 use crate::hash;
 use crate::{Error, Result};
 
@@ -103,8 +104,21 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
         return Ok(out);
     }
 
-    // 2. REDmod: a folder containing info.json.
-    if let Some(info) = files.iter().find(|f| file_name(f).eq_ignore_ascii_case("info.json")) {
+    // 2. REDmod: a folder with info.json next to REDmod content folders.
+    let redmod_dirs = ["archives", "customsounds", "scripts", "tweaks"];
+    let redmod_info = files.iter().find(|f| {
+        if !file_name(f).eq_ignore_ascii_case("info.json") {
+            return false;
+        }
+        let dir = f.rsplit_once('/').map(|(d, _)| format!("{}/", d.to_lowercase())).unwrap_or_default();
+        files.iter().any(|o| {
+            o.to_lowercase()
+                .strip_prefix(&dir)
+                .and_then(|rest| rest.split_once('/'))
+                .is_some_and(|(first, _)| redmod_dirs.contains(&first))
+        })
+    });
+    if let Some(info) = redmod_info {
         let dir = info.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
         let folder = if dir.is_empty() { sanitize_folder(mod_name) } else { file_name(&dir).to_string() };
         let pfx = if dir.is_empty() { String::new() } else { format!("{dir}/") };
@@ -118,7 +132,29 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
         return Ok(out);
     }
 
-    // 3. Loose archive / redscript / tweak files.
+    // 3. Cyber Engine Tweaks mod folder packaged on its own (has init.lua).
+    if let Some(init) = files
+        .iter()
+        .filter(|f| file_name(f).eq_ignore_ascii_case("init.lua"))
+        .min_by_key(|f| f.matches('/').count())
+    {
+        let dir = init.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        let folder = if dir.is_empty() { sanitize_folder(mod_name) } else { file_name(&dir).to_string() };
+        let pfx = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let mut out = Plan { files: vec![], skipped: vec![], layout: "cet-mod".into() };
+        for f in files {
+            match f.strip_prefix(&pfx) {
+                Some(rest) => out.files.push(PlannedFile {
+                    staged: f.clone(),
+                    target: format!("bin/x64/plugins/cyber_engine_tweaks/mods/{folder}/{rest}"),
+                }),
+                None => out.skipped.push(f.clone()),
+            }
+        }
+        return Ok(out);
+    }
+
+    // 4. Loose archive / redscript / tweak files.
     let mut out = Plan { files: vec![], skipped: vec![], layout: "loose".into() };
     let script_dir = sanitize_folder(mod_name);
     for f in files {
@@ -190,10 +226,45 @@ pub struct Installer<'a> {
     pub limits: Limits,
 }
 
+#[derive(Default)]
 pub struct InstallOptions {
     pub meta: NewMod,
     /// Allow replacing files that another mod already installed.
     pub overwrite: bool,
+    /// Answers for a FOMOD installer; `None` uses its defaults.
+    pub fomod_choices: Option<fomod::Selections>,
+}
+
+/// An archive that has been hashed and extracted to staging but not yet
+/// installed, so the user can answer installer questions first.
+#[derive(Debug, Clone, Serialize)]
+pub struct Prepared {
+    /// Token identifying the staging directory.
+    pub id: String,
+    pub archive_name: String,
+    pub archive_sha256: String,
+    pub archive_md5: String,
+    pub file_count: usize,
+    pub fomod: Option<FomodInfo>,
+    #[serde(skip)]
+    pub dir: PathBuf,
+    #[serde(skip)]
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FomodInfo {
+    /// Folder inside the archive that holds `fomod/` (`""` or `"X/"`).
+    pub root: String,
+    pub installer: fomod::Installer,
+    pub defaults: fomod::Selections,
+}
+
+/// FOMOD file conditions look at what's already in the game directory.
+pub fn game_files(game_dir: &Path) -> impl Fn(&str) -> fomod::FileState + '_ {
+    move |rel: &str| {
+        if crate::game::exists_ci(game_dir, rel) { fomod::FileState::Active } else { fomod::FileState::Missing }
+    }
 }
 
 impl Installer<'_> {
@@ -217,23 +288,98 @@ impl Installer<'_> {
         Ok(out)
     }
 
-    pub fn install(&self, game: &GameRow, archive_path: &Path, opts: InstallOptions) -> Result<InstallReport> {
-        let game_dir = PathBuf::from(&game.path);
+    /// Hash and extract an archive, and read its FOMOD installer if it has one.
+    pub fn prepare(&self, game: &GameRow, archive_path: &Path) -> Result<Prepared> {
         let (sha256, md5) = hash::file_digests(archive_path)?;
-        let mut meta = opts.meta;
-        meta.archive_sha256 = sha256;
-        meta.archive_md5 = md5;
-        if meta.archive_name.is_empty() {
-            meta.archive_name = archive_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        }
-
-        // Extract to a temporary staging dir first; it's renamed once the
-        // mod has an id.
         std::fs::create_dir_all(&self.staging_root)?;
-        let tmp_stage = tempfile::Builder::new().prefix("incoming-").tempdir_in(&self.staging_root)?;
-        let extract_dir = tmp_stage.path().join("files");
-        let extracted = archive::extract(archive_path, &extract_dir, self.limits)?;
-        let plan = plan(&extracted.files, &meta.name)?;
+        let dir = tempfile::Builder::new().prefix("incoming-").tempdir_in(&self.staging_root)?.keep();
+        let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let extracted = match archive::extract(archive_path, &dir.join("files"), self.limits) {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(e);
+            }
+        };
+        let fomod = match fomod::find_config(&extracted.files) {
+            Some((xml_path, root)) => {
+                let read = std::fs::read(dir.join("files").join(&xml_path))
+                    .map_err(Error::from)
+                    .and_then(|b| fomod::decode_xml(&b))
+                    .and_then(|x| fomod::parse(&x));
+                match read {
+                    Ok(installer) => {
+                        let defaults = installer.default_selections(&game_files(Path::new(&game.path)));
+                        Some(FomodInfo { root, installer, defaults })
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_dir_all(&dir);
+                        return Err(e);
+                    }
+                }
+            }
+            None => None,
+        };
+        Ok(Prepared {
+            id,
+            archive_name: archive_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            archive_sha256: sha256,
+            archive_md5: md5,
+            file_count: extracted.files.len(),
+            fomod,
+            dir,
+            files: extracted.files,
+        })
+    }
+
+    /// Look up a prepared archive by its token (e.g. after an app restart).
+    pub fn prepared_dir(&self, id: &str) -> Result<PathBuf> {
+        if !id.starts_with("incoming-") || id.contains('/') || id.contains("..") {
+            return Err(Error::Other("invalid install token".into()));
+        }
+        Ok(self.staging_root.join(id))
+    }
+
+    /// Work out where every file goes, answering FOMOD questions with
+    /// `choices` (or the installer's defaults).
+    pub fn plan_prepared(&self, game: &GameRow, p: &Prepared, name: &str, choices: Option<&fomod::Selections>) -> Result<Plan> {
+        let Some(fm) = &p.fomod else { return plan(&p.files, name) };
+        let rel: Vec<String> = p.files.iter().filter_map(|f| f.strip_prefix(&fm.root).map(String::from)).collect();
+        let sel = choices.unwrap_or(&fm.defaults);
+        let resolved = fm.installer.resolve(sel, &game_files(Path::new(&game.path)), &rel)?;
+        if resolved.files.is_empty() {
+            return Err(Error::Other("the chosen installer options don't install any files".into()));
+        }
+        Ok(Plan {
+            files: resolved
+                .files
+                .into_iter()
+                .map(|(src, dst)| PlannedFile { staged: format!("{}{}", fm.root, src), target: dst })
+                .collect(),
+            skipped: resolved.missing_sources.into_iter().map(|m| format!("{m} (named by installer, not in archive)")).collect(),
+            layout: "fomod".into(),
+        })
+    }
+
+    /// Install a prepared archive. On a conflict the prepared files are kept
+    /// so the user can retry with overwriting allowed.
+    pub fn finish(&self, game: &GameRow, p: &Prepared, opts: InstallOptions) -> Result<InstallReport> {
+        let game_dir = PathBuf::from(&game.path);
+        let mut meta = opts.meta;
+        meta.archive_sha256 = p.archive_sha256.clone();
+        meta.archive_md5 = p.archive_md5.clone();
+        if meta.archive_name.is_empty() {
+            meta.archive_name = p.archive_name.clone();
+        }
+        if meta.name.trim().is_empty() {
+            meta.name = p
+                .fomod
+                .as_ref()
+                .map(|f| f.installer.module_name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| p.archive_name.clone());
+        }
+        let plan = self.plan_prepared(game, p, &meta.name, opts.fomod_choices.as_ref())?;
 
         let conflicts = self.conflicts(game, &plan)?;
         if !conflicts.is_empty() && !opts.overwrite {
@@ -247,12 +393,10 @@ impl Installer<'_> {
         if stage_dir.exists() {
             std::fs::remove_dir_all(&stage_dir)?;
         }
-        let tmp_path = tmp_stage.keep();
-        std::fs::rename(tmp_path.join("files"), &stage_dir)?;
-        let _ = std::fs::remove_dir_all(&tmp_path);
+        std::fs::rename(p.dir.join("files"), &stage_dir)?;
+        let _ = std::fs::remove_dir_all(&p.dir);
 
-        let result = self.deploy(game, &game_dir, mod_id, &stage_dir, &plan);
-        match result {
+        match self.deploy(game, &game_dir, mod_id, &stage_dir, &plan) {
             Ok(backed_up) => Ok(InstallReport {
                 mod_id,
                 name: meta.name,
@@ -268,6 +412,32 @@ impl Installer<'_> {
                 Err(e)
             }
         }
+    }
+
+    pub fn discard(&self, p: &Prepared) {
+        let _ = std::fs::remove_dir_all(&p.dir);
+    }
+
+    /// Remove leftovers of installs that were never finished.
+    pub fn cleanup_incoming(&self) {
+        if let Ok(rd) = std::fs::read_dir(&self.staging_root) {
+            for e in rd.flatten() {
+                if e.file_name().to_string_lossy().starts_with("incoming-") {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+    }
+
+    /// Prepare and install in one go (FOMODs use `opts.fomod_choices` or
+    /// their defaults).
+    pub fn install(&self, game: &GameRow, archive_path: &Path, opts: InstallOptions) -> Result<InstallReport> {
+        let p = self.prepare(game, archive_path)?;
+        let r = self.finish(game, &p, opts);
+        if r.is_err() {
+            self.discard(&p);
+        }
+        r
     }
 
     fn deploy(&self, game: &GameRow, game_dir: &Path, mod_id: i64, stage_dir: &Path, plan: &Plan) -> Result<Vec<String>> {
@@ -413,6 +583,14 @@ mod tests {
         let p = plan(&s(&["bin/x64/plugins/cyber_engine_tweaks/mods/m/init.lua"]), "m").unwrap();
         assert_eq!(p.files[0].target, "bin/x64/plugins/cyber_engine_tweaks/mods/m/init.lua");
 
+        let p = plan(&s(&["Better HUD/init.lua", "Better HUD/modules/ui.lua", "Better HUD.txt"]), "x").unwrap();
+        assert_eq!(p.layout, "cet-mod");
+        assert_eq!(p.files[1].target, "bin/x64/plugins/cyber_engine_tweaks/mods/Better HUD/modules/ui.lua");
+
+        // A stray info.json without REDmod folders isn't REDmod.
+        let p = plan(&s(&["info.json", "a.archive"]), "x").unwrap();
+        assert_eq!(p.layout, "loose");
+
         assert!(plan(&s(&["readme.md"]), "x").is_err());
     }
 
@@ -458,7 +636,7 @@ mod tests {
     }
 
     fn meta(name: &str) -> InstallOptions {
-        InstallOptions { meta: NewMod { name: name.into(), source: "manual".into(), ..Default::default() }, overwrite: false }
+        InstallOptions { meta: NewMod { name: name.into(), source: "manual".into(), ..Default::default() }, ..Default::default() }
     }
 
     #[test]
@@ -502,6 +680,48 @@ mod tests {
         assert_eq!(std::fs::read(game_dir.join("engine/config/base.ini")).unwrap(), b"vanilla");
         assert!(!game_dir.join("archive").exists(), "empty dirs cleaned up");
         assert!(f.db.mods(f.game.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn installs_fomod_with_choices() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let xml = br#"<config><moduleName>Fancy Textures</moduleName>
+          <installSteps order="Explicit"><installStep name="Pick">
+            <optionalFileGroups><group name="Size" type="SelectExactlyOne"><plugins order="Explicit">
+              <plugin name="Small"><description/><files><folder source="small" destination="archive\pc\mod"/></files>
+                <typeDescriptor><type name="Recommended"/></typeDescriptor></plugin>
+              <plugin name="Large"><description/><files><folder source="large" destination="archive\pc\mod"/></files>
+                <typeDescriptor><type name="Optional"/></typeDescriptor></plugin>
+            </plugins></group></optionalFileGroups>
+          </installStep></installSteps></config>"#;
+        let a = f.root.join("fomod.zip");
+        zip_with(&a, &[
+            ("Fancy/fomod/ModuleConfig.xml", xml),
+            ("Fancy/small/tex.archive", b"small"),
+            ("Fancy/large/tex.archive", b"large"),
+        ]);
+        let game = f.game.clone();
+        let p = inst.prepare(&game, &a).unwrap();
+        let fm = p.fomod.as_ref().expect("fomod detected");
+        assert_eq!(fm.root, "Fancy/");
+        assert_eq!(fm.defaults, vec![vec![vec![0]]]);
+        let opts = InstallOptions { fomod_choices: Some(vec![vec![vec![1]]]), ..Default::default() };
+        let r = inst.finish(&game, &p, opts).unwrap();
+        assert_eq!(r.name, "Fancy Textures");
+        assert_eq!(r.layout, "fomod");
+        let game_dir = PathBuf::from(&game.path);
+        assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/tex.archive")).unwrap(), b"large");
+        assert!(!p.dir.exists(), "prepared dir moved into mod staging");
+
+        // Uninstall works from the staged copy like any other mod.
+        inst.uninstall(r.mod_id).unwrap();
+        assert!(!game_dir.join("archive/pc/mod/tex.archive").exists());
     }
 
     #[test]

@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod db;
 pub mod error;
+pub mod fomod;
 pub mod game;
 pub mod hash;
 pub mod install;

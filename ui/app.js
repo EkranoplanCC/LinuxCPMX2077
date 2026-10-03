@@ -149,9 +149,136 @@ $("#install-file").addEventListener("click", (e) => busy(e.target, async () => {
   const path = await dialog.open({ title: "Choose a mod archive", filters: [{ name: "Archives", extensions: ["zip", "7z", "rar"] }] });
   if (!path) return;
   const r = await invoke("install_archive", { gameId: currentGame.id, path, name: null, overwrite: $("#overwrite").checked });
-  reportInstall(r);
+  await handleOutcome(r);
   loadMods();
 }));
+
+// ---- FOMOD wizard ------------------------------------------------------
+async function handleOutcome(outcome) {
+  if (outcome.status === "installed") {
+    reportInstall(outcome.report);
+  } else if (outcome.status === "needs_choices") {
+    const report = await runWizard(outcome);
+    if (report) reportInstall(report);
+  }
+  loadMods();
+}
+
+const KIND_HINT = {
+  SelectExactlyOne: "Pick one",
+  SelectAtMostOne: "Pick one or none",
+  SelectAtLeastOne: "Pick at least one",
+  SelectAll: "All included",
+  SelectAny: "Pick any",
+};
+
+// Resolves with an InstallReport, or null if the user cancels.
+function runWizard({ token, name, fomod }) {
+  const inst = fomod.installer;
+  let sel = JSON.parse(JSON.stringify(fomod.defaults));
+  let evaln = null;
+  let pos = 0; // index into visible steps
+  const imgCache = new Map();
+
+  const modal = $("#wizard");
+  modal.classList.remove("hidden");
+  $("#wiz-title").textContent = name;
+
+  return new Promise((resolve) => {
+    const close = (result) => {
+      modal.classList.add("hidden");
+      $("#wiz-body").replaceChildren();
+      resolve(result);
+    };
+
+    const visibleSteps = () => evaln.visible.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+
+    async function showImage(path) {
+      const box = $("#wiz-image");
+      if (!path) { box.replaceChildren(); return; }
+      if (!imgCache.has(path)) imgCache.set(path, await invoke("fomod_image", { token, path }).catch(() => null));
+      const url = imgCache.get(path);
+      box.replaceChildren(url ? el("img", { src: url, alt: "" }) : "");
+    }
+
+    function describe(plugin) {
+      $("#wiz-desc").textContent = plugin.description || "No description.";
+      showImage(plugin.image);
+    }
+
+    async function refresh() {
+      evaln = await invoke("fomod_evaluate", { token, selections: sel });
+      // Drop choices that became unusable, add ones that became required.
+      evaln.plugin_types.forEach((step, si) => step.forEach((types, gi) => {
+        sel[si][gi] = sel[si][gi].filter((pi) => types[pi] !== "NotUsable");
+        types.forEach((t, pi) => { if (t === "Required" && !sel[si][gi].includes(pi)) sel[si][gi].push(pi); });
+      }));
+      render();
+    }
+
+    function render() {
+      const steps = visibleSteps();
+      pos = Math.min(pos, steps.length - 1);
+      const si = steps[pos];
+      $("#wiz-steps").replaceChildren(...steps.map((s, i) =>
+        el("span", { class: i === pos ? "active" : "" }, inst.steps[s].name || `Step ${i + 1}`)));
+      const step = inst.steps[si];
+      $("#wiz-body").replaceChildren(...(step ? step.groups.map((g, gi) => {
+        const types = evaln.plugin_types[si][gi];
+        const single = g.kind === "SelectExactlyOne" || g.kind === "SelectAtMostOne";
+        const inputName = `g-${si}-${gi}`;
+        const rows = g.plugins.map((p, pi) => {
+          const t = types[pi];
+          const checked = sel[si][gi].includes(pi);
+          const locked = t === "NotUsable" || t === "Required" || g.kind === "SelectAll";
+          const input = el("input", { type: single ? "radio" : "checkbox", name: inputName });
+          input.checked = checked;
+          input.disabled = locked;
+          input.addEventListener("change", () => {
+            if (single) sel[si][gi] = [pi];
+            else if (input.checked) sel[si][gi] = [...sel[si][gi], pi];
+            else sel[si][gi] = sel[si][gi].filter((x) => x !== pi);
+            refresh();
+          });
+          const label = el("label", { class: "plugin" + (t === "NotUsable" ? " unusable" : "") },
+            input, " ", p.name,
+            t === "Recommended" ? el("span", { class: "badge ok" }, "recommended") : null,
+            t === "Required" ? el("span", { class: "badge" }, "required") : null,
+            t === "NotUsable" ? el("span", { class: "badge bad" }, "not usable") : null);
+          label.addEventListener("mouseenter", () => describe(p));
+          label.addEventListener("focusin", () => describe(p));
+          return label;
+        });
+        if (g.kind === "SelectAtMostOne") {
+          const none = el("input", { type: "radio", name: inputName });
+          none.checked = sel[si][gi].length === 0;
+          none.addEventListener("change", () => { sel[si][gi] = []; refresh(); });
+          rows.push(el("label", { class: "plugin muted" }, none, " None"));
+        }
+        return el("fieldset", {}, el("legend", {}, g.name, " ", el("span", { class: "muted" }, KIND_HINT[g.kind] || "")), ...rows);
+      }) : [el("p", {}, "This installer has no options.")]));
+      const first = step?.groups[0]?.plugins[0];
+      if (first) describe(first); else { $("#wiz-desc").textContent = ""; showImage(null); }
+      $("#wiz-back").disabled = pos === 0;
+      const last = pos >= steps.length - 1;
+      $("#wiz-next").classList.toggle("hidden", last);
+      $("#wiz-install").classList.toggle("hidden", !last);
+    }
+
+    $("#wiz-back").onclick = () => { pos--; render(); };
+    $("#wiz-next").onclick = () => { pos++; render(); };
+    $("#wiz-cancel").onclick = async () => {
+      await invoke("cancel_install", { token }).catch(() => {});
+      close(null);
+    };
+    $("#wiz-install").onclick = (e) => busy(e.target, async () => {
+      const report = await invoke("finish_install", { token, selections: sel, overwrite: $("#overwrite").checked });
+      close(report);
+    });
+
+    refresh().catch((e) => { toast(String(e), true); close(null); });
+  });
+}
 
 // ---- nexus --------------------------------------------------------------
 async function refreshNexus() {
@@ -255,7 +382,7 @@ async function download(modId, fileId, key = null, expires = null) {
   });
   $("#progress").classList.add("hidden");
   if (!r.download.verified) toast("Downloaded, but Nexus' checksum service was unreachable, so the file is unverified.", true);
-  if (r.install) reportInstall(r.install);
+  if (r.install) await handleOutcome(r.install);
   loadDownloads();
   loadMods();
 }
@@ -289,7 +416,7 @@ async function loadDownloads() {
       onclick: (e) => busy(e.target, async () => {
         if (!currentGame) throw "Select a game first";
         const r = await invoke("install_archive", { gameId: currentGame.id, path: d.path, name: null, overwrite: $("#overwrite").checked });
-        reportInstall(r);
+        await handleOutcome(r);
         loadMods();
       }),
     }, "Install")),

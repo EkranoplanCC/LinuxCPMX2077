@@ -256,6 +256,12 @@ pub fn steam_launch_options(home: &Path) -> Option<String> {
     None
 }
 
+/// Any `mods/<name>/info.json` in the game folder.
+pub fn has_redmods(game: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(game.join("mods")) else { return false };
+    rd.flatten().any(|e| e.path().join("info.json").is_file())
+}
+
 /// Proton-specific problems we can spot statically.
 fn warnings(g: &GameInstall) -> Vec<String> {
     let mut w = Vec::new();
@@ -270,6 +276,13 @@ fn warnings(g: &GameInstall) -> Vec<String> {
                  WINEDLLOVERRIDES=\"winmm,version=n,b\" %command% under Proton."
                     .into(),
             );
+        }
+    }
+    // REDmod mods only load (and get deployed) with the -modded flag.
+    if g.store == Store::Steam && has_redmods(&g.path) {
+        let opts = g.launch_options.clone().unwrap_or_default();
+        if !opts.split_whitespace().any(|o| o.eq_ignore_ascii_case("-modded")) {
+            w.push("REDmod mods are installed but the Steam launch options don't include -modded, so they won't load.".into());
         }
     }
     for (dep, needs) in [("archivexl", "red4ext"), ("tweakxl", "red4ext"), ("codeware", "red4ext")] {
@@ -323,5 +336,10 @@ mod tests {
         assert!(g.proton_prefix.is_some());
         assert!(g.frameworks.iter().any(|f| f.id == "cet" && f.installed), "case-insensitive marker");
         assert!(g.warnings.iter().any(|w| w.contains("WINEDLLOVERRIDES")));
+        assert!(!g.warnings.iter().any(|w| w.contains("-modded")));
+
+        touch(&game.join("mods/SomeRedmod/info.json"));
+        let g = &detect(home.path())[0];
+        assert!(g.warnings.iter().any(|w| w.contains("-modded")));
     }
 }

@@ -105,6 +105,29 @@
     </section>
   </main>
 
+  <div id="wizard" class="hidden" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
+    <div class="wiz-panel">
+      <header>
+        <h2 id="wiz-title"></h2>
+        <div id="wiz-steps"></div>
+      </header>
+      <div class="wiz-main">
+        <div id="wiz-body"></div>
+        <aside class="wiz-side">
+          <div id="wiz-image"></div>
+          <p id="wiz-desc" class="muted"></p>
+        </aside>
+      </div>
+      <footer class="row">
+        <button id="wiz-cancel">Cancel</button>
+        <span class="spacer"></span>
+        <button id="wiz-back">Back</button>
+        <button id="wiz-next" class="primary">Next</button>
+        <button id="wiz-install" class="primary hidden">Install</button>
+      </footer>
+    </div>
+  </div>
+
   <div id="toast" class="hidden"></div>
   <script src="app.js"></script>
 </body>
