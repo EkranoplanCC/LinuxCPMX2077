@@ -13,6 +13,7 @@ pub mod hash;
 pub mod install;
 pub mod mcp;
 pub mod nexus;
+pub mod nexus_browse;
 pub mod paths;
 pub mod secrets;
 pub mod sso;

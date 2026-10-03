@@ -1,0 +1,60 @@
+{
+ "data": {
+  "mods": {
+   "totalCount": 57,
+   "nodes": [
+    {
+     "modId": 2418,
+     "name": "Vehicle Handling Overhaul",
+     "summary": "Better driving.",
+     "version": "2.1",
+     "author": "pMarK",
+     "pictureUrl": "https://staticdelivery.nexusmods.com/mods/3333/images/2418/2418-1.png",
+     "thumbnailUrl": "https://staticdelivery.nexusmods.com/mods/3333/images/thumbnails/2418/2418-1.png",
+     "endorsements": 5400,
+     "downloads": 250000,
+     "createdAt": "2021-05-01T10:00:00Z",
+     "updatedAt": "2026-09-14T18:22:05Z",
+     "adultContent": false,
+     "uploader": {
+      "name": "pMarK"
+     }
+    },
+    {
+     "modId": 3000,
+     "name": "Handling tweaks",
+     "summary": null,
+     "version": "1.0",
+     "author": null,
+     "pictureUrl": null,
+     "thumbnailUrl": null,
+     "endorsements": 12,
+     "downloads": 300,
+     "createdAt": "2023-01-01T00:00:00.000Z",
+     "updatedAt": "2023-01-02T00:00:00.000Z",
+     "adultContent": false,
+     "uploader": {
+      "name": "uploader-only"
+     }
+    },
+    {
+     "modId": 3001,
+     "name": "Adult handling",
+     "summary": "x",
+     "version": "1",
+     "author": "a",
+     "pictureUrl": null,
+     "thumbnailUrl": null,
+     "endorsements": 1,
+     "downloads": 1,
+     "createdAt": "2023-01-01T00:00:00Z",
+     "updatedAt": "2023-01-01T00:00:00Z",
+     "adultContent": true,
+     "uploader": {
+      "name": "a"
+     }
+    }
+   ]
+  }
+ }
+}
