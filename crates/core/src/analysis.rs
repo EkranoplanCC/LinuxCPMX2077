@@ -494,7 +494,16 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
     }
 
     let mut findings = Vec::new();
-    let list = |ids: &[(i64, String)]| ids.iter().map(|(id, _)| names[id].to_string()).collect::<Vec<_>>().join(", ");
+    // "A and B both" / "A, B and C all"
+    let list = |ids: &[(i64, String)]| {
+        let n: Vec<&str> = ids.iter().map(|(id, _)| names[id]).collect();
+        match n.as_slice() {
+            [] => String::new(),
+            [one] => one.to_string(),
+            [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        }
+    };
+    let all = |ids: &[(i64, String)]| if ids.len() == 2 { "both" } else { "all" };
 
     // Resources: group shared hashes per set of mods so a texture pack
     // overlapping another doesn't produce thousands of lines.
@@ -519,7 +528,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all replace {key}; only one replacement can win.", list(owners)),
+                message: format!("{} {} replace {key}; only one replacement can win.", list(owners), all(owners)),
             }),
             Kind::RedsAddField | Kind::RedsAddMethod => findings.push(Finding {
                 severity: Severity::Error,
@@ -533,35 +542,35 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all replace the global function {key}.", list(owners)),
+                message: format!("{} {} replace the global function {key}.", list(owners), all(owners)),
             }),
             Kind::CetOverride => findings.push(Finding {
                 severity: Severity::Warning,
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all Override {key} in CET; the last one loaded wins.", list(owners)),
+                message: format!("{} {} Override {key} in CET; the last one loaded wins.", list(owners), all(owners)),
             }),
             Kind::TweakProperty => findings.push(Finding {
                 severity: Severity::Warning,
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all set {key}; the tweak loaded last decides the value.", list(owners)),
+                message: format!("{} {} set {key}; the tweak loaded last decides the value.", list(owners), all(owners)),
             }),
             Kind::XlPatch => findings.push(Finding {
                 severity: Severity::Info,
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all patch {key} with ArchiveXL; patches stack but can clash.", list(owners)),
+                message: format!("{} {} patch {key} with ArchiveXL; patches stack but can clash.", list(owners), all(owners)),
             }),
             Kind::RedsWrapMethod | Kind::CetObserve => findings.push(Finding {
                 severity: Severity::Info,
                 kind: *kind,
                 key: key.clone(),
                 mod_ids: ids,
-                message: format!("{} all hook {key}; hooks chain, so this is usually fine.", list(owners)),
+                message: format!("{} {} hook {key}; hooks chain, so this is usually fine.", list(owners), all(owners)),
             }),
             Kind::Red4extPlugin => findings.push(Finding {
                 severity: Severity::Error,
@@ -586,8 +595,9 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
             key: format!("{count} resources"),
             mod_ids: ids,
             message: format!(
-                "{} replace the same {count} game resource{}; {winner} loads first and wins.",
+                "{} {} replace the same {count} game resource{}; {winner} loads first and wins.",
                 list(&owners),
+                all(&owners),
                 if count == 1 { "" } else { "s" }
             ),
         });

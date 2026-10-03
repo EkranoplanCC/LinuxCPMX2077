@@ -33,6 +33,13 @@ Heroic (GOG), shipped as an AppImage.
 - **Conflicts**: refuses to overwrite another mod's files unless you allow it;
   uninstalling the winner restores the loser's copy, and original game files
   are backed up and restored.
+- **Compatibility check** (no AI needed): every installed mod is indexed for
+  what it touches: game resources inside `.archive` files (and which of them
+  replace base-game resources), redscript `@replaceMethod`/`@wrapMethod`/
+  `@addField`/`@addMethod`, TweakXL records and properties, ArchiveXL resource
+  patches, CET `Override`/`Observe` hooks and RED4ext plugins. The
+  Compatibility tab lists hard clashes, overlaps (with which archive wins the
+  load order) and frameworks a mod needs that aren't installed.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
   overridden ones.
 - **Nexus Mods sign-in**: “Sign in with Nexus Mods” uses Nexus SSO, so you
@@ -90,6 +97,7 @@ push (see `.github/workflows/build.yml`).
 
 - Nexus collections (modpacks) via the v2 GraphQL API
 - Mod interaction graph canvas
-- Compatibility analysis with Claude (API key, opt-in)
+- Read-only MCP server so an external agent (e.g. Claude) can query the
+  compatibility index, mod metadata and crash logs
 - Crash log analysis (CET, RED4ext, redscript and game logs in the prefix)
 - Enable/disable without uninstalling, load order for `.archive` files
