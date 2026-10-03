@@ -1,0 +1,72 @@
+:root {
+  --bg: #0d0d14;
+  --panel: #151520;
+  --panel-2: #1d1d2b;
+  --text: #e8e8f0;
+  --muted: #8a8aa0;
+  --yellow: #fcee0a;
+  --cyan: #00f0ff;
+  --red: #ff4d5e;
+  --green: #3ddc84;
+  --border: #2a2a3c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; display: flex; height: 100vh; overflow: hidden;
+  background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, "Inter", "Segoe UI", sans-serif;
+}
+h1 { font-size: 22px; letter-spacing: 2px; color: var(--yellow); margin: 0 0 16px; }
+h1 span { display: block; font-size: 11px; color: var(--cyan); letter-spacing: 4px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 0 0 8px; }
+main h2 { font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; margin: 0; }
+h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+#sidebar { width: 290px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border); padding: 18px; overflow-y: auto; }
+main { flex: 1; overflow-y: auto; padding: 20px 26px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  padding: 7px 12px; border-radius: 4px; cursor: pointer; font: inherit;
+}
+button:hover { border-color: var(--cyan); }
+button.primary { background: var(--yellow); color: #111; border-color: var(--yellow); font-weight: 600; }
+button.danger:hover { border-color: var(--red); color: var(--red); }
+button:disabled { opacity: .5; cursor: wait; }
+input, select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  padding: 7px 10px; border-radius: 4px; font: inherit; min-width: 0;
+}
+input:not([type=checkbox]) { flex: 1; }
+select { width: 100%; margin-bottom: 8px; }
+.check { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+nav { display: flex; flex-direction: column; gap: 4px; margin-top: 20px; }
+nav button { text-align: left; background: transparent; border-color: transparent; }
+nav button.active { border-left: 3px solid var(--yellow); background: var(--panel-2); }
+.tab { display: none; }
+.tab.active { display: block; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }
+.card p { margin: 0 0 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+td.actions { white-space: nowrap; text-align: right; }
+code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12px; }
+#frameworks, .warnings { list-style: none; padding: 0; margin: 0; }
+#frameworks li::before { content: "○ "; color: var(--muted); }
+#frameworks li.on::before { content: "● "; color: var(--green); }
+.warnings li { color: var(--yellow); background: #2a2810; padding: 6px 8px; border-radius: 4px; margin-top: 8px; font-size: 12px; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; background: var(--panel-2); }
+.badge.ok { color: var(--green); }
+.badge.bad { color: var(--red); }
+.file { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.file:first-of-type { border-top: 0; }
+#progress { position: relative; height: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
+#progress-bar { height: 100%; width: 0; background: var(--cyan); opacity: .35; }
+#progress-text { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 10px; font-size: 12px; }
+#toast { position: fixed; right: 20px; bottom: 20px; max-width: 460px; background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--cyan); padding: 12px 14px; border-radius: 4px; white-space: pre-wrap; }
+#toast.error { border-left-color: var(--red); }
+#game-info, .warnings li { overflow-wrap: anywhere; }

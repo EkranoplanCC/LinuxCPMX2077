@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CP2077 Mod Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <h1>CP2077<span>MOD MANAGER</span></h1>
+    <section id="game-panel">
+      <h2>Game</h2>
+      <select id="game-select"></select>
+      <div id="game-info" class="muted">Looking for Cyberpunk 2077…</div>
+      <div class="row">
+        <button id="rescan">Rescan</button>
+        <button id="add-path">Add path…</button>
+      </div>
+      <ul id="game-warnings" class="warnings"></ul>
+      <h3>Frameworks</h3>
+      <ul id="frameworks"></ul>
+    </section>
+    <nav>
+      <button data-tab="mods" class="active">Installed mods</button>
+      <button data-tab="nexus">Nexus Mods</button>
+      <button data-tab="downloads">Downloads</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+  </aside>
+
+  <main>
+    <section id="tab-mods" class="tab active">
+      <header>
+        <h2>Installed mods</h2>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="overwrite"> Allow overwriting other mods</label>
+          <button id="install-file" class="primary">Install from archive…</button>
+        </div>
+      </header>
+      <table>
+        <thead><tr><th>Name</th><th>Version</th><th>Source</th><th>Files</th><th>Installed on game</th><th></th></tr></thead>
+        <tbody id="mods-body"></tbody>
+      </table>
+      <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or download from Nexus.</p>
+    </section>
+
+    <section id="tab-nexus" class="tab">
+      <header><h2>Nexus Mods</h2></header>
+      <div id="nexus-login" class="card">
+        <p>Paste your personal API key from <b>nexusmods.com → Site preferences → API Keys</b>.
+           It's validated with Nexus and stored in your desktop keyring.</p>
+        <div class="row">
+          <input id="api-key" type="password" placeholder="Nexus API key" autocomplete="off">
+          <button id="save-key" class="primary">Connect</button>
+        </div>
+      </div>
+      <div id="nexus-user" class="card hidden"></div>
+      <div class="card">
+        <p>Paste a mod page URL or ID, or an <code>nxm://</code> link from the “Mod Manager Download” button.</p>
+        <div class="row">
+          <input id="nexus-query" placeholder="https://www.nexusmods.com/cyberpunk2077/mods/107  or  nxm://…">
+          <button id="nexus-go" class="primary">Look up</button>
+        </div>
+      </div>
+      <div id="nexus-result"></div>
+    </section>
+
+    <section id="tab-downloads" class="tab">
+      <header><h2>Downloads</h2></header>
+      <div id="progress" class="hidden"><div id="progress-bar"></div><span id="progress-text"></span></div>
+      <table>
+        <thead><tr><th>File</th><th>Nexus mod / file</th><th>Size</th><th>Verified</th><th>SHA-256</th><th></th></tr></thead>
+        <tbody id="downloads-body"></tbody>
+      </table>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <header><h2>Settings</h2></header>
+      <div class="card">
+        <h3>Nexus download links</h3>
+        <p>Make this app open “Mod Manager Download” (nxm://) links from your browser.
+           This replaces any other handler you had set.</p>
+        <button id="register-nxm">Handle nxm:// links</button>
+      </div>
+      <div class="card">
+        <h3>Nexus account</h3>
+        <button id="clear-key">Forget API key</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
