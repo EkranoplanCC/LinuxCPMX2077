@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS backups (
     sha256      TEXT NOT NULL,
     PRIMARY KEY (game_id, rel_path)
 );
+-- What each mod touches in the game (see analysis.rs).
+CREATE TABLE IF NOT EXISTS touches (
+    mod_id  INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
+    kind    TEXT NOT NULL,
+    key     TEXT NOT NULL,
+    file    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS touches_mod ON touches (mod_id);
+CREATE INDEX IF NOT EXISTS touches_key ON touches (kind, key);
+CREATE TABLE IF NOT EXISTS indexed_mods (
+    mod_id     INTEGER PRIMARY KEY REFERENCES mods(id) ON DELETE CASCADE,
+    version    INTEGER NOT NULL
+);
+-- Resource hashes in the base game's archives, per game install.
+CREATE TABLE IF NOT EXISTS base_resources (
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    hash    INTEGER NOT NULL,
+    PRIMARY KEY (game_id, hash)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS downloads (
     id             INTEGER PRIMARY KEY,
     nexus_mod_id   INTEGER,
@@ -369,6 +388,79 @@ impl Db {
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+}
+
+impl Db {
+    /// Replace a mod's index. `version` is the scanner version so old
+    /// indexes get rebuilt when the scanner improves.
+    pub fn set_touches(&self, mod_id: i64, version: i64, touches: &[crate::analysis::Touch]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM touches WHERE mod_id = ?1", [mod_id])?;
+        {
+            let mut st = tx.prepare("INSERT INTO touches (mod_id, kind, key, file) VALUES (?1, ?2, ?3, ?4)")?;
+            for t in touches {
+                st.execute(params![mod_id, t.kind.as_str(), t.key, t.file])?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO indexed_mods (mod_id, version) VALUES (?1, ?2)
+             ON CONFLICT(mod_id) DO UPDATE SET version = excluded.version",
+            params![mod_id, version],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn touches(&self, mod_id: i64) -> Result<Vec<crate::analysis::Touch>> {
+        let mut st = self.conn.prepare("SELECT kind, key, file FROM touches WHERE mod_id = ?1")?;
+        let rows = st.query_map([mod_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (k, key, file) = row?;
+            if let Some(kind) = crate::analysis::Kind::parse(&k) {
+                out.push(crate::analysis::Touch { kind, key, file });
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn index_version(&self, mod_id: i64) -> Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row("SELECT version FROM indexed_mods WHERE mod_id = ?1", [mod_id], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_base_resources(&self, game_id: i64, build: &str, hashes: &std::collections::BTreeSet<u64>) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM base_resources WHERE game_id = ?1", [game_id])?;
+        {
+            let mut st = tx.prepare("INSERT OR IGNORE INTO base_resources (game_id, hash) VALUES (?1, ?2)")?;
+            for h in hashes {
+                st.execute(params![game_id, *h as i64])?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![format!("base_index_build:{game_id}"), build],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Cached base-game hashes, if they were built for `build`.
+    pub fn base_resources(&self, game_id: i64, build: &str) -> Result<Option<std::collections::BTreeSet<u64>>> {
+        if self.get_setting(&format!("base_index_build:{game_id}"))?.as_deref() != Some(build) {
+            return Ok(None);
+        }
+        let mut st = self.conn.prepare("SELECT hash FROM base_resources WHERE game_id = ?1")?;
+        let rows = st.query_map([game_id], |r| r.get::<_, i64>(0))?;
+        let mut out = std::collections::BTreeSet::new();
+        for h in rows {
+            out.insert(h? as u64);
+        }
+        Ok(Some(out))
     }
 }
 

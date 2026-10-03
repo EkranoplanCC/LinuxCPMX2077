@@ -54,6 +54,7 @@ function showTab(name) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${name}`));
   if (name === "downloads") loadDownloads();
+  if (name === "analysis") runAnalysis();
 }
 
 // ---- game ---------------------------------------------------------------
@@ -152,6 +153,34 @@ $("#install-file").addEventListener("click", (e) => busy(e.target, async () => {
   await handleOutcome(r);
   loadMods();
 }));
+
+// ---- compatibility ------------------------------------------------------
+const FRAMEWORK_NAMES = { cet: "CET", red4ext: "RED4ext", redscript: "redscript", archivexl: "ArchiveXL", tweakxl: "TweakXL", codeware: "Codeware", redmod: "REDmod" };
+
+async function runAnalysis() {
+  if (!currentGame) return;
+  $("#findings").replaceChildren(el("p", { class: "muted" }, "Checking…"));
+  const r = await invoke("analyze_game", { gameId: currentGame.id });
+  const sev = { error: "Problems", warning: "Overlaps to check", info: "Shared hooks (usually fine)" };
+  const groups = ["error", "warning", "info"].map((s) => {
+    const items = r.findings.filter((f) => f.severity === s);
+    if (!items.length) return null;
+    return el("div", { class: `card finding ${s}` },
+      el("h3", {}, `${sev[s]} (${items.length})`),
+      el("ul", {}, ...items.map((f) => el("li", {}, f.message, " ", el("span", { class: "muted mono" }, f.key)))));
+  }).filter(Boolean);
+  $("#findings").replaceChildren(...(groups.length ? groups
+    : [el("div", { class: "card finding ok" }, r.mods.length ? "No conflicts found between your installed mods." : "No mods installed yet.")]));
+  const n = (m, ...kinds) => kinds.reduce((a, k) => a + (m.counts[k] || 0), 0) || "—";
+  $("#mod-summary").replaceChildren(...r.mods.map((m) => el("tr", {},
+    el("td", {}, m.name),
+    el("td", {}, n(m, "resource")),
+    el("td", {}, m.base_overrides || "—"),
+    el("td", {}, n(m, "reds_replace_method", "reds_wrap_method", "reds_add_method", "reds_add_field", "reds_replace_global", "cet_override", "cet_observe")),
+    el("td", {}, n(m, "tweak_property", "xl_patch")),
+    el("td", {}, m.requires.map((x) => FRAMEWORK_NAMES[x] || x).join(", ") || "—"))));
+}
+$("#run-analysis").addEventListener("click", (e) => busy(e.target, runAnalysis));
 
 // ---- FOMOD wizard ------------------------------------------------------
 async function handleOutcome(outcome) {

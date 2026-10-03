@@ -23,6 +23,7 @@
     </section>
     <nav>
       <button data-tab="mods" class="active">Installed mods</button>
+      <button data-tab="analysis">Compatibility</button>
       <button data-tab="nexus">Nexus Mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
@@ -43,6 +44,21 @@
         <tbody id="mods-body"></tbody>
       </table>
       <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or download from Nexus.</p>
+    </section>
+
+    <section id="tab-analysis" class="tab">
+      <header>
+        <h2>Compatibility</h2>
+        <button id="run-analysis" class="primary">Check installed mods</button>
+      </header>
+      <p class="muted">Looks inside every installed mod for game resources, redscript methods, tweak records,
+        ArchiveXL patches and CET hooks that clash, and for frameworks a mod needs but you don't have.</p>
+      <div id="findings"></div>
+      <h3>What each mod changes</h3>
+      <table>
+        <thead><tr><th>Mod</th><th>Game resources</th><th>Replaces base game</th><th>Script hooks</th><th>Tweaks</th><th>Needs</th></tr></thead>
+        <tbody id="mod-summary"></tbody>
+      </table>
     </section>
 
     <section id="tab-nexus" class="tab">

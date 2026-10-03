@@ -91,3 +91,9 @@ legend { padding: 0 6px; font-weight: 600; }
 .wiz-panel footer { margin-top: 14px; }
 .spacer { flex: 1; }
 .wiz-panel h2 { font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; margin: 0; }
+.finding ul { margin: 0; padding-left: 18px; }
+.finding li { margin: 4px 0; }
+.finding.error { border-left: 3px solid var(--red); }
+.finding.warning { border-left: 3px solid var(--yellow); }
+.finding.info { border-left: 3px solid var(--cyan); }
+.finding.ok { border-left: 3px solid var(--green); }

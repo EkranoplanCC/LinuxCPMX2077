@@ -269,6 +269,18 @@ fn default_mod_name(path: &std::path::Path) -> String {
     path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Unnamed mod".into())
 }
 
+/// Cross-check every installed mod for conflicts and missing frameworks.
+#[tauri::command]
+async fn analyze_game(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::analysis::Report> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        let game = db.game(game_id)?;
+        cp2077mm_core::analysis::report_for_game(&db, &paths::staging_dir()?, &game)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn uninstall_mod(app: AppHandle, mod_id: i64) -> Result<()> {
     blocking(move || {
@@ -496,6 +508,7 @@ fn main() {
             finish_install,
             cancel_install,
             uninstall_mod,
+            analyze_game,
             verify_mod,
             nexus_status,
             nexus_set_key,

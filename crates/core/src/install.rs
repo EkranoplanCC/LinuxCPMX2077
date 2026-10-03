@@ -397,7 +397,13 @@ impl Installer<'_> {
         let _ = std::fs::remove_dir_all(&p.dir);
 
         match self.deploy(game, &game_dir, mod_id, &stage_dir, &plan) {
-            Ok(backed_up) => Ok(InstallReport {
+            Ok(backed_up) => {
+                // Indexing failures shouldn't undo a good install; the
+                // analysis re-indexes anything missing.
+                if let Err(e) = crate::analysis::index_mod(self.db, &self.staging_root, mod_id) {
+                    log::warn!("indexing mod {mod_id} failed: {e}");
+                }
+                Ok(InstallReport {
                 mod_id,
                 name: meta.name,
                 layout: plan.layout,
@@ -405,7 +411,8 @@ impl Installer<'_> {
                 skipped: plan.skipped,
                 overwritten_mods: conflicts,
                 backed_up_game_files: backed_up,
-            }),
+                })
+            }
             Err(e) => {
                 // Roll back whatever was deployed.
                 let _ = self.uninstall(mod_id);
@@ -722,6 +729,27 @@ mod tests {
         // Uninstall works from the staged copy like any other mod.
         inst.uninstall(r.mod_id).unwrap();
         assert!(!game_dir.join("archive/pc/mod/tex.archive").exists());
+    }
+
+    #[test]
+    fn analysis_flags_conflicting_mods() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let a = f.root.join("a.zip");
+        zip_with(&a, &[("r6/scripts/a/a.reds", b"@replaceMethod(PlayerPuppet)\nfunc OnDeath() -> Bool { return false; }\n")]);
+        let b = f.root.join("b.zip");
+        zip_with(&b, &[("r6/scripts/b/b.reds", b"@replaceMethod(PlayerPuppet) func OnDeath() -> Bool { return true; }")]);
+        inst.install(&f.game, &a, meta("Immortal")).unwrap();
+        inst.install(&f.game, &b, meta("Hardcore")).unwrap();
+        let r = crate::analysis::report_for_game(&f.db, &inst.staging_root, &f.game).unwrap();
+        let hit = r.findings.iter().find(|x| x.key == "PlayerPuppet.OnDeath").expect("replace conflict found");
+        assert_eq!(hit.severity, crate::analysis::Severity::Error);
+        assert!(r.findings.iter().any(|x| x.key == "redscript"), "redscript isn't installed in the fixture");
     }
 
     #[test]
