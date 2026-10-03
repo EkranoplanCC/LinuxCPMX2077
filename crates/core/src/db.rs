@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS mods (
     archive_md5     TEXT NOT NULL,
     game_build_id   TEXT,                   -- game build when installed
     game_version    TEXT,
-    status          TEXT NOT NULL DEFAULT 'installed',
+    status          TEXT NOT NULL DEFAULT 'installed', -- 'installed' (enabled) | 'disabled'
     installed_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS mod_files (
@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS backups (
     backup_path TEXT NOT NULL,
     sha256      TEXT NOT NULL,
     PRIMARY KEY (game_id, rel_path)
+);
+-- Files a mod shipped that were changed after install (e.g. a config the mod
+-- rewrote) and were left in the game dir when the mod was disabled.
+CREATE TABLE IF NOT EXISTS kept_files (
+    mod_id   INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    sha256   TEXT NOT NULL,
+    PRIMARY KEY (mod_id, rel_path)
 );
 -- What each mod touches in the game (see analysis.rs).
 CREATE TABLE IF NOT EXISTS touches (
@@ -120,6 +128,16 @@ pub struct ModRow {
     pub status: String,
     pub installed_at: String,
     pub file_count: i64,
+}
+
+pub const STATUS_ENABLED: &str = "installed";
+pub const STATUS_DISABLED: &str = "disabled";
+
+impl ModRow {
+    /// Whether the mod's files are in the game directory.
+    pub fn enabled(&self) -> bool {
+        self.status == STATUS_ENABLED
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +319,29 @@ impl Db {
                 file_count: r.get(14)?,
             })
         })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn set_mod_status(&self, id: i64, status: &str) -> Result<()> {
+        self.conn.execute("UPDATE mods SET status = ?2 WHERE id = ?1", params![id, status])?;
+        Ok(())
+    }
+
+    /// Replace the record of files left behind when `mod_id` was disabled.
+    pub fn set_kept_files(&self, mod_id: i64, files: &[(String, String)]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM kept_files WHERE mod_id = ?1", [mod_id])?;
+        for (path, sha) in files {
+            tx.execute("INSERT OR REPLACE INTO kept_files (mod_id, rel_path, sha256) VALUES (?1, ?2, ?3)", params![mod_id, path, sha])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// `(rel_path, sha256)` of files left behind when `mod_id` was disabled.
+    pub fn kept_files(&self, mod_id: i64) -> Result<Vec<(String, String)>> {
+        let mut st = self.conn.prepare("SELECT rel_path, sha256 FROM kept_files WHERE mod_id = ?1 ORDER BY rel_path")?;
+        let rows = st.query_map([mod_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 

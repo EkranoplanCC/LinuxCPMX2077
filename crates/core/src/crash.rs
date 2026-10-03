@@ -222,7 +222,8 @@ fn normalize(line: &str) -> String {
 pub fn analyze(db: &Db, game: &GameRow) -> Result<CrashReport> {
     let game_dir = Path::new(&game.path);
     let logs = known_logs(game_dir);
-    let mods = db.mods(game.id)?;
+    // Disabled mods aren't in the game, so they can't be behind a new error.
+    let mods: Vec<_> = db.mods(game.id)?.into_iter().filter(|m| m.enabled()).collect();
     let mut needles: Vec<(i64, String, BTreeSet<String>)> = Vec::new();
     for m in &mods {
         needles.push((m.id, m.name.clone(), mod_needles(db, m.id)?));

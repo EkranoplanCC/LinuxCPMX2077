@@ -106,8 +106,14 @@ async function loadMods() {
   $("#mods-empty").classList.toggle("hidden", mods.length > 0);
   $("#mods-body").replaceChildren(...mods.map((m) => {
     const stale = m.game_build_id && currentGame.install.build_id && m.game_build_id !== currentGame.install.build_id;
-    return el("tr", {},
-      el("td", {}, el("b", {}, m.name), el("div", { class: "muted mono" }, m.archive_name)),
+    const on = m.status === "installed";
+    const sw = el("input", { type: "checkbox", class: "switch", title: on ? "Enabled: click to take its files out of the game" : "Disabled: click to put its files back" });
+    sw.checked = on;
+    sw.addEventListener("change", () => busy(sw, () => setEnabled(m, sw.checked)).finally(loadMods));
+    return el("tr", { class: on ? "" : "off" },
+      el("td", {}, sw),
+      el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
+        el("div", { class: "muted mono" }, m.archive_name)),
       el("td", {}, m.version || "—"),
       el("td", {}, m.source === "nexus" && m.nexus_mod_id
         ? el("span", { class: "badge" }, `Nexus #${m.nexus_mod_id}`)
@@ -116,10 +122,35 @@ async function loadMods() {
       el("td", {}, m.game_version || "—",
         stale ? el("div", { class: "badge bad", title: `Current game build is ${currentGame.install.build_id}` }, "game updated since") : null),
       el("td", { class: "actions" },
-        el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify"), " ",
+        on ? el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify") : null, " ",
         el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall")),
     );
   }));
+}
+
+async function setEnabled(m, on) {
+  if (!on) {
+    const kept = await invoke("disable_mod", { modId: m.id });
+    const lines = [`Disabled ${m.name}. Its files are out of the game until you turn it back on.`];
+    if (kept.length) lines.push(`Left in place because they changed after install: ${kept.join(", ")}`);
+    toast(lines.join("\n"));
+    return;
+  }
+  let r;
+  try {
+    r = await invoke("enable_mod", { modId: m.id, overwrite: false });
+  } catch (e) {
+    const msg = String(e);
+    if (!msg.startsWith("file conflict:")) throw e;
+    const ok = await dialog.ask(`Other enabled mods install the same files as “${m.name}”:\n\n${msg.slice(15).trim().split(", ").join("\n")}\n\nLet “${m.name}” replace them? Turning it off again puts their copies back.`,
+      { title: "Enable mod", kind: "warning" });
+    if (!ok) return;
+    r = await invoke("enable_mod", { modId: m.id, overwrite: true });
+  }
+  const lines = [`Enabled ${m.name}: ${r.files_deployed} file${r.files_deployed === 1 ? "" : "s"} put back`];
+  if (r.kept_in_place.length) lines.push(`Kept your changed copies of: ${r.kept_in_place.join(", ")}`);
+  if (r.overwritten_mods.length) lines.push(`Overrode files from: ${[...new Set(r.overwritten_mods.map((c) => c.other_mod_name))].join(", ")}`);
+  toast(lines.join("\n"));
 }
 
 async function verify(m) {

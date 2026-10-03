@@ -42,7 +42,7 @@ fn tools() -> Value {
     let kinds: Vec<&str> = Kind::ALL.iter().map(|k| k.as_str()).collect();
     json!([
         tool("list_games", "Cyberpunk 2077 installs known to the mod manager, with store, path, Steam build and executable version.", json!({}), &[]),
-        tool("list_mods", "Mods installed in a game: name, version, source (manual/nexus), Nexus ids, file count, and the game build they were installed on.",
+        tool("list_mods", "Mods installed in a game: name, version, source (manual/nexus), Nexus ids, file count, the game build they were installed on, and status ('installed' means enabled, 'disabled' means its files are out of the game).",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
         tool("get_mod", "One mod in detail: its files (game-relative path, size, sha256) and everything the compatibility index recorded it touching.",
             json!({ "mod_id": { "type": "integer" } }), &["mod_id"]),
@@ -52,7 +52,7 @@ fn tools() -> Value {
                 "kind": { "type": "string", "enum": kinds },
                 "game_id": { "type": "integer" }
             }), &["key"]),
-        tool("compatibility_report", "Conflicts between installed mods (same method replaced, same resources, same tweak values, duplicate plugins) and frameworks mods need but are missing, with a per-mod summary.",
+        tool("compatibility_report", "Conflicts between enabled mods (same method replaced, same resources, same tweak values, duplicate plugins) and frameworks mods need but are missing, with a per-mod summary.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
         tool("crash_analysis", "Errors and warnings from the game's crash reports and the framework logs, each matched to the installed mods it mentions, plus the mods most often implicated.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
@@ -127,7 +127,7 @@ impl Server {
                             if kind.is_some_and(|k| k != t.kind) || !t.key.to_lowercase().contains(&key) {
                                 continue;
                             }
-                            hits.push(json!({ "game_id": g.id, "mod_id": m.id, "mod": m.name, "kind": t.kind, "key": t.key, "file": t.file }));
+                            hits.push(json!({ "game_id": g.id, "mod_id": m.id, "mod": m.name, "enabled": m.enabled(), "kind": t.kind, "key": t.key, "file": t.file }));
                             if hits.len() >= 500 {
                                 return Ok(json!({ "results": hits, "truncated": true }));
                             }

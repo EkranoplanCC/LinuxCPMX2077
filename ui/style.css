@@ -135,3 +135,9 @@ button.link { background: none; border: 0; color: var(--cyan); padding: 2px 0; m
 .mod-detail details summary { cursor: pointer; color: var(--muted); margin-top: 14px; }
 details.card summary { cursor: pointer; color: var(--muted); }
 details.card[open] summary { margin-bottom: 10px; }
+
+/* Mods turned off without uninstalling. */
+tr.off td { color: var(--muted); }
+tr.off b { font-weight: normal; }
+tr.off .badge { margin-left: 6px; }
+input.switch { width: 16px; height: 16px; accent-color: var(--yellow); cursor: pointer; }

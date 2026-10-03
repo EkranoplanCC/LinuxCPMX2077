@@ -33,7 +33,13 @@ Heroic (GOG), shipped as an AppImage.
 - **Conflicts**: refuses to overwrite another mod's files unless you allow it;
   uninstalling the winner restores the loser's copy, and original game files
   are backed up and restored.
-- **Compatibility check** (no AI needed): every installed mod is indexed for
+- **Enable/disable** without uninstalling: switching a mod off takes its files
+  out of the game (bringing back whatever they replaced) and keeps a checked
+  copy, so switching it on again needs no re-download. Files the mod changed
+  after install, such as its own settings, stay in place and are kept when it
+  comes back. Disabled mods are left out of the compatibility check and crash
+  analysis.
+- **Compatibility check** (no AI needed): every enabled mod is indexed for
   what it touches: game resources inside `.archive` files (and which of them
   replace base-game resources), redscript `@replaceMethod`/`@wrapMethod`/
   `@addField`/`@addMethod`, TweakXL records and properties, ArchiveXL resource
@@ -122,4 +128,4 @@ push (see `.github/workflows/build.yml`).
 
 - Browse and search Nexus inside the app, and Nexus collections (modpacks),
   via the v2 GraphQL API
-- Enable/disable without uninstalling, load order for `.archive` files
+- Load order for `.archive` files
