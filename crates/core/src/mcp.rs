@@ -8,12 +8,13 @@
 //! or run anything, and logs can only be read from a fixed list of known
 //! locations, never from a caller-supplied path.
 
-use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::analysis::{self, Kind};
+use crate::crash;
 use crate::db::Db;
 use crate::{APP_NAME, APP_VERSION, Error, Result};
 
@@ -53,7 +54,9 @@ fn tools() -> Value {
             }), &["key"]),
         tool("compatibility_report", "Conflicts between installed mods (same method replaced, same resources, same tweak values, duplicate plugins) and frameworks mods need but are missing, with a per-mod summary.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
-        tool("list_logs", "Log files the game and modding frameworks wrote (CET, RED4ext and its plugins, redscript, CET mods), with sizes and modification times.",
+        tool("crash_analysis", "Errors and warnings from the game's crash reports and the framework logs, each matched to the installed mods it mentions, plus the mods most often implicated.",
+            json!({ "game_id": { "type": "integer" } }), &["game_id"]),
+        tool("list_logs", "Log files the game and modding frameworks wrote (CET, RED4ext and its plugins, redscript, CET mods, crash reports in the Proton prefix, Proton's log), with sizes and modification times.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
         tool("read_log", "The last lines of one log from list_logs, identified by its `name`.",
             json!({
@@ -70,66 +73,6 @@ fn arg_i64(args: &Value, name: &str) -> Result<i64> {
 
 fn arg_str<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
     args.get(name).and_then(Value::as_str).ok_or_else(|| Error::Other(format!("missing string argument `{name}`")))
-}
-
-/// Log files we know about, relative to the game folder. Globs are expanded
-/// one directory level deep.
-fn known_logs(game_dir: &Path) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    let fixed = [
-        "bin/x64/plugins/cyber_engine_tweaks/cyber_engine_tweaks.log",
-        "bin/x64/plugins/cyber_engine_tweaks/scripting.log",
-        "r6/logs/redscript_rCURRENT.log",
-        "red4ext/logs/red4ext.log",
-        "red4ext/plugins/ArchiveXL/ArchiveXL.log",
-        "red4ext/plugins/TweakXL/TweakXL.log",
-        "red4ext/plugins/Codeware/Codeware.log",
-    ];
-    for rel in fixed {
-        let p = crate::install::resolve_ci(game_dir, rel);
-        if p.is_file() {
-            out.push((rel.to_string(), p));
-        }
-    }
-    // Per-plugin RED4ext logs and per-mod CET logs.
-    for dir in ["red4ext/logs", "bin/x64/plugins/cyber_engine_tweaks/mods"] {
-        let base = crate::install::resolve_ci(game_dir, dir);
-        let Ok(rd) = std::fs::read_dir(&base) else { continue };
-        for e in rd.flatten() {
-            let p = e.path();
-            let candidates: Vec<PathBuf> = if p.is_dir() {
-                std::fs::read_dir(&p).map(|r| r.flatten().map(|x| x.path()).collect()).unwrap_or_default()
-            } else {
-                vec![p]
-            };
-            for c in candidates {
-                let is_log = c.extension().is_some_and(|x| x.eq_ignore_ascii_case("log"));
-                let is_file = std::fs::symlink_metadata(&c).is_ok_and(|m| m.is_file());
-                if is_log && is_file
-                    && let Ok(rel) = c.strip_prefix(game_dir) {
-                        let rel = rel.to_string_lossy().replace('\\', "/");
-                        if !out.iter().any(|(r, _)| r.eq_ignore_ascii_case(&rel)) {
-                            out.push((rel, c));
-                        }
-                    }
-            }
-        }
-    }
-    out
-}
-
-fn tail_lines(path: &Path, max: usize) -> Result<String> {
-    let mut f = std::fs::File::open(path)?;
-    let len = f.metadata()?.len();
-    // Read at most the last 4 MiB; that's plenty for MAX_LOG_LINES.
-    let start = len.saturating_sub(4 * 1024 * 1024);
-    f.seek(SeekFrom::Start(start))?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    let text = String::from_utf8_lossy(&buf);
-    let lines: Vec<&str> = text.lines().collect();
-    let from = lines.len().saturating_sub(max);
-    Ok(lines[from..].join("\n"))
 }
 
 impl Server {
@@ -200,30 +143,22 @@ impl Server {
             }
             "list_logs" => {
                 let game = self.db.game(arg_i64(args, "game_id")?)?;
-                let logs: Vec<Value> = known_logs(Path::new(&game.path))
-                    .into_iter()
-                    .map(|(name, p)| {
-                        let meta = std::fs::metadata(&p).ok();
-                        let modified = meta
-                            .as_ref()
-                            .and_then(|m| m.modified().ok())
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs());
-                        json!({ "name": name, "size": meta.map(|m| m.len()), "modified_unix": modified })
-                    })
-                    .collect();
-                Ok(json!(logs))
+                Ok(serde_json::to_value(crash::known_logs(Path::new(&game.path)))?)
             }
             "read_log" => {
                 let game = self.db.game(arg_i64(args, "game_id")?)?;
                 let name = arg_str(args, "name")?;
                 let max = args.get("max_lines").and_then(Value::as_u64).unwrap_or(200).clamp(1, MAX_LOG_LINES as u64) as usize;
                 // Only names that list_logs would return are readable.
-                let (_, path) = known_logs(Path::new(&game.path))
+                let log = crash::known_logs(Path::new(&game.path))
                     .into_iter()
-                    .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                    .find(|l| l.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| Error::Other(format!("unknown log `{name}`; call list_logs first")))?;
-                Ok(json!({ "name": name, "text": tail_lines(&path, max)? }))
+                Ok(json!({ "name": log.name, "text": crash::tail_lines(&log.path, max)? }))
+            }
+            "crash_analysis" => {
+                let game = self.db.game(arg_i64(args, "game_id")?)?;
+                Ok(serde_json::to_value(crash::analyze(&self.db, &game)?)?)
             }
             other => Err(Error::Other(format!("unknown tool `{other}`"))),
         }
@@ -340,7 +275,7 @@ mod tests {
         let replies: Vec<Value> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(replies.len(), 6, "notification gets no reply");
         assert_eq!(replies[0]["result"]["serverInfo"]["name"], APP_NAME);
-        assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 7);
+        assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 8);
         assert_eq!(replies[2]["result"]["structuredContent"]["results"][0]["mod"], "Alpha");
         assert_eq!(replies[3]["result"]["structuredContent"]["text"], "[ERROR] boom");
         assert_eq!(replies[4]["result"]["isError"], true);

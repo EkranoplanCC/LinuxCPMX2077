@@ -55,6 +55,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${name}`));
   if (name === "downloads") loadDownloads();
   if (name === "analysis") runAnalysis();
+  if (name === "crashes") busy(null, runCrash);
   if (name === "graph" && currentGame) busy(null, async () => window.showGraph(await invoke("analyze_game", { gameId: currentGame.id })));
 }
 
@@ -182,6 +183,33 @@ async function runAnalysis() {
     el("td", {}, m.requires.map((x) => FRAMEWORK_NAMES[x] || x).join(", ") || "—"))));
 }
 $("#run-analysis").addEventListener("click", (e) => busy(e.target, runAnalysis));
+
+// ---- crashes & logs -----------------------------------------------------
+function fmtTime(unix) {
+  return unix ? new Date(unix * 1000).toLocaleString() : "—";
+}
+
+async function runCrash() {
+  if (!currentGame) return;
+  const r = await invoke("crash_analysis", { gameId: currentGame.id });
+  const errors = r.issues.filter((i) => i.level === "error");
+  const warnings = r.issues.filter((i) => i.level === "warning");
+  $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length ? "error" : "ok") },
+    r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found in the Proton prefix."),
+    r.suspects.length
+      ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]))
+      : el("p", { class: "muted" }, errors.length ? "None of the errors name an installed mod." : "No errors in the logs."),
+  ));
+  const group = (title, items, cls) => items.length ? el("div", { class: `card finding ${cls}` },
+    el("h3", {}, `${title} (${items.length})`),
+    el("ul", {}, ...items.slice(0, 200).map((i) => el("li", {},
+      i.mod_names.length ? el("b", {}, i.mod_names.join(", ") + ": ") : null,
+      el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log))))) : null;
+  $("#crash-issues").replaceChildren(...[group("Errors", errors, "error"), group("Warnings", warnings, "warning")].filter(Boolean));
+  $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},
+    el("td", { class: "mono" }, l.name), el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)))));
+}
+$("#run-crash").addEventListener("click", (e) => busy(e.target, runCrash));
 
 // ---- FOMOD wizard ------------------------------------------------------
 async function handleOutcome(outcome) {

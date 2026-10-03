@@ -46,6 +46,12 @@ Heroic (GOG), shipped as an AppImage.
   (`claude mcp add cp2077-mods -- /path/to/AppImage --mcp`). The database is
   opened read-only, there are no tools that change or run anything, and logs
   are only readable from a fixed list of known locations.
+- **Crashes & logs**: reads the game's crash reports in the Proton prefix
+  (`REDEngine/ReportQueue`), the CET, RED4ext, ArchiveXL, TweakXL, Codeware and
+  redscript logs (plus per-mod CET logs and Proton's `steam-1091500.log`),
+  lists errors and warnings, and names the installed mod each one mentions.
+- **Graph view**: mods, the frameworks they need, the game classes, tweak
+  records and resources they touch, with clashes highlighted.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
   overridden ones.
 - **Nexus Mods sign-in**: “Sign in with Nexus Mods” uses Nexus SSO, so you
@@ -101,7 +107,6 @@ push (see `.github/workflows/build.yml`).
 
 ## Roadmap
 
-- Nexus collections (modpacks) via the v2 GraphQL API
-- Mod interaction graph canvas
-- Crash log analysis (CET, RED4ext, redscript and game logs in the prefix)
+- Browse and search Nexus inside the app, and Nexus collections (modpacks),
+  via the v2 GraphQL API
 - Enable/disable without uninstalling, load order for `.archive` files

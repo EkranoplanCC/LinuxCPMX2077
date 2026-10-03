@@ -25,6 +25,7 @@
       <button data-tab="mods" class="active">Installed mods</button>
       <button data-tab="analysis">Compatibility</button>
       <button data-tab="graph">Graph</button>
+      <button data-tab="crashes">Crashes &amp; logs</button>
       <button data-tab="nexus">Nexus Mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
@@ -75,6 +76,22 @@
         <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
         <div id="graph-legend"></div>
       </div>
+    </section>
+
+    <section id="tab-crashes" class="tab">
+      <header>
+        <h2>Crashes &amp; logs</h2>
+        <button id="run-crash" class="primary">Check logs</button>
+      </header>
+      <p class="muted">Reads the game's crash reports and the CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs,
+        and points out which installed mod each error mentions.</p>
+      <div id="crash-summary"></div>
+      <div id="crash-issues"></div>
+      <h3>Logs found</h3>
+      <table>
+        <thead><tr><th>Log</th><th>Size</th><th>Last written</th></tr></thead>
+        <tbody id="crash-logs"></tbody>
+      </table>
     </section>
 
     <section id="tab-nexus" class="tab">

@@ -281,6 +281,18 @@ async fn analyze_game(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::ana
     .await
 }
 
+/// Errors from crash reports and framework logs, matched to mods.
+#[tauri::command]
+async fn crash_analysis(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::crash::CrashReport> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        let game = db.game(game_id)?;
+        cp2077mm_core::crash::analyze(&db, &game)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn uninstall_mod(app: AppHandle, mod_id: i64) -> Result<()> {
     blocking(move || {
@@ -529,6 +541,7 @@ fn main() {
             cancel_install,
             uninstall_mod,
             analyze_game,
+            crash_analysis,
             mcp_command,
             verify_mod,
             nexus_status,

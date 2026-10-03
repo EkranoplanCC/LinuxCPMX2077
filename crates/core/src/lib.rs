@@ -4,6 +4,7 @@
 
 pub mod analysis;
 pub mod archive;
+pub mod crash;
 pub mod db;
 pub mod error;
 pub mod fomod;
