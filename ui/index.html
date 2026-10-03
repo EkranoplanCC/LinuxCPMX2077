@@ -48,11 +48,18 @@
     <section id="tab-nexus" class="tab">
       <header><h2>Nexus Mods</h2></header>
       <div id="nexus-login" class="card">
+        <p>Sign in on nexusmods.com in your browser and approve this app. Your password never passes through the manager.</p>
+        <div class="row">
+          <button id="sso-login" class="primary">Sign in with Nexus Mods</button>
+          <button id="sso-cancel" class="hidden">Cancel</button>
+          <span id="sso-note" class="muted"></span>
+        </div>
+        <h3>Or use an API key</h3>
         <p>Paste your personal API key from <b>nexusmods.com → Site preferences → API Keys</b>.
-           It's validated with Nexus and stored in your desktop keyring.</p>
+           It's checked with Nexus and stored in your system keyring, never in a plain file.</p>
         <div class="row">
           <input id="api-key" type="password" placeholder="Nexus API key" autocomplete="off">
-          <button id="save-key" class="primary">Connect</button>
+          <button id="save-key">Connect</button>
         </div>
       </div>
       <div id="nexus-user" class="card hidden"></div>
@@ -82,6 +89,14 @@
         <p>Make this app open “Mod Manager Download” (nxm://) links from your browser.
            This replaces any other handler you had set.</p>
         <button id="register-nxm">Handle nxm:// links</button>
+      </div>
+      <div class="card">
+        <h3>Nexus browser sign-in</h3>
+        <p>Nexus only allows sign-in for apps it has registered. Enter the application slug Nexus issued for this app.</p>
+        <div class="row">
+          <input id="sso-slug" placeholder="application slug">
+          <button id="save-slug">Save</button>
+        </div>
       </div>
       <div class="card">
         <h3>Nexus account</h3>

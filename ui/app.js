@@ -164,7 +164,6 @@ async function refreshNexus() {
     box.replaceChildren(
       el("b", {}, s.user.name), " ",
       el("span", { class: "badge" }, s.user.is_premium ? "Premium" : "Free account"), " ",
-      s.storage === "file" ? el("span", { class: "badge bad", title: "No desktop keyring was available" }, "key stored in a private file") : null,
       s.user.is_premium ? null : el("p", { class: "muted" },
         "Free accounts download through the website's “Mod Manager Download” button, which sends an nxm:// link here."),
     );
@@ -178,6 +177,32 @@ $("#save-key").addEventListener("click", (e) => busy(e.target, async () => {
   await refreshNexus();
   toast("Connected to Nexus Mods");
 }));
+async function refreshSso() {
+  const slug = await invoke("nexus_sso_slug");
+  $("#sso-slug").value = slug || "";
+  $("#sso-login").disabled = !slug;
+  $("#sso-note").textContent = slug ? "" : "Browser sign-in needs a Nexus application slug (Settings).";
+}
+
+$("#sso-login").addEventListener("click", (e) => busy(e.target, async () => {
+  $("#sso-cancel").classList.remove("hidden");
+  $("#sso-note").textContent = "Approve the request in your browser…";
+  try {
+    await invoke("nexus_sso_login");
+    await refreshNexus();
+    toast("Signed in to Nexus Mods");
+  } finally {
+    $("#sso-cancel").classList.add("hidden");
+    $("#sso-note").textContent = "";
+  }
+}));
+$("#sso-cancel").addEventListener("click", () => invoke("nexus_sso_cancel"));
+$("#save-slug").addEventListener("click", (e) => busy(e.target, async () => {
+  await invoke("set_nexus_sso_slug", { slug: $("#sso-slug").value });
+  await refreshSso();
+  toast("Saved");
+}));
+
 $("#clear-key").addEventListener("click", (e) => busy(e.target, async () => {
   await invoke("nexus_clear_key");
   await refreshNexus();
@@ -275,6 +300,7 @@ async function loadDownloads() {
 (async () => {
   await busy(null, detect);
   await busy(null, refreshNexus);
+  await busy(null, refreshSso);
   const links = await invoke("startup_links");
   for (const l of links) await busy(null, () => handleNxm(l));
 })();

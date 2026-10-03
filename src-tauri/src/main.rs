@@ -3,20 +3,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use cp2077mm_core::archive::Limits;
 use cp2077mm_core::db::{Db, DownloadRow, ModRow, NewMod};
 use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::install::{InstallOptions, InstallReport, Installer, VerifyReport};
 use cp2077mm_core::nexus::{self, NxmLink};
-use cp2077mm_core::{Error, Result, paths, secrets};
+use cp2077mm_core::{Error, Result, paths, secrets, sso};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_opener::OpenerExt;
 
 struct AppState {
     db: Mutex<Db>,
+    sso_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 #[derive(Serialize)]
@@ -188,6 +191,57 @@ async fn nexus_set_key(key: String) -> Result<NexusStatus> {
     .await
 }
 
+const SSO_SLUG_SETTING: &str = "nexus_sso_slug";
+
+/// The SSO application slug: user setting first, then the one built in.
+fn sso_slug(db: &Db) -> Result<Option<String>> {
+    let custom = db.get_setting(SSO_SLUG_SETTING)?.filter(|s| !s.trim().is_empty());
+    Ok(custom.or(sso::BUILT_IN_SLUG.map(String::from)))
+}
+
+#[tauri::command]
+fn nexus_sso_slug(state: State<'_, AppState>) -> Result<Option<String>> {
+    sso_slug(&state.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn set_nexus_sso_slug(state: State<'_, AppState>, slug: String) -> Result<()> {
+    state.db.lock().unwrap().set_setting(SSO_SLUG_SETTING, slug.trim())
+}
+
+/// Sign in through the browser; the resulting API key goes to the keyring.
+#[tauri::command]
+async fn nexus_sso_login(app: AppHandle) -> Result<NexusStatus> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let slug = sso_slug(&state.db.lock().unwrap())?
+            .ok_or_else(|| Error::Nexus("Browser sign-in isn't configured: set the Nexus application slug in Settings, or paste an API key instead.".into()))?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Some(old) = state.sso_cancel.lock().unwrap().replace(cancel.clone()) {
+            old.store(true, Ordering::Relaxed);
+        }
+        let opener = app.clone();
+        let key = sso::login(
+            &slug,
+            |url| opener.opener().open_url(url, None::<&str>).map_err(|e| Error::Other(format!("could not open browser: {e}"))),
+            cancel,
+        );
+        state.sso_cancel.lock().unwrap().take();
+        let key = key?;
+        let user = nexus::Client::new(&key)?.validate()?;
+        let storage = secrets::store_api_key(&key)?;
+        Ok(NexusStatus { user: Some(user), storage: Some(storage), error: None })
+    })
+    .await
+}
+
+#[tauri::command]
+fn nexus_sso_cancel(state: State<'_, AppState>) {
+    if let Some(c) = state.sso_cancel.lock().unwrap().take() {
+        c.store(true, Ordering::Relaxed);
+    }
+}
+
 #[tauri::command]
 fn nexus_clear_key() -> Result<()> {
     secrets::delete_api_key()
@@ -296,7 +350,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { db: Mutex::new(db) })
+        .plugin(tauri_plugin_opener::init())
+        .manage(AppState { db: Mutex::new(db), sso_cancel: Mutex::new(None) })
         .setup(|app| {
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
@@ -315,6 +370,10 @@ fn main() {
             nexus_status,
             nexus_set_key,
             nexus_clear_key,
+            nexus_sso_slug,
+            set_nexus_sso_slug,
+            nexus_sso_login,
+            nexus_sso_cancel,
             nexus_mod,
             nexus_download,
             parse_nxm,

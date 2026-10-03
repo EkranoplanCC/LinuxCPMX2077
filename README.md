@@ -24,9 +24,20 @@ Heroic (GOG), shipped as an AppImage.
   are backed up and restored.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
   overridden ones.
-- **Nexus Mods** with your personal API key (stored in the desktop keyring):
-  look up mods and files, download directly (Premium) or through
-  “Mod Manager Download” `nxm://` links (free accounts).
+- **Nexus Mods sign-in**: “Sign in with Nexus Mods” uses Nexus SSO, so you
+  log in on nexusmods.com in your browser and the app receives an API key; your
+  password never goes through the app. Pasting a personal API key works too.
+  Keys live only in the system keyring (Secret Service), never in a file.
+- **Nexus downloads**: look up mods and files, download directly (Premium) or
+  through “Mod Manager Download” `nxm://` links (free accounts; enable in
+  Settings → Handle nxm:// links).
+
+### Nexus SSO slug
+
+Nexus only allows browser sign-in for applications it has registered, and
+identifies them by a slug. Once Nexus issues one, either build with
+`NEXUS_SSO_APP_SLUG=<slug>` or enter it under Settings. Until then the API key
+field is the way to connect.
 
 ## Download safety
 

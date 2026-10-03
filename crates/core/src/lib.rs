@@ -11,6 +11,7 @@ pub mod install;
 pub mod nexus;
 pub mod paths;
 pub mod secrets;
+pub mod sso;
 pub mod vdf;
 
 pub use error::{Error, Result};
