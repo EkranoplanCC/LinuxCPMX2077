@@ -42,7 +42,7 @@
         </div>
       </header>
       <table>
-        <thead><tr><th>Name</th><th>Version</th><th>Source</th><th>Files</th><th>Installed on game</th><th></th></tr></thead>
+        <thead><tr><th title="Turn a mod off without uninstalling it">On</th><th>Name</th><th>Version</th><th>Source</th><th>Files</th><th>Installed on game</th><th></th></tr></thead>
         <tbody id="mods-body"></tbody>
       </table>
       <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or download from Nexus.</p>
@@ -51,9 +51,9 @@
     <section id="tab-analysis" class="tab">
       <header>
         <h2>Compatibility</h2>
-        <button id="run-analysis" class="primary">Check installed mods</button>
+        <button id="run-analysis" class="primary">Check enabled mods</button>
       </header>
-      <p class="muted">Looks inside every installed mod for game resources, redscript methods, tweak records,
+      <p class="muted">Looks inside every enabled mod for game resources, redscript methods, tweak records,
         ArchiveXL patches and CET hooks that clash, and for frameworks a mod needs but you don't have.</p>
       <div id="findings"></div>
       <h3>What each mod changes</h3>

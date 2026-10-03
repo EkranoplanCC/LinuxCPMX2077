@@ -823,7 +823,7 @@ pub fn index_mod(db: &crate::db::Db, staging_root: &Path, mod_id: i64) -> Result
     Ok(touches)
 }
 
-/// Analyse every mod installed in a game, indexing any that aren't yet.
+/// Analyse every enabled mod in a game, indexing any that aren't yet.
 pub fn report_for_game(db: &crate::db::Db, staging_root: &Path, game: &crate::db::GameRow) -> Result<Report> {
     let game_dir = Path::new(&game.path);
     let build = build_key(game);
@@ -836,7 +836,7 @@ pub fn report_for_game(db: &crate::db::Db, staging_root: &Path, game: &crate::db
         }
     };
     let mut indexes = Vec::new();
-    for m in db.mods(game.id)? {
+    for m in db.mods(game.id)?.into_iter().filter(|m| m.enabled()) {
         let touches = if db.index_version(m.id)? == Some(SCANNER_VERSION) { db.touches(m.id)? } else { index_mod(db, staging_root, m.id)? };
         indexes.push((m.id, m.name, touches));
     }
@@ -849,7 +849,7 @@ pub fn report_from_index(db: &crate::db::Db, game: &crate::db::GameRow) -> Resul
     let base = db.base_resources(game.id, &build_key(game))?.unwrap_or_default();
     let mut indexes = Vec::new();
     let mut unindexed = Vec::new();
-    for m in db.mods(game.id)? {
+    for m in db.mods(game.id)?.into_iter().filter(|m| m.enabled()) {
         if db.index_version(m.id)?.is_none() {
             unindexed.push(m.name.clone());
         }

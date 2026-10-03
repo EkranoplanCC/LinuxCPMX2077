@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::archive::{self, Limits};
-use crate::db::{Db, GameRow, ModFile, NewMod};
+use crate::db::{Db, GameRow, ModFile, NewMod, STATUS_DISABLED, STATUS_ENABLED};
 use crate::fomod;
 use crate::hash;
 use crate::{Error, Result};
@@ -46,6 +46,16 @@ pub struct InstallReport {
     pub layout: String,
     pub files_installed: usize,
     pub skipped: Vec<String>,
+    pub overwritten_mods: Vec<Conflict>,
+    pub backed_up_game_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct EnableReport {
+    pub files_deployed: usize,
+    /// Files changed after install that stayed in the game dir while the mod
+    /// was disabled; they're kept rather than reset to the mod's copy.
+    pub kept_in_place: Vec<String>,
     pub overwritten_mods: Vec<Conflict>,
     pub backed_up_game_files: Vec<String>,
 }
@@ -484,21 +494,28 @@ impl Installer<'_> {
         Ok(backed_up)
     }
 
-    /// Remove a mod's files. A file is only deleted if it still has the
-    /// content this mod installed; then the next owner's copy or the original
-    /// game file is put back.
-    pub fn uninstall(&self, mod_id: i64) -> Result<()> {
-        let m = self.db.get_mod(mod_id)?;
-        let game = self.db.game(m.game_id)?;
+    /// Take a mod's files out of the game dir. A file is only deleted if it
+    /// still has the content this mod installed; then the next enabled
+    /// owner's copy or the original game file is put back. Returns the files
+    /// that were changed after install (and aren't another mod's copy), which
+    /// are left alone, with their current hash.
+    fn undeploy(&self, game: &GameRow, mod_id: i64) -> Result<Vec<(String, String)>> {
         let game_dir = PathBuf::from(&game.path);
+        let mut kept = Vec::new();
         for f in self.db.mod_files(mod_id)? {
             let dst = resolve_ci(&game_dir, &f.rel_path);
-            if !dst.starts_with(&game_dir) {
+            if !dst.starts_with(&game_dir) || !dst.is_file() {
                 continue;
             }
-            let ours = dst.is_file() && hash::sha256_file(&dst)? == f.sha256;
-            if !ours {
-                continue; // overridden by another mod or edited by the user
+            let cur = hash::sha256_file(&dst)?;
+            if cur != f.sha256 {
+                // Overridden by another mod, or edited by the user or the mod
+                // itself (configs); either way not ours to delete.
+                let other = self.db.owners_of(game.id, &f.rel_path, mod_id)?.iter().any(|o| o.sha256 == cur);
+                if !other {
+                    kept.push((f.rel_path.clone(), cur));
+                }
+                continue;
             }
             std::fs::remove_file(&dst)?;
             if let Some(next) = self.db.owners_of(game.id, &f.rel_path, mod_id)?.into_iter().next() {
@@ -515,6 +532,16 @@ impl Installer<'_> {
                 remove_empty_parents(&dst, &game_dir);
             }
         }
+        Ok(kept)
+    }
+
+    /// Remove a mod's files from the game and forget the mod.
+    pub fn uninstall(&self, mod_id: i64) -> Result<()> {
+        let m = self.db.get_mod(mod_id)?;
+        if m.enabled() {
+            let game = self.db.game(m.game_id)?;
+            self.undeploy(&game, mod_id)?;
+        }
         self.db.delete_mod(mod_id)?;
         let stage = self.staging_root.join(mod_id.to_string());
         if stage.exists() {
@@ -523,9 +550,90 @@ impl Installer<'_> {
         Ok(())
     }
 
+    /// Take a mod out of the game but keep its staged copy so it can be
+    /// switched back on. Returns files left in place because they changed
+    /// after install.
+    pub fn disable(&self, mod_id: i64) -> Result<Vec<String>> {
+        let m = self.db.get_mod(mod_id)?;
+        if !m.enabled() {
+            return Ok(vec![]);
+        }
+        let game = self.db.game(m.game_id)?;
+        // Mark it first so it no longer counts as an owner of its files.
+        self.db.set_mod_status(mod_id, STATUS_DISABLED)?;
+        match self.undeploy(&game, mod_id) {
+            Ok(kept) => {
+                self.db.set_kept_files(mod_id, &kept)?;
+                Ok(kept.into_iter().map(|(p, _)| p).collect())
+            }
+            Err(e) => {
+                let _ = self.db.set_mod_status(mod_id, STATUS_ENABLED);
+                Err(e)
+            }
+        }
+    }
+
+    /// Put a disabled mod back from its staged copy. Files it left behind
+    /// when disabled are kept as they are, so changed settings survive.
+    pub fn enable(&self, mod_id: i64, overwrite: bool) -> Result<EnableReport> {
+        let m = self.db.get_mod(mod_id)?;
+        let game = self.db.game(m.game_id)?;
+        if m.enabled() {
+            return Ok(EnableReport::default());
+        }
+        let game_dir = PathBuf::from(&game.path);
+        let stage_dir = self.staging_root.join(mod_id.to_string());
+        let kept: HashMap<String, String> = self.db.kept_files(mod_id)?.into_iter().collect();
+        let mut plan = Plan { files: vec![], skipped: vec![], layout: String::new() };
+        let mut kept_in_place = Vec::new();
+        for f in self.db.mod_files(mod_id)? {
+            // Check the stored copy before touching the game dir.
+            let src = stage_dir.join(&f.staged_path);
+            if !src.is_file() || hash::sha256_file(&src)? != f.sha256 {
+                return Err(Error::Integrity(format!(
+                    "the stored copy of {} is missing or changed; reinstall the mod",
+                    f.rel_path
+                )));
+            }
+            if let Some(sha) = kept.get(&f.rel_path) {
+                let dst = resolve_ci(&game_dir, &f.rel_path);
+                if dst.is_file() && hash::sha256_file(&dst)? == *sha {
+                    kept_in_place.push(f.rel_path);
+                    continue;
+                }
+            }
+            plan.files.push(PlannedFile { staged: f.staged_path, target: f.rel_path });
+        }
+        let conflicts = self.conflicts(&game, &plan)?;
+        if !conflicts.is_empty() && !overwrite {
+            let list: Vec<String> =
+                conflicts.iter().map(|c| format!("{} (from {})", c.path, c.other_mod_name)).collect();
+            return Err(Error::Conflict(list.join(", ")));
+        }
+        match self.deploy(&game, &game_dir, mod_id, &stage_dir, &plan) {
+            Ok(backed_up) => {
+                self.db.set_mod_status(mod_id, STATUS_ENABLED)?;
+                self.db.set_kept_files(mod_id, &[])?;
+                Ok(EnableReport {
+                    files_deployed: plan.files.len(),
+                    kept_in_place,
+                    overwritten_mods: conflicts,
+                    backed_up_game_files: backed_up,
+                })
+            }
+            Err(e) => {
+                let _ = self.undeploy(&game, mod_id);
+                Err(e)
+            }
+        }
+    }
+
     /// Compare what's on disk with what was recorded at install time.
     pub fn verify(&self, mod_id: i64) -> Result<VerifyReport> {
         let m = self.db.get_mod(mod_id)?;
+        if !m.enabled() {
+            return Err(Error::Other(format!("{} is disabled", m.name)));
+        }
         let game = self.db.game(m.game_id)?;
         let game_dir = PathBuf::from(&game.path);
         let mut r = VerifyReport { ok: 0, missing: vec![], modified: vec![], overridden: vec![] };
@@ -750,6 +858,90 @@ mod tests {
         let hit = r.findings.iter().find(|x| x.key == "PlayerPuppet.OnDeath").expect("replace conflict found");
         assert_eq!(hit.severity, crate::analysis::Severity::Error);
         assert!(r.findings.iter().any(|x| x.key == "redscript"), "redscript isn't installed in the fixture");
+    }
+
+    #[test]
+    fn disable_and_enable_restore_the_right_files() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let game_dir = PathBuf::from(&f.game.path);
+        let shared = game_dir.join("archive/pc/mod/shared.archive");
+        let ini = game_dir.join("engine/config/base.ini");
+        let cfg = game_dir.join("bin/x64/plugins/cyber_engine_tweaks/mods/A/config.json");
+
+        let a = f.root.join("a.zip");
+        zip_with(
+            &a,
+            &[
+                ("archive/pc/mod/shared.archive", b"from-a"),
+                ("engine/config/base.ini", b"mod-a-ini"),
+                ("bin/x64/plugins/cyber_engine_tweaks/mods/A/init.lua", b"-- a"),
+                ("bin/x64/plugins/cyber_engine_tweaks/mods/A/config.json", b"{}"),
+            ],
+        );
+        let ra = inst.install(&f.game, &a, meta("A")).unwrap();
+        let b = f.root.join("b.zip");
+        zip_with(&b, &[("archive/pc/mod/shared.archive", b"from-b")]);
+        let mut ob = meta("B");
+        ob.overwrite = true;
+        let rb = inst.install(&f.game, &b, ob).unwrap();
+
+        // Disabling B brings A's copy back; B's files are gone from the game.
+        assert!(inst.disable(rb.mod_id).unwrap().is_empty());
+        assert_eq!(std::fs::read(&shared).unwrap(), b"from-a");
+        assert_eq!(f.db.get_mod(rb.mod_id).unwrap().status, "disabled");
+        assert!(inst.verify(rb.mod_id).is_err());
+
+        // The game rewrote A's config. Disabling A restores the vanilla ini,
+        // removes its files but leaves the changed config alone.
+        std::fs::write(&cfg, b"{\"fov\": 90}").unwrap();
+        let kept = inst.disable(ra.mod_id).unwrap();
+        assert_eq!(kept, vec!["bin/x64/plugins/cyber_engine_tweaks/mods/A/config.json".to_string()]);
+        assert_eq!(std::fs::read(&ini).unwrap(), b"vanilla");
+        assert!(!shared.exists());
+        assert!(!game_dir.join("bin/x64/plugins/cyber_engine_tweaks/mods/A/init.lua").exists());
+        assert_eq!(std::fs::read(&cfg).unwrap(), b"{\"fov\": 90}");
+
+        // Disabled mods don't take part in the analysis.
+        let r = crate::analysis::report_for_game(&f.db, &inst.staging_root, &f.game).unwrap();
+        assert!(r.mods.is_empty());
+
+        // Enabling A puts its files back, backs up the ini again and keeps
+        // the changed config.
+        let ea = inst.enable(ra.mod_id, false).unwrap();
+        assert_eq!(ea.files_deployed, 3);
+        assert_eq!(ea.kept_in_place, vec!["bin/x64/plugins/cyber_engine_tweaks/mods/A/config.json".to_string()]);
+        assert_eq!(ea.backed_up_game_files, vec!["engine/config/base.ini".to_string()]);
+        assert_eq!(std::fs::read(&ini).unwrap(), b"mod-a-ini");
+        assert_eq!(std::fs::read(&shared).unwrap(), b"from-a");
+        assert_eq!(std::fs::read(&cfg).unwrap(), b"{\"fov\": 90}");
+
+        // Enabling B now clashes with A unless overwriting is allowed.
+        assert!(matches!(inst.enable(rb.mod_id, false), Err(Error::Conflict(_))));
+        assert_eq!(f.db.get_mod(rb.mod_id).unwrap().status, "disabled");
+        let eb = inst.enable(rb.mod_id, true).unwrap();
+        assert_eq!(eb.overwritten_mods.len(), 1);
+        assert_eq!(std::fs::read(&shared).unwrap(), b"from-b");
+
+        // A disabled mod's stored copy is checked before it goes back in.
+        inst.disable(rb.mod_id).unwrap();
+        let staged = inst.staging_root.join(rb.mod_id.to_string()).join(&f.db.mod_files(rb.mod_id).unwrap()[0].staged_path);
+        std::fs::write(&staged, b"tampered").unwrap();
+        assert!(matches!(inst.enable(rb.mod_id, true), Err(Error::Integrity(_))));
+        assert_eq!(std::fs::read(&shared).unwrap(), b"from-a");
+
+        // Uninstalling a disabled mod doesn't touch the game.
+        inst.uninstall(rb.mod_id).unwrap();
+        assert_eq!(std::fs::read(&shared).unwrap(), b"from-a");
+        assert!(!inst.staging_root.join(rb.mod_id.to_string()).exists());
+        inst.uninstall(ra.mod_id).unwrap();
+        assert_eq!(std::fs::read(&ini).unwrap(), b"vanilla");
+        assert!(!shared.exists());
     }
 
     #[test]

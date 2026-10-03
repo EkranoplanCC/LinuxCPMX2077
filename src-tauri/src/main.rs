@@ -11,7 +11,7 @@ use cp2077mm_core::archive::Limits;
 use cp2077mm_core::db::{Db, DownloadRow, ModRow, NewMod};
 use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::fomod;
-use cp2077mm_core::install::{FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
+use cp2077mm_core::install::{EnableReport, FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
 use cp2077mm_core::nexus::{self, NxmLink};
 use cp2077mm_core::{Error, Result, paths, secrets, sso};
 use serde::Serialize;
@@ -303,6 +303,27 @@ async fn uninstall_mod(app: AppHandle, mod_id: i64) -> Result<()> {
     .await
 }
 
+/// Returns files left in the game because they changed after install.
+#[tauri::command]
+async fn disable_mod(app: AppHandle, mod_id: i64) -> Result<Vec<String>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        with_installer(&db, |i| i.disable(mod_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn enable_mod(app: AppHandle, mod_id: i64, overwrite: bool) -> Result<EnableReport> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        with_installer(&db, |i| i.enable(mod_id, overwrite))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn verify_mod(app: AppHandle, mod_id: i64) -> Result<VerifyReport> {
     blocking(move || {
@@ -540,6 +561,8 @@ fn main() {
             finish_install,
             cancel_install,
             uninstall_mod,
+            disable_mod,
+            enable_mod,
             analyze_game,
             crash_analysis,
             mcp_command,
