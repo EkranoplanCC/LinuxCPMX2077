@@ -86,16 +86,49 @@ async function detect() {
 function selectGame(id) {
   currentGame = games.find((g) => g.id === Number(id)) || games[0];
   $("#game-select").value = currentGame.id;
+  renderGame();
+  loadMods();
+}
+
+// Framework list and launch option warnings change as mods go in and out,
+// so they're re-read after every change rather than only at startup.
+async function refreshGame() {
+  if (!currentGame) return;
+  const id = currentGame.id;
+  games = await invoke("detect_games");
+  const g = games.find((x) => x.id === id);
+  if (!g || currentGame?.id !== id) return;
+  currentGame = g;
+  renderGame();
+}
+
+const LAUNCH_OPTION = 'WINEDLLOVERRIDES="winmm,version=n,b" %command%';
+
+function warningItem(w) {
+  if (!w.includes("WINEDLLOVERRIDES")) return el("li", {}, w);
+  return el("li", {}, w, " ", el("button", {
+    title: "Paste it in Steam: Cyberpunk 2077 › Properties › General › Launch options",
+    onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(LAUNCH_OPTION);
+        toast("Copied. In Steam, open Cyberpunk 2077 › Properties › Launch options and paste it.");
+      } catch {
+        toast(`Copy this into Steam's launch options for Cyberpunk 2077:\n${LAUNCH_OPTION}`, true);
+      }
+    },
+  }, "Copy launch option"));
+}
+
+function renderGame() {
   const g = currentGame.install;
   $("#game-info").replaceChildren(
     el("div", {}, "Version: ", el("b", {}, g.exe_product_version || g.exe_file_version || "unknown")),
     g.build_id ? el("div", {}, "Steam build: ", el("span", { class: "mono" }, g.build_id)) : null,
     g.proton_prefix ? el("div", { class: "muted mono" }, "Prefix: " + g.proton_prefix) : null,
   );
-  $("#game-warnings").replaceChildren(...g.warnings.map((w) => el("li", {}, w)));
+  $("#game-warnings").replaceChildren(...g.warnings.map(warningItem));
   $("#frameworks").replaceChildren(...g.frameworks.map((f) =>
     el("li", { class: f.installed ? "on" : "" }, f.name)));
-  loadMods();
 }
 
 $("#game-select").addEventListener("change", (e) => selectGame(e.target.value));
@@ -143,6 +176,7 @@ async function loadMods() {
   if (!currentGame) return;
   mods = await invoke("list_mods", { gameId: currentGame.id });
   renderMods();
+  refreshGame().catch(() => {});
 }
 
 function renderMods() {
@@ -175,13 +209,17 @@ function modRow(m) {
     el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
       el("div", { class: "muted mono" }, m.archive_name)),
     el("td", {}, m.category || "—"),
-    el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.latest} available`) : null),
+    el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.to_stable ? "stable " : ""}${up.latest} available`) : null),
     el("td", {}, el("span", { class: "badge" }, sourceLabel(m))),
     el("td", {}, m.file_count),
     el("td", {}, m.game_version || "—",
       stale ? el("div", { class: "badge bad", title: `Current game build is ${currentGame.install.build_id}` }, "game updated since") : null),
     el("td", { class: "actions" },
-      up ? el("button", { class: "update", onclick: (e) => busy(e.target, () => applyUpdate(up)) }, `Update to ${up.latest}`) : null, " ",
+      up ? el("button", {
+        class: "update",
+        title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
+        onclick: (e) => busy(e.target, () => applyUpdate(up)),
+      }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
       on ? el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify") : null, " ",
       el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall")),
   );
@@ -378,8 +416,33 @@ async function runCrash() {
       el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log))))) : null;
   $("#crash-issues").replaceChildren(...[group("Errors", errors, "error"), group("Warnings", warnings, "warning")].filter(Boolean));
   $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},
-    el("td", { class: "mono" }, l.name), el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)))));
+    el("td", { class: "mono" }, el("button", { class: "link", style: "margin: 0", title: "Show this log", onclick: (e) => busy(e.target, () => showLog(l.name)) }, l.name)),
+    el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)),
+    el("td", { class: "actions" },
+      el("button", { onclick: (e) => busy(e.target, () => showLog(l.name)) }, "View"), " ",
+      el("button", { onclick: (e) => busy(e.target, () => invoke("open_log_folder", { gameId: currentGame.id, name: l.name })) }, "Open folder")))));
 }
+
+// The end of a log (the last 5000 lines), to read or copy into a bug report.
+let shownLog = null;
+async function showLog(name) {
+  const text = await invoke("read_log", { gameId: currentGame.id, name });
+  shownLog = name;
+  $("#log-title").textContent = name;
+  $("#log-note").textContent = text.split("\n").length >= 5000 ? "last 5000 lines" : "";
+  $("#log-text").textContent = text || "(empty)";
+  $("#log-viewer").classList.remove("hidden");
+  $("#log-text").scrollTop = $("#log-text").scrollHeight;
+}
+$("#log-close").addEventListener("click", () => $("#log-viewer").classList.add("hidden"));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("#log-viewer").classList.add("hidden");
+});
+$("#log-folder").addEventListener("click", (e) => busy(e.target, () => invoke("open_log_folder", { gameId: currentGame.id, name: shownLog })));
+$("#log-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#log-text").textContent); toast("Log copied"); }
+  catch { toast("Select the text and copy it manually", true); }
+});
 $("#run-crash").addEventListener("click", (e) => busy(e.target, runCrash));
 
 // ---- FOMOD wizard ------------------------------------------------------
@@ -1492,7 +1555,11 @@ async function loadDownloads() {
       el("td", {}, fmtSize(d.size)),
       el("td", {}, el("span", { class: d.verified ? "badge ok" : "badge bad", title: `SHA-256 ${d.sha256}` }, checked)),
       el("td", { class: "actions" },
-        up ? el("button", { class: "update", onclick: (e) => busy(e.target, () => applyUpdate(up)) }, `Update to ${up.latest}`) : null, " ",
+        up ? el("button", {
+        class: "update",
+        title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
+        onclick: (e) => busy(e.target, () => applyUpdate(up)),
+      }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
         m ? null : el("button", {
           onclick: (e) => busy(e.target, async () => {
             if (!currentGame) throw "Select a game first";

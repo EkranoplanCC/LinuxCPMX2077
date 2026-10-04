@@ -117,7 +117,7 @@
       <div id="crash-issues"></div>
       <h3>Logs found</h3>
       <table>
-        <thead><tr><th>Log</th><th>Size</th><th>Last written</th></tr></thead>
+        <thead><tr><th>Log</th><th>Size</th><th>Last written</th><th></th></tr></thead>
         <tbody id="crash-logs"></tbody>
       </table>
     </section>
@@ -298,6 +298,23 @@
         <button id="wiz-back">Back</button>
         <button id="wiz-next" class="primary">Next</button>
         <button id="wiz-install" class="primary hidden">Install</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="log-viewer" class="hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">
+    <div class="wiz-panel">
+      <header class="row">
+        <h2 id="log-title" class="mono"></h2>
+        <span class="spacer"></span>
+        <span id="log-note" class="muted"></span>
+      </header>
+      <pre id="log-text"></pre>
+      <footer class="row">
+        <button id="log-copy">Copy all</button>
+        <button id="log-folder">Open folder</button>
+        <span class="spacer"></span>
+        <button id="log-close" class="primary">Close</button>
       </footer>
     </div>
   </div>

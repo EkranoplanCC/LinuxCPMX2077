@@ -191,9 +191,17 @@ pub fn parse_repo_ref(s: &str) -> Option<(String, String)> {
     (ok_owner && ok_repo).then_some((owner, repo))
 }
 
+/// An archive the installer can take. Releases often add debug symbols
+/// (`red4ext-symbols-1.30.0.zip`, `*-pdb.zip`) or builds for other systems
+/// (`redscript-v0.5.31-macos.zip`) next to the game files; those are
+/// downloadable but never installed, so the one real archive is picked.
 fn is_installable(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    [".zip", ".7z", ".rar"].iter().any(|e| n.ends_with(e))
+    let archive = [".zip", ".7z", ".rar"].iter().any(|e| n.ends_with(e));
+    let stem = n.rsplit_once('.').map_or(n.as_str(), |(s, _)| s);
+    let words: Vec<&str> = stem.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    let other = ["pdb", "pdbs", "symbols", "debug", "macos", "darwin", "osx", "mac", "linux", "source", "src", "sdk"];
+    archive && !words.iter().any(|w| other.contains(w))
 }
 
 /// Release notes are Markdown; show them as text, bounded.
@@ -408,12 +416,6 @@ impl Client {
         Ok(v.as_array().map(|a| a.iter().filter_map(release).collect()).unwrap_or_default())
     }
 
-    /// The newest full release (pre-releases only if there's nothing else).
-    pub fn latest_release(&self, owner: &str, repo: &str) -> Result<Option<Release>> {
-        let all = self.releases(owner, repo)?;
-        Ok(all.iter().find(|r| !r.prerelease).or(all.first()).cloned())
-    }
-
     /// Download a release asset of `owner/repo` into `dest_dir`.
     pub fn download(
         &self,
@@ -512,10 +514,14 @@ impl GitHubSource {
         }
     }
 
+    /// Files grouped by release, the latest full release first (pre-releases
+    /// can be newer, but most mods are built against the stable one).
     fn files(releases: &[Release]) -> Vec<SourceFile> {
         let latest = releases.iter().find(|r| !r.prerelease).map(|r| r.id);
-        releases
-            .iter()
+        let mut ordered: Vec<&Release> = releases.iter().collect();
+        ordered.sort_by_key(|r| Some(r.id) != latest);
+        ordered
+            .into_iter()
             .flat_map(|r| {
                 let group = match (Some(r.id) == latest, r.prerelease) {
                     (true, _) => format!("{} (latest)", r.tag),
@@ -642,7 +648,8 @@ impl ModSource for GitHubSource {
 
     fn check_update(&self, installed: &InstalledRef) -> Result<Option<UpdateOffer>> {
         let (owner, repo) = split_ref(&installed.source_ref)?;
-        let Some(latest) = self.client.latest_release(&owner, &repo)? else { return Ok(None) };
+        let releases = self.client.releases(&owner, &repo)?;
+        let Some(latest) = releases.iter().find(|r| !r.prerelease).or(releases.first()).cloned() else { return Ok(None) };
         if installed.version.as_deref() == Some(latest.tag.as_str()) {
             return Ok(None);
         }
@@ -652,7 +659,11 @@ impl ModSource for GitHubSource {
         }
         let file = matching_asset(&latest, installed.file_name.as_deref())
             .and_then(|a| Self::files(std::slice::from_ref(&latest)).into_iter().find(|f| f.id == a.id.to_string()));
-        Ok(Some(UpdateOffer { version: latest.tag.clone(), file }))
+        // A pre-release is installed: the offer is the stable release, even
+        // when its version number is lower.
+        let to_stable = !latest.prerelease
+            && releases.iter().any(|r| r.prerelease && installed.version.as_deref() == Some(r.tag.as_str()));
+        Ok(Some(UpdateOffer { version: latest.tag.clone(), file, to_stable }))
     }
 }
 
@@ -750,6 +761,8 @@ mod tests {
         };
         let r = rel(&["ArchiveXL-1.21.0.zip", "ArchiveXL-1.21.0-pdb.zip", "checksums.txt"]);
         assert_eq!(matching_asset(&r, Some("ArchiveXL-1.20.0.zip")).unwrap().name, "ArchiveXL-1.21.0.zip");
+        assert_eq!(matching_asset(&r, None).unwrap().name, "ArchiveXL-1.21.0.zip", "symbols don't count");
+        let r = rel(&["Mod-Lite-1.0.zip", "Mod-Full-1.0.zip"]);
         assert!(matching_asset(&r, None).is_none(), "two candidates and nothing to go on");
         let r = rel(&["only-1.0.7z", "notes.txt"]);
         assert_eq!(matching_asset(&r, Some("renamed.zip")).unwrap().name, "only-1.0.7z");
@@ -860,6 +873,62 @@ mod tests {
         assert_eq!(offer.file.unwrap().file_name, "ArchiveXL-1.21.0.zip");
         let current = InstalledRef { version: Some("1.21.0".into()), ..old };
         assert!(src.check_update(&current).unwrap().is_none());
+    }
+
+    #[test]
+    fn symbols_and_other_systems_are_not_installable() {
+        for n in ["red4ext-1.30.0.zip", "cet_1.37.1.zip", "redscript-v0.5.31-windows.zip", "TweakXL-1.11.4.zip", "Mod.7z"] {
+            assert!(is_installable(n), "{n}");
+        }
+        for n in [
+            "red4ext-symbols-1.30.0.zip",
+            "red4ext_1.29.1_pdbs.zip",
+            "windows-latest-x64-release-pdb.zip",
+            "TweakXL-1.0-pdb.zip",
+            "redscript-v0.5.31-macos.zip",
+            "ArchiveXL-1.21.0.pdb",
+        ] {
+            assert!(!is_installable(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn stable_release_comes_first_and_replaces_an_installed_prerelease() {
+        // redscript's releases: pre-releases newer than the stable one.
+        let rel = |id: i64, tag: &str, pre: bool| {
+            format!(
+                r#"{{"id":{id},"tag_name":"{tag}","prerelease":{pre},"assets":[
+                    {{"id":{a},"name":"redscript-{tag}-windows.zip","size":1,"browser_download_url":"https://github.com/jac3km4/redscript/releases/download/{tag}/w.zip"}},
+                    {{"id":{b},"name":"redscript-{tag}-macos.zip","size":1,"browser_download_url":"https://github.com/jac3km4/redscript/releases/download/{tag}/m.zip"}}]}}"#,
+                a = id * 10,
+                b = id * 10 + 1
+            )
+        };
+        let body = format!("[{},{},{}]", rel(3, "v1.0.0-preview.22", true), rel(2, "v0.5.31", false), rel(1, "v0.5.30", false));
+        let repo = r#"{"full_name":"jac3km4/redscript","description":"","stargazers_count":1,"topics":[],"archived":false}"#;
+        let (base, _) = serve(vec![
+            ("/repos/jac3km4/redscript/releases", 200, vec![], body),
+            ("/repos/jac3km4/redscript", 200, vec![], repo.into()),
+        ]);
+        let src = GitHubSource::with_client(Client::with_base(&base).unwrap());
+        let d = src.details("jac3km4/redscript").unwrap();
+        assert_eq!(d.files[0].group, "v0.5.31 (latest)");
+        let installable: Vec<_> = d.files.iter().filter(|f| f.installable && f.group == d.files[0].group).collect();
+        assert_eq!(installable.len(), 1, "only the Windows zip installs, so it can be picked without asking");
+        assert_eq!(installable[0].file_name, "redscript-v0.5.31-windows.zip");
+
+        let preview = InstalledRef {
+            source_ref: "jac3km4/redscript".into(),
+            file_id: Some("30".into()),
+            file_name: Some("redscript-v1.0.0-preview.22-windows.zip".into()),
+            version: Some("v1.0.0-preview.22".into()),
+        };
+        let offer = src.check_update(&preview).unwrap().unwrap();
+        assert_eq!(offer.version, "v0.5.31");
+        assert!(offer.to_stable);
+        assert_eq!(offer.file.unwrap().file_name, "redscript-v0.5.31-windows.zip");
+        let older = InstalledRef { version: Some("v0.5.30".into()), file_id: Some("10".into()), ..preview };
+        assert!(!src.check_update(&older).unwrap().unwrap().to_stable);
     }
 
     #[test]

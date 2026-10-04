@@ -153,6 +153,15 @@ pub fn known_logs(game_dir: &Path) -> Vec<LogFile> {
     out
 }
 
+/// One log from [`known_logs`] by its display name. Only names that list
+/// returns can be read or opened, never a path from the caller.
+pub fn find_log(game_dir: &Path, name: &str) -> Result<LogFile> {
+    known_logs(game_dir)
+        .into_iter()
+        .find(|l| l.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| crate::Error::Other(format!("unknown log `{name}`")))
+}
+
 pub fn tail_lines(path: &Path, max: usize) -> Result<String> {
     let mut f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();

@@ -150,10 +150,8 @@ impl Server {
                 let name = arg_str(args, "name")?;
                 let max = args.get("max_lines").and_then(Value::as_u64).unwrap_or(200).clamp(1, MAX_LOG_LINES as u64) as usize;
                 // Only names that list_logs would return are readable.
-                let log = crash::known_logs(Path::new(&game.path))
-                    .into_iter()
-                    .find(|l| l.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| Error::Other(format!("unknown log `{name}`; call list_logs first")))?;
+                let log = crash::find_log(Path::new(&game.path), name)
+                    .map_err(|_| Error::Other(format!("unknown log `{name}`; call list_logs first")))?;
                 Ok(json!({ "name": log.name, "text": crash::tail_lines(&log.path, max)? }))
             }
             "crash_analysis" => {

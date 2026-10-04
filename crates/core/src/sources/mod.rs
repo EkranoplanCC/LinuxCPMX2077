@@ -127,6 +127,9 @@ pub struct UpdateOffer {
     /// The file that replaces the installed one; `None` when the new version
     /// has several candidates and the user has to pick.
     pub file: Option<SourceFile>,
+    /// The installed version is a pre-release and this is the stable release
+    /// to go back to (its version can be lower).
+    pub to_stable: bool,
 }
 
 /// Download progress callback: (bytes done, bytes total).
