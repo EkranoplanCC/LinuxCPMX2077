@@ -15,6 +15,7 @@ use cp2077mm_core::install::{EnableReport, FomodInfo, InstallOptions, InstallRep
 use cp2077mm_core::nexus::{self, NxmLink};
 use cp2077mm_core::nexus_browse::{self, Category, List, ModDetails, Page, Search};
 use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
+use cp2077mm_core::linux_setup::{self, Check};
 use cp2077mm_core::{Error, Result, desktop, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -367,6 +368,42 @@ async fn analyze_game(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::ana
         cp2077mm_core::analysis::report_for_game(&db, &paths::staging_dir()?, &game)
     })
     .await
+}
+
+/// Run `f` with the setup context for one game: its fresh install details,
+/// what's running, and the folder fix records live in.
+fn with_setup<T>(app: &AppHandle, game_id: i64, f: impl FnOnce(&linux_setup::Ctx) -> Result<T>) -> Result<T> {
+    let row = app.state::<AppState>().db.lock().unwrap().game(game_id)?;
+    let home = home()?;
+    let path = PathBuf::from(&row.path);
+    let install = game::detect(&home)
+        .into_iter()
+        .find(|g| g.path == path)
+        .map_or_else(|| game::from_manual_path(&path), Ok)?;
+    let ctx = linux_setup::Ctx {
+        home: &home,
+        game: &install,
+        state_dir: paths::data_dir()?.join("setup").join(game_id.to_string()),
+        probe: linux_setup::Probe::system(),
+    };
+    f(&ctx)
+}
+
+/// Linux setup the game needs for mods (runtime, DLL overrides, -modded,
+/// folder spellings), each with a fix and an undo.
+#[tauri::command]
+async fn setup_checks(app: AppHandle, game_id: i64) -> Result<Vec<Check>> {
+    blocking(move || with_setup(&app, game_id, |ctx| Ok(linux_setup::checks(ctx)))).await
+}
+
+#[tauri::command]
+async fn setup_fix(app: AppHandle, game_id: i64, id: String) -> Result<String> {
+    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::apply(ctx, &id))).await
+}
+
+#[tauri::command]
+async fn setup_undo(app: AppHandle, game_id: i64, id: String) -> Result<String> {
+    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::undo(ctx, &id))).await
 }
 
 /// The end of one log from the Crashes & logs list, by its display name.
@@ -1047,6 +1084,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             detect_games,
             add_game_path,
+            setup_checks,
+            setup_fix,
+            setup_undo,
             list_mods,
             list_downloads,
             install_archive,
