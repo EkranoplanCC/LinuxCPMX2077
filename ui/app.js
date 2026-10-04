@@ -64,9 +64,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${name}`));
   if (name === "downloads") busy(null, loadDownloads);
   if (name === "nexus") busy(null, () => selectSource(currentSource));
-  if (name === "analysis") runAnalysis();
-  if (name === "crashes") busy(null, runCrash);
-  if (name === "graph" && currentGame) busy(null, async () => window.showGraph(await invoke("analyze_game", { gameId: currentGame.id })));
+  if (name === "diagnostics") busy(null, runDiagnostics);
 }
 
 // ---- game ---------------------------------------------------------------
@@ -349,6 +347,7 @@ async function uninstall(m) {
 
 function reportInstall(r, note) {
   const lines = [`Installed ${r.name}: ${r.files_installed} files (${r.layout})`];
+  if (r.replaced) lines.push(`Replaced the installed ${r.replaced}`);
   if (r.overwritten_mods.length) lines.push(`Overrode files from: ${[...new Set(r.overwritten_mods.map((c) => c.other_mod_name))].join(", ")}`);
   if (r.backed_up_game_files.length) lines.push(`Backed up ${r.backed_up_game_files.length} original game files`);
   if (r.skipped.length) lines.push(`Skipped: ${r.skipped.slice(0, 5).join(", ")}${r.skipped.length > 5 ? "…" : ""}`);
@@ -368,17 +367,93 @@ $("#install-file").addEventListener("click", (e) => busy(e.target, async () => {
 // ---- compatibility ------------------------------------------------------
 const FRAMEWORK_NAMES = { cet: "CET", red4ext: "RED4ext", redscript: "redscript", archivexl: "ArchiveXL", tweakxl: "TweakXL", codeware: "Codeware", redmod: "REDmod" };
 
-async function runAnalysis() {
+// Overview and diagnosis in one tab: a summary of what needs attention, the
+// graph, the compatibility findings and the crash/log check. A finding or a
+// crash suspect can be shown in the graph with the mods it names lit up.
+async function runDiagnostics() {
   if (!currentGame) return;
-  $("#findings").replaceChildren(el("p", { class: "muted" }, "Checking…"));
-  const r = await invoke("analyze_game", { gameId: currentGame.id });
+  $("#diag-problems").replaceChildren(el("p", { class: "muted" }, "Checking…"));
+  const [analysis, crash] = await Promise.allSettled([
+    invoke("analyze_game", { gameId: currentGame.id }),
+    invoke("crash_analysis", { gameId: currentGame.id }),
+  ]);
+  if (analysis.status === "fulfilled") {
+    window.showGraph(analysis.value);
+    renderCompat(analysis.value);
+  }
+  if (crash.status === "fulfilled") renderCrash(crash.value);
+  renderProblems(analysis.value, crash.value);
+  const failed = [analysis, crash].filter((r) => r.status === "rejected").map((r) => String(r.reason));
+  if (failed.length) toast(failed.join("\n"), true);
+}
+$("#run-diagnostics").addEventListener("click", (e) => busy(e.target, runDiagnostics));
+document.querySelectorAll("[data-jump]").forEach((b) => b.addEventListener("click", () =>
+  document.getElementById(b.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" })));
+
+function showInGraph(modIds, label) {
+  window.highlightGraph(modIds, label);
+  $("#diag-graph").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function graphButton(modIds, label) {
+  return modIds.length ? el("button", { class: "link inline", title: "Light up these mods in the graph",
+    onclick: () => showInGraph(modIds, label) }, "Show in graph") : null;
+}
+
+// Mod ids of every log line that names a suspect, by suspect name.
+function suspectIds(crash) {
+  const ids = new Map();
+  for (const i of crash.issues) i.mod_names.forEach((n, k) => {
+    if (!ids.has(n)) ids.set(n, new Set());
+    if (i.mod_ids[k] !== undefined) ids.get(n).add(i.mod_ids[k]);
+  });
+  return ids;
+}
+
+function renderProblems(analysis, crash) {
+  const items = [];
+  const warnings = currentGame.install.warnings;
+  if (warnings.length) items.push(el("div", { class: "card finding warning" },
+    el("h3", {}, "Game setup"), el("ul", { class: "warnings plain" }, ...warnings.map(warningItem))));
+  if (crash) {
+    const errors = crash.issues.filter((i) => i.level === "error").length;
+    const ids = suspectIds(crash);
+    const lines = [];
+    if (crash.latest_crash) lines.push(el("li", {}, "Latest crash report: ", el("b", {}, fmtTime(crash.latest_crash.modified_unix))));
+    if (errors) lines.push(el("li", {}, `${errors} error${errors === 1 ? "" : "s"} in the logs`));
+    for (const [name, n] of crash.suspects.slice(0, 8)) {
+      const m = [...(ids.get(name) || [])];
+      lines.push(el("li", {}, el("b", {}, name), ` is named in ${n} error${n === 1 ? "" : "s"} `, graphButton(m, `${name}: named in log errors`)));
+    }
+    if (lines.length) items.push(el("div", { class: "card finding error" }, el("h3", {}, "Crashes and errors"), el("ul", {}, ...lines)));
+  }
+  if (analysis) {
+    const count = (sev) => analysis.findings.filter((f) => f.severity === sev);
+    const errs = count("error"), warns = count("warning");
+    if (errs.length || warns.length) {
+      const all = [...errs, ...warns];
+      const mods = [...new Set(all.flatMap((f) => f.mod_ids))];
+      items.push(el("div", { class: "card finding " + (errs.length ? "error" : "warning") },
+        el("h3", {}, "Compatibility"),
+        el("ul", {},
+          errs.length ? el("li", {}, `${errs.length} problem${errs.length === 1 ? "" : "s"}, such as a missing framework or two mods replacing the same thing`) : null,
+          warns.length ? el("li", {}, `${warns.length} overlap${warns.length === 1 ? "" : "s"} to check`) : null),
+        el("div", { class: "row" },
+          el("button", { class: "link", onclick: () => $("#diag-compat").scrollIntoView({ behavior: "smooth" }) }, "See the list"),
+          graphButton(mods, "Mods with compatibility findings"))));
+    }
+  }
+  $("#diag-problems").replaceChildren(...(items.length ? items
+    : [el("div", { class: "card finding ok" }, analysis && crash ? "Nothing needs attention: no crashes, log errors or conflicts found." : "Some checks failed; see the message.")]));
+}
+
+function renderCompat(r) {
   const sev = { error: "Problems", warning: "Overlaps to check", info: "Shared hooks (usually fine)" };
   const groups = ["error", "warning", "info"].map((s) => {
     const items = r.findings.filter((f) => f.severity === s);
     if (!items.length) return null;
     return el("div", { class: `card finding ${s}` },
       el("h3", {}, `${sev[s]} (${items.length})`),
-      el("ul", {}, ...items.map((f) => el("li", {}, f.message, " ", el("span", { class: "muted mono" }, f.key)))));
+      el("ul", {}, ...items.map((f) => el("li", {}, f.message, " ", el("span", { class: "muted mono" }, f.key), " ", graphButton(f.mod_ids, f.message)))));
   }).filter(Boolean);
   $("#findings").replaceChildren(...(groups.length ? groups
     : [el("div", { class: "card finding ok" }, r.mods.length ? "No conflicts found between your installed mods." : "No mods installed yet.")]));
@@ -391,29 +466,29 @@ async function runAnalysis() {
     el("td", {}, n(m, "tweak_property", "xl_patch")),
     el("td", {}, m.requires.map((x) => FRAMEWORK_NAMES[x] || x).join(", ") || "—"))));
 }
-$("#run-analysis").addEventListener("click", (e) => busy(e.target, runAnalysis));
 
 // ---- crashes & logs -----------------------------------------------------
 function fmtTime(unix) {
   return unix ? new Date(unix * 1000).toLocaleString() : "—";
 }
 
-async function runCrash() {
-  if (!currentGame) return;
-  const r = await invoke("crash_analysis", { gameId: currentGame.id });
+function renderCrash(r) {
+  const ids = suspectIds(r);
   const errors = r.issues.filter((i) => i.level === "error");
   const warnings = r.issues.filter((i) => i.level === "warning");
   $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length ? "error" : "ok") },
     r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found in the Proton prefix."),
     r.suspects.length
-      ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]))
+      ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]), " ",
+        graphButton([...new Set(r.suspects.flatMap(([name]) => [...(ids.get(name) || [])]))], "Mods named in log errors"))
       : el("p", { class: "muted" }, errors.length ? "None of the errors name an installed mod." : "No errors in the logs."),
   ));
   const group = (title, items, cls) => items.length ? el("div", { class: `card finding ${cls}` },
     el("h3", {}, `${title} (${items.length})`),
     el("ul", {}, ...items.slice(0, 200).map((i) => el("li", {},
       i.mod_names.length ? el("b", {}, i.mod_names.join(", ") + ": ") : null,
-      el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log))))) : null;
+      el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log), " ",
+      graphButton(i.mod_ids, `${i.mod_names.join(", ")}: ${i.log}`))))) : null;
   $("#crash-issues").replaceChildren(...[group("Errors", errors, "error"), group("Warnings", warnings, "warning")].filter(Boolean));
   $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},
     el("td", { class: "mono" }, el("button", { class: "link", style: "margin: 0", title: "Show this log", onclick: (e) => busy(e.target, () => showLog(l.name)) }, l.name)),
@@ -443,7 +518,6 @@ $("#log-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#log-text").textContent); toast("Log copied"); }
   catch { toast("Select the text and copy it manually", true); }
 });
-$("#run-crash").addEventListener("click", (e) => busy(e.target, runCrash));
 
 // ---- FOMOD wizard ------------------------------------------------------
 // `note` is added to the install report (e.g. that the file is unverified).

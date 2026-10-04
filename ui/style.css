@@ -101,14 +101,21 @@ legend { padding: 0 6px; font-weight: 600; }
 .finding.info { border-left: 3px solid var(--cyan); }
 .finding.ok { border-left: 3px solid var(--green); }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 8px; }
-#tab-graph.active { display: flex; flex-direction: column; height: calc(100vh - 40px); }
-#graph-wrap { position: relative; flex: 1; min-height: 360px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #0a0a10; }
+.diag-section { margin-top: 26px; scroll-margin-top: 10px; }
+.diag-section > h3, .diag-section > header h3 { font-size: 14px; color: var(--text); margin: 0 0 8px; }
+.diag-section > header { margin-bottom: 8px; }
+.jump { display: flex; gap: 14px; margin-right: 8px; }
+.jump button.link { margin: 0; }
+button.link.inline { margin: 0 0 0 6px; padding: 0; font-size: 12px; }
+.warnings.plain li { margin-top: 4px; }
+#graph-wrap { position: relative; height: max(420px, 62vh); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #0a0a10; }
 #graph { width: 100%; height: 100%; display: block; cursor: grab; }
 #graph.dragging { cursor: grabbing; }
 #graph-info { position: absolute; top: 10px; right: 10px; width: 300px; max-height: calc(100% - 20px); overflow-y: auto; background: rgba(21, 21, 32, .94); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 13px; }
 #graph-info h3 { margin: 0 0 6px; color: var(--text); text-transform: none; font-size: 15px; }
 #graph-info ul { margin: 6px 0 0; padding-left: 16px; }
 #graph-info .conflict { color: var(--red); }
+#graph-info .lit-note { color: var(--yellow); }
 #graph-legend { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); background: rgba(21, 21, 32, .85); padding: 6px 10px; border-radius: 4px; }
 #graph-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; background: var(--c); vertical-align: -1px; }
 
