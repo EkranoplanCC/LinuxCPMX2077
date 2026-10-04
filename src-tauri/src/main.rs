@@ -369,6 +369,29 @@ async fn analyze_game(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::ana
     .await
 }
 
+/// The end of one log from the Crashes & logs list, by its display name.
+#[tauri::command]
+async fn read_log(app: AppHandle, game_id: i64, name: String) -> Result<String> {
+    blocking(move || {
+        let game = app.state::<AppState>().db.lock().unwrap().game(game_id)?;
+        let log = cp2077mm_core::crash::find_log(std::path::Path::new(&game.path), &name)?;
+        cp2077mm_core::crash::tail_lines(&log.path, 5000)
+    })
+    .await
+}
+
+/// Show the folder a listed log is in.
+#[tauri::command]
+async fn open_log_folder(app: AppHandle, game_id: i64, name: String) -> Result<()> {
+    blocking(move || {
+        let game = app.state::<AppState>().db.lock().unwrap().game(game_id)?;
+        let log = cp2077mm_core::crash::find_log(std::path::Path::new(&game.path), &name)?;
+        let dir = log.path.parent().ok_or_else(|| Error::Other("log has no folder".into()))?;
+        desktop::open_folder(dir)
+    })
+    .await
+}
+
 /// Errors from crash reports and framework logs, matched to mods.
 #[tauri::command]
 async fn crash_analysis(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::crash::CrashReport> {
@@ -1037,6 +1060,8 @@ fn main() {
             enable_mod,
             analyze_game,
             crash_analysis,
+            read_log,
+            open_log_folder,
             mcp_command,
             verify_mod,
             nexus_status,

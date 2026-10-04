@@ -416,8 +416,33 @@ async function runCrash() {
       el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log))))) : null;
   $("#crash-issues").replaceChildren(...[group("Errors", errors, "error"), group("Warnings", warnings, "warning")].filter(Boolean));
   $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},
-    el("td", { class: "mono" }, l.name), el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)))));
+    el("td", { class: "mono" }, el("button", { class: "link", style: "margin: 0", title: "Show this log", onclick: (e) => busy(e.target, () => showLog(l.name)) }, l.name)),
+    el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)),
+    el("td", { class: "actions" },
+      el("button", { onclick: (e) => busy(e.target, () => showLog(l.name)) }, "View"), " ",
+      el("button", { onclick: (e) => busy(e.target, () => invoke("open_log_folder", { gameId: currentGame.id, name: l.name })) }, "Open folder")))));
 }
+
+// The end of a log (the last 5000 lines), to read or copy into a bug report.
+let shownLog = null;
+async function showLog(name) {
+  const text = await invoke("read_log", { gameId: currentGame.id, name });
+  shownLog = name;
+  $("#log-title").textContent = name;
+  $("#log-note").textContent = text.split("\n").length >= 5000 ? "last 5000 lines" : "";
+  $("#log-text").textContent = text || "(empty)";
+  $("#log-viewer").classList.remove("hidden");
+  $("#log-text").scrollTop = $("#log-text").scrollHeight;
+}
+$("#log-close").addEventListener("click", () => $("#log-viewer").classList.add("hidden"));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("#log-viewer").classList.add("hidden");
+});
+$("#log-folder").addEventListener("click", (e) => busy(e.target, () => invoke("open_log_folder", { gameId: currentGame.id, name: shownLog })));
+$("#log-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#log-text").textContent); toast("Log copied"); }
+  catch { toast("Select the text and copy it manually", true); }
+});
 $("#run-crash").addEventListener("click", (e) => busy(e.target, runCrash));
 
 // ---- FOMOD wizard ------------------------------------------------------

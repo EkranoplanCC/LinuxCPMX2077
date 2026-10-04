@@ -72,6 +72,8 @@ code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size:
 #toast.error { border-left-color: var(--red); }
 #game-info, .warnings li { overflow-wrap: anywhere; }
 
+#log-viewer { position: fixed; inset: 0; background: rgba(5, 5, 10, .75); display: flex; align-items: center; justify-content: center; z-index: 10; }
+#log-text { flex: 1; overflow: auto; margin: 0; padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; white-space: pre; user-select: text; }
 #wizard { position: fixed; inset: 0; background: rgba(5, 5, 10, .75); display: flex; align-items: center; justify-content: center; z-index: 10; }
 .wiz-panel { width: min(960px, 94vw); height: min(640px, 90vh); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--yellow); border-radius: 6px; padding: 18px 20px; }
 .wiz-panel header { margin-bottom: 12px; }

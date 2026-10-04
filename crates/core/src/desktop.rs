@@ -92,6 +92,14 @@ pub fn open_url(url: &str) -> Result<()> {
     launch(url)
 }
 
+/// Show a folder in the user's file manager.
+pub fn open_folder(dir: &std::path::Path) -> Result<()> {
+    if !dir.is_dir() {
+        return Err(Error::Other(format!("{} is not a folder", dir.display())));
+    }
+    launch(&dir.to_string_lossy())
+}
+
 /// Open any https link the user clicked on a web page shown in the app
 /// (the in-app Nexus window), the way a browser opens a new tab.
 pub fn open_link(url: &str) -> Result<()> {
