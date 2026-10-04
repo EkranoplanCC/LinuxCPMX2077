@@ -18,6 +18,8 @@
   let view = { x: 0, y: 0, k: 1 };
   let hover = null, selected = null, drag = null, alpha = 0, raf = 0;
   let lastReport = null;
+  // Mods lit up from a finding or crash suspect: { modIds, label, mods, near }.
+  let lit = null;
 
   document.getElementById("graph-legend").replaceChildren(...Object.entries(NAMES).map(([t, n]) => {
     const s = document.createElement("span");
@@ -48,6 +50,7 @@
     edges = keep.filter((e) => byId.has(e.from) && byId.has(e.to)).map((e) => ({ ...e, a: byId.get(e.from), b: byId.get(e.to) }));
     edges.forEach((e) => { e.a.degree++; e.b.degree++; });
     selected = selected && byId.get(selected.id) || null;
+    if (lit) lit = lightUp(lit.modIds, lit.label);
     alpha = 1;
     tick();
   }
@@ -109,19 +112,34 @@
     return s;
   }
 
+  // The lit mods, plus what they share: everything two of them touch, or
+  // everything a single lit mod touches.
+  function lightUp(modIds, label) {
+    const mods = new Set(modIds.map((id) => byId.get(`mod:${id}`)).filter(Boolean));
+    const near = new Set(mods);
+    const count = new Map();
+    edges.forEach((e) => {
+      if (mods.has(e.a)) count.set(e.b, (count.get(e.b) || 0) + 1);
+      if (mods.has(e.b)) count.set(e.a, (count.get(e.a) || 0) + 1);
+    });
+    count.forEach((c, n) => { if (c >= 2 || mods.size === 1) near.add(n); });
+    return { modIds, label, mods, near };
+  }
+
   function draw() {
     const r = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, r.width, r.height);
     const focus = hover || selected;
-    const near = focus ? neighbors(focus) : null;
+    const near = focus ? neighbors(focus) : lit?.mods.size ? lit.near : null;
+    const onFocus = (e) => focus ? e.a === focus || e.b === focus : lit.mods.has(e.a) || lit.mods.has(e.b);
     for (const e of edges) {
       const a = toScreen(e.a), b = toScreen(e.b);
-      const lit = !near || (near.has(e.a) && near.has(e.b) && (e.a === focus || e.b === focus));
-      ctx.strokeStyle = e.conflict ? "rgba(255,77,94," + (lit ? 0.9 : 0.15) + ")" : "rgba(140,140,170," + (lit ? 0.55 : 0.08) + ")";
+      const bright = !near || (near.has(e.a) && near.has(e.b) && onFocus(e));
+      ctx.strokeStyle = e.conflict ? "rgba(255,77,94," + (bright ? 0.9 : 0.15) + ")" : "rgba(140,140,170," + (bright ? 0.55 : 0.08) + ")";
       ctx.lineWidth = Math.min(4, 1 + Math.log2(e.weight || 1) * 0.5) * (e.conflict ? 1.4 : 1);
       ctx.setLineDash(e.label === "requires" ? [4, 4] : []);
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      if (focus && lit && view.k > 0.5) {
+      if (near && bright && view.k > 0.5) {
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(232,232,240,.75)";
         ctx.font = "11px system-ui, sans-serif";
@@ -137,7 +155,7 @@
       ctx.fillStyle = COLORS[n.type] || "#888";
       ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, Math.PI * 2); ctx.fill();
       if (n.missing) { ctx.strokeStyle = "#ff4d5e"; ctx.lineWidth = 3; ctx.stroke(); }
-      if (n === selected) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+      if (n === selected || (!focus && lit?.mods.has(n))) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
       const showLabel = n.type === "mod" || n.type === "framework" || n.type === "base_game" || n === focus || (near && near.has(n)) || view.k > 1.3;
       if (showLabel) {
         ctx.fillStyle = n.type === "mod" ? "#fff" : "#c8c8d8";
@@ -173,6 +191,25 @@
   }
 
   function showInfo(n) {
+    if (!n && lit) {
+      info.className = "";
+      const h = document.createElement("h3");
+      h.textContent = lit.label;
+      const ul = document.createElement("ul");
+      for (const m of lit.mods) {
+        const li = document.createElement("li");
+        li.textContent = m.label;
+        ul.append(li);
+      }
+      const note = document.createElement("p");
+      note.className = lit.mods.size ? "muted" : "lit-note";
+      note.textContent = lit.mods.size ? "Click a node for details, or empty space to clear." : "None of these mods are in the graph (disabled or uninstalled).";
+      const clear = document.createElement("button");
+      clear.textContent = "Clear";
+      clear.addEventListener("click", () => { lit = null; showInfo(selected); draw(); });
+      info.replaceChildren(h, ul, note, clear);
+      return;
+    }
     if (!n) {
       info.replaceChildren("Drag to pan, scroll to zoom, drag a node to move it, click a node for details.");
       info.className = "muted";
@@ -223,7 +260,12 @@
   });
   window.addEventListener("mouseup", () => {
     if (!drag) return;
-    if (!drag.moved) { selected = drag.node; showInfo(selected); draw(); }
+    if (!drag.moved) {
+      selected = drag.node;
+      if (!selected) lit = null;
+      showInfo(selected);
+      draw();
+    }
     drag = null;
     canvas.classList.remove("dragging");
   });
@@ -246,8 +288,21 @@
     alpha = 1; tick();
   });
 
+  window.highlightGraph = (modIds, label) => {
+    lit = lightUp(modIds, label);
+    selected = null;
+    if (lit.mods.size) {
+      const ms = [...lit.mods];
+      view.x = -ms.reduce((a, n) => a + n.x, 0) / ms.length;
+      view.y = -ms.reduce((a, n) => a + n.y, 0) / ms.length;
+    }
+    showInfo(null);
+    draw();
+  };
+
   window.showGraph = (report) => {
     lastReport = report;
+    lit = null;
     build(report);
     showInfo(selected);
     resize();

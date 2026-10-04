@@ -42,18 +42,31 @@ make it executable (`chmod +x`) and run it.
 - **Conflicts**: refuses to overwrite another mod's files unless you allow it;
   uninstalling the winner restores the loser's copy, and original game files
   are backed up and restored.
+- **Switching versions**: installing another version of an installed mod
+  (from an archive, the Downloads tab, Nexus or GitHub) replaces it in place:
+  the old files come out, the new ones go in, and a disabled mod stays
+  disabled. It counts as the same mod when it comes from the same GitHub
+  repository, or installs some of the same files and comes from the same
+  Nexus page, has the same name apart from version numbers, or mostly
+  overlaps. An optional file from the same Nexus page that shares no files
+  with the main one is installed next to it.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed
   after install, such as its own settings, stay in place and are kept when it
   comes back. Disabled mods are left out of the compatibility check and crash
   analysis.
+- **Diagnostics tab**: one place for overview and diagnosis. It opens with a
+  summary of what needs attention (game setup warnings, recent crashes, mods
+  named in log errors, compatibility problems), followed by the graph, the
+  compatibility findings and the crash/log check. “Show in graph” next to a
+  finding or a crash suspect lights up the mods involved and what they share.
 - **Compatibility check** (no AI needed): every enabled mod is indexed for
   what it touches: game resources inside `.archive` files (and which of them
   replace base-game resources), redscript `@replaceMethod`/`@wrapMethod`/
   `@addField`/`@addMethod`, TweakXL records and properties, ArchiveXL resource
-  patches, CET `Override`/`Observe` hooks and RED4ext plugins. The
-  Compatibility tab lists hard clashes, overlaps (with which archive wins the
+  patches, CET `Override`/`Observe` hooks and RED4ext plugins. Diagnostics
+  lists hard clashes, overlaps (with which archive wins the
   load order) and frameworks a mod needs that aren't installed.
 - **Agent access (read-only MCP)**: `CPMX2077_<version>_amd64.AppImage --mcp`
   serves the mod list, file hashes, the compatibility index and the game's

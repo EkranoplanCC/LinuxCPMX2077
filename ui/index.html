@@ -23,9 +23,7 @@
     </section>
     <nav>
       <button data-tab="mods" class="active">Installed mods</button>
-      <button data-tab="analysis">Compatibility</button>
-      <button data-tab="graph">Graph</button>
-      <button data-tab="crashes">Crashes &amp; logs</button>
+      <button data-tab="diagnostics">Diagnostics</button>
       <button data-tab="nexus">Get mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
@@ -76,50 +74,62 @@
       <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or get one from Nexus or GitHub.</p>
     </section>
 
-    <section id="tab-analysis" class="tab">
+    <section id="tab-diagnostics" class="tab">
       <header>
-        <h2>Compatibility</h2>
-        <button id="run-analysis" class="primary">Check enabled mods</button>
-      </header>
-      <p class="muted">Looks inside every enabled mod for game resources, redscript methods, tweak records,
-        ArchiveXL patches and CET hooks that clash, and for frameworks a mod needs but you don't have.</p>
-      <div id="findings"></div>
-      <h3>What each mod changes</h3>
-      <table>
-        <thead><tr><th>Mod</th><th>Game resources</th><th>Replaces base game</th><th>Script hooks</th><th>Tweaks</th><th>Needs</th></tr></thead>
-        <tbody id="mod-summary"></tbody>
-      </table>
-    </section>
-
-    <section id="tab-graph" class="tab">
-      <header>
-        <h2>How your mods connect</h2>
+        <h2>Diagnostics</h2>
         <div class="row">
-          <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
-          <button id="graph-reset">Re-layout</button>
+          <div class="jump" aria-label="Sections">
+            <button class="link" data-jump="diag-graph">Graph</button>
+            <button class="link" data-jump="diag-compat">Compatibility</button>
+            <button class="link" data-jump="diag-crashes">Crashes &amp; logs</button>
+          </div>
+          <button id="run-diagnostics" class="primary">Check again</button>
         </div>
       </header>
-      <div id="graph-wrap">
-        <canvas id="graph"></canvas>
-        <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
-        <div id="graph-legend"></div>
-      </div>
-    </section>
+      <div id="diag-problems"></div>
 
-    <section id="tab-crashes" class="tab">
-      <header>
-        <h2>Crashes &amp; logs</h2>
-        <button id="run-crash" class="primary">Check logs</button>
-      </header>
-      <p class="muted">Reads the game's crash reports and the CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs,
-        and points out which installed mod each error mentions.</p>
-      <div id="crash-summary"></div>
-      <div id="crash-issues"></div>
-      <h3>Logs found</h3>
-      <table>
-        <thead><tr><th>Log</th><th>Size</th><th>Last written</th><th></th></tr></thead>
-        <tbody id="crash-logs"></tbody>
-      </table>
+      <section id="diag-graph" class="diag-section">
+        <header>
+          <h3>How your mods connect</h3>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
+            <button id="graph-reset">Re-layout</button>
+          </div>
+        </header>
+        <div id="graph-wrap">
+          <canvas id="graph"></canvas>
+          <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
+          <div id="graph-legend"></div>
+        </div>
+      </section>
+
+      <section id="diag-compat" class="diag-section">
+        <h3>Compatibility</h3>
+        <p class="muted">Looks inside every enabled mod for game resources, redscript methods, tweak records,
+          ArchiveXL patches and CET hooks that clash, and for frameworks a mod needs but you don't have.
+          “Show in graph” lights up the mods a finding names.</p>
+        <div id="findings"></div>
+        <details>
+          <summary>What each mod changes</summary>
+          <table>
+            <thead><tr><th>Mod</th><th>Game resources</th><th>Replaces base game</th><th>Script hooks</th><th>Tweaks</th><th>Needs</th></tr></thead>
+            <tbody id="mod-summary"></tbody>
+          </table>
+        </details>
+      </section>
+
+      <section id="diag-crashes" class="diag-section">
+        <h3>Crashes &amp; logs</h3>
+        <p class="muted">Reads the game's crash reports and the CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs,
+          and points out which installed mod each error mentions.</p>
+        <div id="crash-summary"></div>
+        <div id="crash-issues"></div>
+        <h3>Logs found</h3>
+        <table>
+          <thead><tr><th>Log</th><th>Size</th><th>Last written</th><th></th></tr></thead>
+          <tbody id="crash-logs"></tbody>
+        </table>
+      </section>
     </section>
 
     <section id="tab-nexus" class="tab">

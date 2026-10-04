@@ -261,7 +261,7 @@ fn begin_install(
                 let opts = InstallOptions { meta, overwrite, fomod_choices: None };
                 let r = match replaces {
                     Some(old) => i.finish_replacing(&game, &prepared, opts, old),
-                    None => i.finish(&game, &prepared, opts),
+                    None => i.finish_auto(&game, &prepared, opts),
                 };
                 if r.is_err() {
                     i.discard(&prepared);
@@ -328,7 +328,7 @@ async fn finish_install(app: AppHandle, token: String, selections: fomod::Select
         let opts = InstallOptions { meta: p.meta.clone(), overwrite, fomod_choices: Some(selections) };
         let r = with_installer(&db, |i| match p.replaces {
             Some(old) => i.finish_replacing(&game, &p.prepared, opts, old),
-            None => i.finish(&game, &p.prepared, opts),
+            None => i.finish_auto(&game, &p.prepared, opts),
         });
         match &r {
             Err(Error::Conflict(_)) => {}

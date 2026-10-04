@@ -2,7 +2,7 @@
 //! files belong, check for conflicts, deploy with backups, and record every
 //! file's hash so the mod can be verified and cleanly removed later.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -48,6 +48,8 @@ pub struct InstallReport {
     pub skipped: Vec<String>,
     pub overwritten_mods: Vec<Conflict>,
     pub backed_up_game_files: Vec<String>,
+    /// The installed version this one took the place of, e.g. "Mod 1.2".
+    pub replaced: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -421,6 +423,7 @@ impl Installer<'_> {
                 skipped: plan.skipped,
                 overwritten_mods: conflicts,
                 backed_up_game_files: backed_up,
+                replaced: None,
                 })
             }
             Err(e) => {
@@ -444,8 +447,12 @@ impl Installer<'_> {
             self.disable(old)?;
         }
         match self.finish(game, p, opts) {
-            Ok(r) => {
+            Ok(mut r) => {
                 self.uninstall(old)?;
+                r.replaced = Some(match &old_mod.version {
+                    Some(v) if !v.is_empty() => format!("{} {v}", old_mod.name),
+                    _ => old_mod.name.clone(),
+                });
                 if !was_enabled {
                     self.disable(r.mod_id)?;
                 }
@@ -458,6 +465,45 @@ impl Installer<'_> {
                 Err(e)
             }
         }
+    }
+
+    /// Install `p`, replacing the installed mod it is another version of, if
+    /// there is one (see [`Installer::previous_version`]).
+    pub fn finish_auto(&self, game: &GameRow, p: &Prepared, opts: InstallOptions) -> Result<InstallReport> {
+        let plan = self.plan_prepared(game, p, &opts.meta.name, opts.fomod_choices.as_ref())?;
+        match self.previous_version(game, &opts.meta, &plan)? {
+            Some(old) => self.finish_replacing(game, p, opts, old),
+            None => self.finish(game, p, opts),
+        }
+    }
+
+    /// The installed mod (enabled or not) that `plan` is another version of:
+    /// the same GitHub repository, or one that installs some of the same
+    /// files and either comes from the same Nexus page, has the same name
+    /// apart from version numbers, or mostly overlaps it (at least half of
+    /// each side's files are shared). An optional file from the same Nexus
+    /// page that shares no files with the main file is a separate mod.
+    pub fn previous_version(&self, game: &GameRow, meta: &NewMod, plan: &Plan) -> Result<Option<i64>> {
+        let targets: HashSet<String> = plan.files.iter().map(|f| f.target.to_lowercase()).collect();
+        let name = base_name(&meta.name);
+        let lower = |s: &Option<String>| s.as_deref().map(str::to_lowercase);
+        let mut best: Option<(usize, i64)> = None;
+        for m in self.db.mods(game.id)? {
+            let files = self.db.mod_files(m.id)?;
+            let shared = files.iter().filter(|f| targets.contains(&f.rel_path.to_lowercase())).count();
+            let same_repo = !matches!(meta.source.as_str(), "nexus" | "manual")
+                && meta.source == m.source
+                && meta.source_ref.is_some()
+                && lower(&meta.source_ref) == lower(&m.source_ref);
+            let same_page = meta.nexus_mod_id.is_some() && meta.nexus_mod_id == m.nexus_mod_id;
+            let same_name = !name.is_empty() && name == base_name(&m.name);
+            let mostly = !files.is_empty() && shared * 2 >= files.len() && shared * 2 >= targets.len();
+            let is_version = same_repo || (shared > 0 && (same_page || same_name || mostly));
+            if is_version && best.is_none_or(|(n, _)| shared > n) {
+                best = Some((shared, m.id));
+            }
+        }
+        Ok(best.map(|(_, id)| id))
     }
 
     pub fn discard(&self, p: &Prepared) {
@@ -697,6 +743,19 @@ fn remove_empty_parents(file: &Path, stop: &Path) {
         }
         dir = d.parent();
     }
+}
+
+/// A mod name without version numbers or punctuation, so "ArchiveXL 1.2.3"
+/// and "ArchiveXL-v1.3" compare equal.
+fn base_name(name: &str) -> String {
+    name.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| {
+            let t = t.strip_prefix('v').unwrap_or(t);
+            !t.is_empty() && !t.chars().all(|c| c.is_ascii_digit())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -1012,6 +1071,84 @@ mod tests {
         assert!(matches!(err, Error::Conflict(_)), "{err}");
         assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/x.archive")).unwrap(), b"v2");
         assert!(f.db.get_mod(r2.mod_id).unwrap().enabled());
+    }
+
+    #[test]
+    fn another_version_replaces_the_installed_one() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let game_dir = PathBuf::from(&f.game.path);
+        let auto = |zip: &Path, opts: InstallOptions| {
+            let p = inst.prepare(&f.game, zip).unwrap();
+            inst.finish_auto(&f.game, &p, opts)
+        };
+
+        // A manual install of a newer archive replaces the older one by name.
+        let v1 = f.root.join("v1.zip");
+        zip_with(&v1, &[("archive/pc/mod/x.archive", b"v1"), ("r6/scripts/m/old.reds", b"// old")]);
+        let r1 = auto(&v1, meta("Cool Mod 1.0")).unwrap();
+        assert_eq!(r1.replaced, None);
+        inst.disable(r1.mod_id).unwrap();
+        let v2 = f.root.join("v2.zip");
+        zip_with(&v2, &[("archive/pc/mod/x.archive", b"v2"), ("r6/scripts/m/new.reds", b"// new")]);
+        let r2 = auto(&v2, meta("Cool-Mod-v1.1")).unwrap();
+        assert_eq!(r2.replaced.as_deref(), Some("Cool Mod 1.0"));
+        let mods = f.db.mods(f.game.id).unwrap();
+        assert_eq!(mods.len(), 1);
+        assert!(!mods[0].enabled(), "a disabled mod's new version stays disabled");
+        inst.enable(r2.mod_id, false).unwrap();
+        assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/x.archive")).unwrap(), b"v2");
+        assert!(!game_dir.join("r6/scripts/m/old.reds").exists());
+
+        // An unrelated mod that clashes on one file of many is not a version.
+        let big = f.root.join("big.zip");
+        zip_with(&big, &[("archive/pc/mod/x.archive", b"big"), ("archive/pc/mod/b1.archive", b"1"), ("archive/pc/mod/b2.archive", b"2")]);
+        let err = auto(&big, meta("Big Pack")).unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+
+        // Nexus: a new main file of the same page replaces the old one, an
+        // optional file that shares nothing is installed next to it.
+        let nexus = |file: i64| InstallOptions {
+            meta: NewMod { name: "Page Mod".into(), source: "nexus".into(), nexus_mod_id: Some(7), nexus_file_id: Some(file), ..Default::default() },
+            ..Default::default()
+        };
+        let n1 = f.root.join("n1.zip");
+        zip_with(&n1, &[("archive/pc/mod/n.archive", b"n1"), ("archive/pc/mod/n_extra.archive", b"e")]);
+        auto(&n1, nexus(1)).unwrap();
+        let opt = f.root.join("opt.zip");
+        zip_with(&opt, &[("archive/pc/mod/n_addon.archive", b"addon")]);
+        assert_eq!(auto(&opt, nexus(2)).unwrap().replaced, None);
+        let n2 = f.root.join("n2.zip");
+        zip_with(&n2, &[("archive/pc/mod/n.archive", b"n2")]);
+        assert_eq!(auto(&n2, nexus(3)).unwrap().replaced.as_deref(), Some("Page Mod"));
+        assert!(!game_dir.join("archive/pc/mod/n_extra.archive").exists());
+        assert!(game_dir.join("archive/pc/mod/n_addon.archive").exists());
+        assert_eq!(f.db.mods(f.game.id).unwrap().len(), 3);
+
+        // GitHub: the same repository is the same mod even with new file names.
+        let gh = |file: &str| InstallOptions {
+            meta: NewMod { name: "Tool".into(), source: "github".into(), source_ref: Some("Owner/Tool".into()), source_file: Some(file.into()), ..Default::default() },
+            ..Default::default()
+        };
+        let g1 = f.root.join("g1.zip");
+        zip_with(&g1, &[("archive/pc/mod/tool_1.archive", b"1")]);
+        auto(&g1, gh("a")).unwrap();
+        let g2 = f.root.join("g2.zip");
+        zip_with(&g2, &[("archive/pc/mod/tool_2.archive", b"2")]);
+        assert_eq!(auto(&g2, gh("b")).unwrap().replaced.as_deref(), Some("Tool"));
+        assert!(!game_dir.join("archive/pc/mod/tool_1.archive").exists());
+    }
+
+    #[test]
+    fn base_names_ignore_versions() {
+        assert_eq!(base_name("ArchiveXL 1.2.3"), base_name("archivexl-v1.3"));
+        assert_eq!(base_name("Cool_Mod_v2"), "cool mod");
+        assert_ne!(base_name("Mod A"), base_name("Mod B"));
     }
 
     #[test]
