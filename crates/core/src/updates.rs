@@ -24,6 +24,8 @@ pub struct Update {
     /// could be picked automatically.
     pub source_ref: Option<String>,
     pub file: Option<SourceFile>,
+    /// Going from an installed pre-release back to the stable release.
+    pub to_stable: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -70,7 +72,7 @@ pub fn check(mods: &[ModRow], nexus: Option<&nexus::Client>, sources: &Registry)
                     version: m.version.clone(),
                 };
                 src.check_update(&installed)
-                    .map(|o| o.map(|o| Update { latest: o.version, source_ref: Some(source_ref), file: o.file, ..base(m) }))
+                    .map(|o| o.map(|o| Update { latest: o.version, source_ref: Some(source_ref), file: o.file, to_stable: o.to_stable, ..base(m) }))
                     .map_err(|e| e.to_string())
             }
         };
@@ -94,6 +96,7 @@ fn base(m: &ModRow) -> Update {
         nexus_file_id: None,
         source_ref: None,
         file: None,
+        to_stable: false,
     }
 }
 
@@ -124,7 +127,7 @@ mod tests {
         }
         fn check_update(&self, i: &InstalledRef) -> Result<Option<UpdateOffer>> {
             match i.source_ref.as_str() {
-                "old" => Ok(Some(UpdateOffer { version: "2.0".into(), file: None })),
+                "old" => Ok(Some(UpdateOffer { version: "2.0".into(), file: None, to_stable: false })),
                 "broken" => Err(crate::Error::Other("rate limited".into())),
                 _ => Ok(None),
             }

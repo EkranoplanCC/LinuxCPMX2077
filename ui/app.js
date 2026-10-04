@@ -86,16 +86,49 @@ async function detect() {
 function selectGame(id) {
   currentGame = games.find((g) => g.id === Number(id)) || games[0];
   $("#game-select").value = currentGame.id;
+  renderGame();
+  loadMods();
+}
+
+// Framework list and launch option warnings change as mods go in and out,
+// so they're re-read after every change rather than only at startup.
+async function refreshGame() {
+  if (!currentGame) return;
+  const id = currentGame.id;
+  games = await invoke("detect_games");
+  const g = games.find((x) => x.id === id);
+  if (!g || currentGame?.id !== id) return;
+  currentGame = g;
+  renderGame();
+}
+
+const LAUNCH_OPTION = 'WINEDLLOVERRIDES="winmm,version=n,b" %command%';
+
+function warningItem(w) {
+  if (!w.includes("WINEDLLOVERRIDES")) return el("li", {}, w);
+  return el("li", {}, w, " ", el("button", {
+    title: "Paste it in Steam: Cyberpunk 2077 › Properties › General › Launch options",
+    onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(LAUNCH_OPTION);
+        toast("Copied. In Steam, open Cyberpunk 2077 › Properties › Launch options and paste it.");
+      } catch {
+        toast(`Copy this into Steam's launch options for Cyberpunk 2077:\n${LAUNCH_OPTION}`, true);
+      }
+    },
+  }, "Copy launch option"));
+}
+
+function renderGame() {
   const g = currentGame.install;
   $("#game-info").replaceChildren(
     el("div", {}, "Version: ", el("b", {}, g.exe_product_version || g.exe_file_version || "unknown")),
     g.build_id ? el("div", {}, "Steam build: ", el("span", { class: "mono" }, g.build_id)) : null,
     g.proton_prefix ? el("div", { class: "muted mono" }, "Prefix: " + g.proton_prefix) : null,
   );
-  $("#game-warnings").replaceChildren(...g.warnings.map((w) => el("li", {}, w)));
+  $("#game-warnings").replaceChildren(...g.warnings.map(warningItem));
   $("#frameworks").replaceChildren(...g.frameworks.map((f) =>
     el("li", { class: f.installed ? "on" : "" }, f.name)));
-  loadMods();
 }
 
 $("#game-select").addEventListener("change", (e) => selectGame(e.target.value));
@@ -143,6 +176,7 @@ async function loadMods() {
   if (!currentGame) return;
   mods = await invoke("list_mods", { gameId: currentGame.id });
   renderMods();
+  refreshGame().catch(() => {});
 }
 
 function renderMods() {
@@ -175,13 +209,17 @@ function modRow(m) {
     el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
       el("div", { class: "muted mono" }, m.archive_name)),
     el("td", {}, m.category || "—"),
-    el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.latest} available`) : null),
+    el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.to_stable ? "stable " : ""}${up.latest} available`) : null),
     el("td", {}, el("span", { class: "badge" }, sourceLabel(m))),
     el("td", {}, m.file_count),
     el("td", {}, m.game_version || "—",
       stale ? el("div", { class: "badge bad", title: `Current game build is ${currentGame.install.build_id}` }, "game updated since") : null),
     el("td", { class: "actions" },
-      up ? el("button", { class: "update", onclick: (e) => busy(e.target, () => applyUpdate(up)) }, `Update to ${up.latest}`) : null, " ",
+      up ? el("button", {
+        class: "update",
+        title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
+        onclick: (e) => busy(e.target, () => applyUpdate(up)),
+      }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
       on ? el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify") : null, " ",
       el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall")),
   );
@@ -1492,7 +1530,11 @@ async function loadDownloads() {
       el("td", {}, fmtSize(d.size)),
       el("td", {}, el("span", { class: d.verified ? "badge ok" : "badge bad", title: `SHA-256 ${d.sha256}` }, checked)),
       el("td", { class: "actions" },
-        up ? el("button", { class: "update", onclick: (e) => busy(e.target, () => applyUpdate(up)) }, `Update to ${up.latest}`) : null, " ",
+        up ? el("button", {
+        class: "update",
+        title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
+        onclick: (e) => busy(e.target, () => applyUpdate(up)),
+      }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
         m ? null : el("button", {
           onclick: (e) => busy(e.target, async () => {
             if (!currentGame) throw "Select a game first";
