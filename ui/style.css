@@ -60,6 +60,8 @@ code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size:
 #frameworks li::before { content: "○ "; color: var(--muted); }
 #frameworks li.on::before { content: "● "; color: var(--green); }
 .warnings li { color: var(--yellow); background: #2a2810; padding: 6px 8px; border-radius: 4px; margin-top: 8px; font-size: 12px; }
+.warnings li.ok { color: var(--green); background: transparent; padding: 2px 8px; margin-top: 4px; }
+.warnings li .row { margin-top: 6px; gap: 6px; flex-wrap: wrap; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; background: var(--panel-2); }
 .badge.ok { color: var(--green); }
 .badge.bad { color: var(--red); }

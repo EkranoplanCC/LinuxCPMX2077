@@ -14,8 +14,14 @@ make it executable (`chmod +x`) and run it.
   Heroic's GOG installs, reads the Steam build id and the executable's version,
   locates the Proton prefix, and detects CET, RED4ext, redscript, ArchiveXL,
   TweakXL, Codeware and REDmod.
-- **Proton checks**: warns when CET/RED4ext are installed but the
-  `WINEDLLOVERRIDES="winmm,version=n,b" %command%` launch option is missing.
+- **Linux setup, fixed for you**: checks what mods need from Proton/Wine and
+  fixes it after one confirmation, each with an Undo: installs the Visual C++
+  2015-2022 runtime into the prefix (`vcrun2022` via protontricks, or
+  winetricks with the game's own Proton/Wine build), sets Steam's launch
+  options (`WINEDLLOVERRIDES="winmm,version=n,b" %command%`, plus `-modded`
+  for REDmod; only while Steam is closed), sets the same DLL overrides in a
+  Heroic prefix, and merges mod folders that exist under two spellings.
+  Installing a mod that needs one of these asks to set it up straight away.
 - **Tracks everything** in a SQLite library (`~/.local/share/cp2077-modmanager/`):
   each mod, its source, the game build it was installed on, the archive's
   SHA-256/MD5, and every file it put into the game with its SHA-256.
@@ -31,7 +37,7 @@ make it executable (`chmod +x`) and run it.
   - Standalone CET mod folders (with `init.lua`) go to
     `bin/x64/plugins/cyber_engine_tweaks/mods/`.
   - REDmod folders (`info.json` + `archives/`, `scripts/`, …) go to `mods/`,
-    with a warning if the `-modded` launch option is missing.
+    with `-modded` added to the launch options by the Linux setup.
   - Loose `.archive` / `.xl` / `.reds` / tweak files.
 - **Conflicts**: refuses to overwrite another mod's files unless you allow it;
   uninstalling the winner restores the loser's copy, and original game files

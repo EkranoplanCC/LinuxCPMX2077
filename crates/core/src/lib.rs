@@ -12,6 +12,7 @@ pub mod fomod;
 pub mod game;
 pub mod hash;
 pub mod install;
+pub mod linux_setup;
 pub mod mcp;
 pub mod nexus;
 pub mod nexus_browse;

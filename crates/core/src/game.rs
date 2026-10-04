@@ -22,7 +22,8 @@ pub enum Store {
 pub struct GameInstall {
     pub path: PathBuf,
     pub store: Store,
-    /// Proton prefix (`compatdata/1091500/pfx`), where saves and logs live.
+    /// Proton prefix (`compatdata/1091500/pfx`), or the Wine prefix Heroic
+    /// uses for a GOG install; where saves and logs live.
     pub proton_prefix: Option<PathBuf>,
     /// Steam build id from the app manifest; changes with every patch.
     pub build_id: Option<String>,
@@ -119,28 +120,78 @@ pub fn detect(home: &Path) -> Vec<GameInstall> {
     found
 }
 
+const HEROIC_CONFIG_DIRS: &[&str] = &[".config/heroic", ".var/app/com.heroicgameslauncher.hgl/config/heroic"];
+
 /// GOG installs managed by Heroic Games Launcher.
 fn detect_heroic_gog(home: &Path) -> Vec<GameInstall> {
-    let candidates = [
-        ".config/heroic/gog_store/installed.json",
-        ".var/app/com.heroicgameslauncher.hgl/config/heroic/gog_store/installed.json",
-    ];
     let mut out = Vec::new();
-    for c in candidates {
-        let Ok(src) = std::fs::read_to_string(home.join(c)) else { continue };
+    for (path, h) in heroic_installs(home) {
+        let mut g = inspect(&path, Store::Gog);
+        g.proton_prefix = h.prefix;
+        g.warnings = warnings(&g);
+        out.push(g);
+    }
+    out
+}
+
+/// How Heroic runs one game: its Wine prefix and the Wine (or Proton) build.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HeroicGame {
+    pub app_name: String,
+    /// The prefix itself (the folder holding `drive_c`).
+    pub prefix: Option<PathBuf>,
+    /// A `wine` binary that runs in that prefix.
+    pub wine: Option<PathBuf>,
+}
+
+fn heroic_installs(home: &Path) -> Vec<(PathBuf, HeroicGame)> {
+    let mut out = Vec::new();
+    for dir in HEROIC_CONFIG_DIRS {
+        let dir = home.join(dir);
+        let Ok(src) = std::fs::read_to_string(dir.join("gog_store/installed.json")) else { continue };
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&src) else { continue };
         let Some(list) = json.get("installed").and_then(|v| v.as_array()) else { continue };
         for item in list {
             let Some(p) = item.get("install_path").and_then(|v| v.as_str()) else { continue };
             let path = PathBuf::from(p);
-            if path.join(GAME_EXE).is_file() {
-                let mut g = inspect(&path, Store::Gog);
-                g.warnings = warnings(&g);
-                out.push(g);
+            if !path.join(GAME_EXE).is_file() {
+                continue;
             }
+            let app_name = item.get("appName").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let h = heroic_game_config(&dir, &app_name).unwrap_or(HeroicGame { app_name, ..Default::default() });
+            out.push((path, h));
         }
     }
     out
+}
+
+/// Heroic's per-game settings (`GamesConfig/<appName>.json`).
+fn heroic_game_config(dir: &Path, app_name: &str) -> Option<HeroicGame> {
+    if app_name.is_empty() || app_name.contains(['/', '\\']) {
+        return None;
+    }
+    let src = std::fs::read_to_string(dir.join("GamesConfig").join(format!("{app_name}.json"))).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&src).ok()?;
+    let cfg = json.get(app_name)?;
+    let base = cfg.get("winePrefix").and_then(|v| v.as_str()).map(PathBuf::from);
+    // A Proton build keeps the real prefix in `pfx/`, like Steam's compatdata.
+    let prefix = base.and_then(|b| [b.join("pfx"), b].into_iter().find(|p| p.join("drive_c").is_dir()));
+    let wv = cfg.get("wineVersion");
+    let bin = wv.and_then(|w| w.get("bin")).and_then(|v| v.as_str()).map(PathBuf::from);
+    let kind = wv.and_then(|w| w.get("type")).and_then(|v| v.as_str()).unwrap_or("wine");
+    let wine = bin.and_then(|b| if kind == "proton" { proton_wine(b.parent()?) } else { Some(b) });
+    Some(HeroicGame { app_name: app_name.to_string(), prefix, wine })
+}
+
+/// Heroic's view of the GOG install at `game`, if Heroic manages it.
+pub fn heroic_game(home: &Path, game: &Path) -> Option<HeroicGame> {
+    heroic_installs(home).into_iter().find(|(p, _)| p == game).map(|(_, h)| h)
+}
+
+/// The `wine` binary inside a Proton build (`files/` since Proton 5.13,
+/// `dist/` before).
+pub fn proton_wine(proton_dir: &Path) -> Option<PathBuf> {
+    ["files/bin/wine", "dist/bin/wine"].iter().map(|r| proton_dir.join(r)).find(|p| p.is_file())
 }
 
 /// Validate and inspect a path the user picked by hand.
@@ -262,62 +313,24 @@ pub fn has_redmods(game: &Path) -> bool {
     rd.flatten().any(|e| e.path().join("info.json").is_file())
 }
 
-/// Oldest `msvcp140.dll` (major, minor) that current CET and RED4ext builds
-/// load with (Visual C++ 2022 17.10 changed std::mutex in a way older
-/// runtimes crash on).
-const MIN_VC_RUNTIME: (u16, u16) = (14, 40);
-
-/// Version of the Visual C++ runtime installed in a Proton prefix, if any.
-pub fn vc_runtime_version(prefix: &Path) -> Option<(u16, u16)> {
-    let dll = prefix.join("drive_c/windows/system32/msvcp140.dll");
-    let (file_v, _) = exe_versions(&dll).ok()?;
-    let mut parts = file_v?.split('.').map(|p| p.parse::<u16>().ok()).collect::<Vec<_>>().into_iter();
-    Some((parts.next()??, parts.next()??))
-}
-
-/// Proton-specific problems we can spot statically.
+/// Problems with the installed frameworks themselves. Prefix and launch
+/// setup (runtimes, DLL overrides, -modded) are checked, and fixed, by
+/// [`crate::linux_setup`].
 fn warnings(g: &GameInstall) -> Vec<String> {
     let mut w = Vec::new();
     let has = |id: &str| g.frameworks.iter().any(|f| f.id == id && f.installed);
-    let needs_override = has("cet") || has("red4ext");
-    if needs_override && g.store == Store::Steam {
-        let opts = g.launch_options.clone().unwrap_or_default();
-        let lower = opts.to_ascii_lowercase();
-        if !(lower.contains("winedlloverrides") && lower.contains("winmm") && lower.contains("version")) {
-            w.push(
-                "Cyber Engine Tweaks / RED4ext need the Steam launch option \
-                 WINEDLLOVERRIDES=\"winmm,version=n,b\" %command% under Proton."
-                    .into(),
-            );
-        }
-    }
-    // CET and RED4ext are built with a recent MSVC; an older msvcp140.dll in
-    // the prefix makes them fail at startup with error 998 (invalid memory
-    // access).
-    if needs_override
-        && let Some(prefix) = &g.proton_prefix
-        && let Some(v) = vc_runtime_version(prefix)
-        && v < MIN_VC_RUNTIME
-    {
-        w.push(format!(
-            "The Visual C++ runtime in the Proton prefix is {}.{}, older than CET and RED4ext need (error 998 at startup). \
-             Close the game and run: protontricks {STEAM_APP_ID} vcrun2022",
-            v.0, v.1
-        ));
-    }
-    // REDmod mods only load (and get deployed) with the -modded flag.
-    if g.store == Store::Steam && has_redmods(&g.path) {
-        let opts = g.launch_options.clone().unwrap_or_default();
-        if !opts.split_whitespace().any(|o| o.eq_ignore_ascii_case("-modded")) {
-            w.push("REDmod mods are installed but the Steam launch options don't include -modded, so they won't load.".into());
-        }
-    }
     for (dep, needs) in [("archivexl", "red4ext"), ("tweakxl", "red4ext"), ("codeware", "red4ext")] {
         if has(dep) && !has(needs) {
             w.push(format!("{dep} is installed but {needs} is missing; it will not load."));
         }
     }
     w
+}
+
+/// CET or RED4ext is installed, so the game needs the `winmm`/`version`
+/// DLL overrides and a current Visual C++ runtime.
+pub fn needs_overrides(g: &GameInstall) -> bool {
+    g.frameworks.iter().any(|f| (f.id == "cet" || f.id == "red4ext") && f.installed)
 }
 
 #[cfg(test)]
@@ -362,13 +375,37 @@ mod tests {
         assert_eq!(g.build_id.as_deref(), Some("19212345"));
         assert!(g.proton_prefix.is_some());
         assert!(g.frameworks.iter().any(|f| f.id == "cet" && f.installed), "case-insensitive marker");
-        assert!(g.warnings.iter().any(|w| w.contains("WINEDLLOVERRIDES")));
-        assert!(!g.warnings.iter().any(|w| w.contains("-modded")));
+        assert!(needs_overrides(g));
+    }
 
-        assert!(!g.warnings.iter().any(|w| w.contains("vcrun2022")), "no runtime found, no guess");
+    #[test]
+    fn reads_heroic_prefix_and_proton_wine() {
+        let home = tempfile::tempdir().unwrap();
+        let game = home.path().join("Games/Cyberpunk 2077");
+        touch(&game.join(GAME_EXE));
+        let cfg = home.path().join(".config/heroic");
+        let pfx_base = home.path().join("Games/Heroic/Prefixes/Cyberpunk 2077");
+        std::fs::create_dir_all(pfx_base.join("pfx/drive_c")).unwrap();
+        let proton = home.path().join("Proton-GE");
+        touch(&proton.join("files/bin/wine"));
+        std::fs::create_dir_all(cfg.join("gog_store")).unwrap();
+        std::fs::write(
+            cfg.join("gog_store/installed.json"),
+            serde_json::json!({"installed": [{"appName": "1423049311", "install_path": game}]}).to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(cfg.join("GamesConfig")).unwrap();
+        std::fs::write(
+            cfg.join("GamesConfig/1423049311.json"),
+            serde_json::json!({"1423049311": {"winePrefix": pfx_base, "wineVersion": {"bin": proton.join("proton"), "type": "proton"}}}).to_string(),
+        )
+        .unwrap();
 
-        touch(&game.join("mods/SomeRedmod/info.json"));
-        let g = &detect(home.path())[0];
-        assert!(g.warnings.iter().any(|w| w.contains("-modded")));
+        let found = detect(home.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].store, Store::Gog);
+        assert_eq!(found[0].proton_prefix.as_deref(), Some(pfx_base.join("pfx").as_path()));
+        let h = heroic_game(home.path(), &game).unwrap();
+        assert_eq!(h.wine, Some(proton.join("files/bin/wine")));
     }
 }

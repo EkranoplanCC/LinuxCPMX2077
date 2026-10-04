@@ -99,14 +99,14 @@ async function refreshGame() {
   const g = games.find((x) => x.id === id);
   if (!g || currentGame?.id !== id) return;
   currentGame = g;
-  renderGame();
+  renderGame(false);
+  await loadSetup(true);
 }
 
 const LAUNCH_OPTION = 'WINEDLLOVERRIDES="winmm,version=n,b" %command%';
 
-function warningItem(w) {
-  if (!w.includes("WINEDLLOVERRIDES")) return el("li", {}, w);
-  return el("li", {}, w, " ", el("button", {
+function copyLaunchOption() {
+  return el("button", {
     title: "Paste it in Steam: Cyberpunk 2077 › Properties › General › Launch options",
     onclick: async () => {
       try {
@@ -116,19 +116,91 @@ function warningItem(w) {
         toast(`Copy this into Steam's launch options for Cyberpunk 2077:\n${LAUNCH_OPTION}`, true);
       }
     },
-  }, "Copy launch option"));
+  }, "Copy");
 }
 
-function renderGame() {
+function renderGame(withSetup = true) {
   const g = currentGame.install;
   $("#game-info").replaceChildren(
     el("div", {}, "Version: ", el("b", {}, g.exe_product_version || g.exe_file_version || "unknown")),
     g.build_id ? el("div", {}, "Steam build: ", el("span", { class: "mono" }, g.build_id)) : null,
     g.proton_prefix ? el("div", { class: "muted mono" }, "Prefix: " + g.proton_prefix) : null,
   );
-  $("#game-warnings").replaceChildren(...g.warnings.map(warningItem));
+  renderWarnings();
   $("#frameworks").replaceChildren(...g.frameworks.map((f) =>
     el("li", { class: f.installed ? "on" : "" }, f.name)));
+  if (withSetup) loadSetup().catch(() => {});
+}
+
+// ---- Linux setup (runtime, DLL overrides, -modded, folder spellings) -----
+// Problems that need something changed outside the mod files are fixed by
+// the app after one confirmation, and each fix can be undone.
+let setupChecks = [];
+let setupSeen = null; // problem ids already shown for this game, this session
+let setupGameId = null;
+
+function renderWarnings() {
+  const items = setupChecks.map(setupItem);
+  items.push(...currentGame.install.warnings.map((w) => el("li", {}, w)));
+  $("#game-warnings").replaceChildren(...items);
+}
+
+function setupItem(c) {
+  const ok = c.state === "ok";
+  const buttons = [];
+  if (c.fix) buttons.push(el("button", { class: "primary", title: c.fix.blocked || "", onclick: (e) => runSetup(e.target, c, c.fix, "setup_fix") }, c.fix.label));
+  if (c.id === "launch-options" && !ok) buttons.push(copyLaunchOption());
+  if (c.undo) buttons.push(el("button", { onclick: (e) => runSetup(e.target, c, c.undo, "setup_undo") }, c.undo.label));
+  return el("li", { class: ok ? "ok" : "" },
+    el("b", {}, ok ? `✓ ${c.title}` : c.title), " ",
+    ok && !c.undo ? null : c.detail,
+    c.fix?.blocked ? el("div", { class: "muted" }, c.fix.blocked) : null,
+    buttons.length ? el("div", { class: "row" }, ...buttons) : null);
+}
+
+async function runSetup(button, c, action, command) {
+  if (action.blocked) return toast(action.blocked, true);
+  const go = await dialog.ask(action.confirm, { title: c.title, kind: "warning" });
+  if (!go) return;
+  await busy(button, async () => {
+    if (c.id === "vc-runtime" && command === "setup_fix") toast("Installing the Visual C++ runtime. This can take a few minutes…");
+    toast(await invoke(command, { gameId: currentGame.id, id: c.id }));
+  });
+  await loadSetup();
+}
+
+async function loadSetup(offer = false) {
+  if (!currentGame) return;
+  const id = currentGame.id;
+  const checks = await invoke("setup_checks", { gameId: id });
+  if (currentGame?.id !== id) return;
+  setupChecks = checks;
+  renderWarnings();
+  const problems = checks.filter((c) => c.state === "problem" && c.fix);
+  if (setupGameId !== id || !setupSeen) {
+    setupGameId = id;
+    setupSeen = new Set(problems.map((c) => c.id));
+    return;
+  }
+  const fresh = problems.filter((c) => !setupSeen.has(c.id));
+  fresh.forEach((c) => setupSeen.add(c.id));
+  if (offer && fresh.length) await offerSetup(fresh);
+}
+
+// After a mod goes in, set up what it needs in one go.
+async function offerSetup(list) {
+  const ready = list.filter((c) => !c.fix.blocked);
+  const lines = list.map((c) => `• ${c.title}: ${c.detail}${c.fix.blocked ? `\n  (Not yet: ${c.fix.blocked})` : ""}`);
+  const ask = `The mods you installed need this set up on Linux:\n\n${lines.join("\n\n")}\n\n`
+    + (ready.length ? `Fix ${ready.length > 1 ? "these" : "it"} now? Each one can be undone from the game panel.` : "Use the buttons in the game panel once that's done.");
+  if (!ready.length) return dialog.message(ask, { title: "Linux setup", kind: "info" });
+  if (!(await dialog.ask(ask, { title: "Linux setup", kind: "warning" }))) return;
+  for (const c of ready) {
+    if (c.id === "vc-runtime") toast("Installing the Visual C++ runtime. This can take a few minutes…");
+    try { toast(await invoke("setup_fix", { gameId: currentGame.id, id: c.id })); }
+    catch (e) { toast(String(e), true); }
+  }
+  await loadSetup();
 }
 
 $("#game-select").addEventListener("change", (e) => selectGame(e.target.value));
