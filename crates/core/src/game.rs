@@ -262,6 +262,19 @@ pub fn has_redmods(game: &Path) -> bool {
     rd.flatten().any(|e| e.path().join("info.json").is_file())
 }
 
+/// Oldest `msvcp140.dll` (major, minor) that current CET and RED4ext builds
+/// load with (Visual C++ 2022 17.10 changed std::mutex in a way older
+/// runtimes crash on).
+const MIN_VC_RUNTIME: (u16, u16) = (14, 40);
+
+/// Version of the Visual C++ runtime installed in a Proton prefix, if any.
+pub fn vc_runtime_version(prefix: &Path) -> Option<(u16, u16)> {
+    let dll = prefix.join("drive_c/windows/system32/msvcp140.dll");
+    let (file_v, _) = exe_versions(&dll).ok()?;
+    let mut parts = file_v?.split('.').map(|p| p.parse::<u16>().ok()).collect::<Vec<_>>().into_iter();
+    Some((parts.next()??, parts.next()??))
+}
+
 /// Proton-specific problems we can spot statically.
 fn warnings(g: &GameInstall) -> Vec<String> {
     let mut w = Vec::new();
@@ -277,6 +290,20 @@ fn warnings(g: &GameInstall) -> Vec<String> {
                     .into(),
             );
         }
+    }
+    // CET and RED4ext are built with a recent MSVC; an older msvcp140.dll in
+    // the prefix makes them fail at startup with error 998 (invalid memory
+    // access).
+    if needs_override
+        && let Some(prefix) = &g.proton_prefix
+        && let Some(v) = vc_runtime_version(prefix)
+        && v < MIN_VC_RUNTIME
+    {
+        w.push(format!(
+            "The Visual C++ runtime in the Proton prefix is {}.{}, older than CET and RED4ext need (error 998 at startup). \
+             Close the game and run: protontricks {STEAM_APP_ID} vcrun2022",
+            v.0, v.1
+        ));
     }
     // REDmod mods only load (and get deployed) with the -modded flag.
     if g.store == Store::Steam && has_redmods(&g.path) {
@@ -337,6 +364,8 @@ mod tests {
         assert!(g.frameworks.iter().any(|f| f.id == "cet" && f.installed), "case-insensitive marker");
         assert!(g.warnings.iter().any(|w| w.contains("WINEDLLOVERRIDES")));
         assert!(!g.warnings.iter().any(|w| w.contains("-modded")));
+
+        assert!(!g.warnings.iter().any(|w| w.contains("vcrun2022")), "no runtime found, no guess");
 
         touch(&game.join("mods/SomeRedmod/info.json"));
         let g = &detect(home.path())[0];
