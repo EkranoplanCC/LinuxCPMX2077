@@ -434,7 +434,16 @@ impl Client {
         if !self.api_key.is_empty() {
             req = req.header("apikey", &self.api_key);
         }
-        let resp = req.send()?;
+        // Nexus closes idle keep-alive connections; a request sent on one
+        // fails before it reaches the server, so it is safe to send again.
+        let retry = req.try_clone();
+        let resp = match (req.send(), retry) {
+            (Err(e), Some(again)) if e.is_request() && !e.is_timeout() => {
+                log::warn!("Nexus request failed ({e}); retrying once");
+                again.send()?
+            }
+            (r, _) => r?,
+        };
         let mut rate = self.shared.rate.lock().unwrap();
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             rate.throttled(resp.headers(), now_unix());
@@ -456,7 +465,7 @@ impl Client {
             let body = resp.text().unwrap_or_default();
             let msg = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()
-                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
+                .and_then(|v| v.get("message").or_else(|| v.get("error")).and_then(|m| m.as_str()).map(String::from))
                 .unwrap_or(body);
             return Err(Error::Nexus(format!("{status}: {msg}")));
         }

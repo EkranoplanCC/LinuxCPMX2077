@@ -521,6 +521,16 @@ impl Client {
     }
 }
 
+/// At most the first `max` bytes of `s`, cut back to a character boundary
+/// (descriptions are full of em dashes and other multi-byte characters).
+fn head(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -530,7 +540,7 @@ fn decode_entities(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let end = rest[..rest.len().min(12)].find(';');
+        let end = head(rest, 12).find(';');
         let decoded = end.and_then(|e| {
             let ent = &rest[1..e];
             let c = match ent {
@@ -589,7 +599,7 @@ pub fn bbcode_to_text(src: &str) -> String {
                 continue;
             }
         };
-        let Some(end) = rest[..rest.len().min(300)].find(close) else {
+        let Some(end) = head(rest, 300).find(close) else {
             out.push(c);
             rest = &rest[1..];
             continue;
@@ -904,6 +914,10 @@ mod tests {
         assert_eq!(decode_entities("&#65;&#x42;&bogus; &"), "AB&bogus; &");
         let long = "x".repeat(MAX_DESCRIPTION_CHARS + 10);
         assert_eq!(bbcode_to_text(&long).chars().count(), MAX_DESCRIPTION_CHARS + 1);
+        // Multi-byte characters near the 300-byte tag and 12-byte entity limits.
+        let wide = format!("[{}— x", "a".repeat(298));
+        assert_eq!(bbcode_to_text(&wide), wide);
+        assert_eq!(decode_entities("&ééééééé; ok"), "&ééééééé; ok");
     }
 
     #[test]
