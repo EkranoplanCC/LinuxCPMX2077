@@ -232,7 +232,7 @@ pub fn collection_page_url(slug: &str) -> String {
 const COLLECTION_QUERY: &str = "query CollectionRevision($slug: String!, $domain: String, $revision: Int) {
   collectionRevision(slug: $slug, domainName: $domain, revision: $revision, viewAdultContent: true) {
     revisionNumber
-    gameVersion { reference }
+    gameVersions { reference }
     collection { name summary user { name } }
     modFiles { fileId optional file { fileId name version mod { modId name } } }
     externalResources { name }
@@ -275,7 +275,7 @@ fn collection_from_graphql(slug: &str, data: &Value) -> Result<Collection> {
         author: text(coll.and_then(|c| c.pointer("/user/name")), 100),
         summary: text(coll.and_then(|c| c.get("summary")), 1000),
         revision: rev.get("revisionNumber").and_then(Value::as_u64).map(|n| n as u32),
-        game_version: text(rev.pointer("/gameVersion/reference"), 50),
+        game_version: text(rev.pointer("/gameVersions/0/reference"), 50),
         mods,
         external: rev
             .get("externalResources")
@@ -370,7 +370,8 @@ pub fn clean_query(s: &str) -> String {
 }
 
 /// `stemmed`: Nexus' full-text name match (what the website uses). Without
-/// it, a plain `*text*` wildcard on the name.
+/// it, Nexus' WILDCARD name match, which already matches anywhere in the
+/// name and treats `*` literally.
 pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
     let text = clean_query(&q.text);
     let mut filter = json!({ "gameDomainName": [{ "value": NEXUS_GAME_DOMAIN, "op": "EQUALS" }] });
@@ -378,8 +379,8 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
         if stemmed {
             filter["nameStemmed"] = json!([{ "value": text, "op": "MATCHES" }]);
         } else {
-            let wild = text.replace(['*', '?'], " ");
-            filter["name"] = json!([{ "value": format!("*{}*", wild.trim()), "op": "WILDCARD" }]);
+            let wild = clean_query(&text.replace(['*', '?'], " "));
+            filter["name"] = json!([{ "value": wild, "op": "WILDCARD" }]);
         }
     }
     if let Some(cat) = q.category.as_deref().map(clean_query).filter(|c| !c.is_empty()) {
@@ -804,7 +805,7 @@ mod tests {
         let v = graphql_variables(&Search::default(), true);
         assert_eq!(v["sort"][0]["endorsements"]["direction"], "DESC", "relevance needs text");
         let v = graphql_variables(&Search { text: "a*b".into(), ..Default::default() }, false);
-        assert_eq!(v["filter"]["name"][0]["value"], "*a b*");
+        assert_eq!(v["filter"]["name"][0]["value"], "a b");
     }
 
     #[test]
@@ -819,7 +820,7 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         let second: Value = serde_json::from_str(&seen[1].body).unwrap();
-        assert_eq!(second["variables"]["filter"]["name"][0]["value"], "*vehicle*");
+        assert_eq!(second["variables"]["filter"]["name"][0]["value"], "vehicle");
         assert_eq!(second["variables"]["filter"]["name"][0]["op"], "WILDCARD");
     }
 
@@ -930,7 +931,7 @@ mod tests {
 
     #[test]
     fn reads_a_collection_revision() {
-        let body = r#"{"data":{"collectionRevision":{"revisionNumber":12,"gameVersion":{"reference":"2.31"},
+        let body = r#"{"data":{"collectionRevision":{"revisionNumber":12,"gameVersions":[{"reference":"2.31"}],
             "collection":{"name":"Night City Overhaul","summary":"Many mods","user":{"name":"someone"}},
             "modFiles":[
               {"fileId":"1001","optional":false,"file":{"fileId":1001,"name":"Main file","version":"1.37.1","mod":{"modId":107,"name":"Cyber Engine Tweaks"}}},
