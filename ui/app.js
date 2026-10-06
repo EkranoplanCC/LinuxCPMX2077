@@ -826,19 +826,14 @@ async function openInBrowser(modId, fileId) {
   await invoke("nexus_open_page", { modId, fileId });
 }
 
-function parseModId(q) {
-  q = q.trim();
-  const m = q.match(/nexusmods\.com\/cyberpunk2077\/mods\/(\d+)/i) || q.match(/^(\d+)$/);
-  return m ? Number(m[1]) : null;
-}
-
 $("#nexus-go").addEventListener("click", (e) => busy(e.target, async () => {
   const q = $("#nexus-query").value;
+  const nexusRef = await invoke("nexus_resolve", { input: q });
+  if (nexusRef?.kind === "mod") return showMod(nexusRef.mod_id);
+  if (nexusRef?.kind === "collection") return showCollection(nexusRef.slug, nexusRef.revision);
   if (q.trim().startsWith("nxm://")) return handleNxm(q.trim());
-  const id = parseModId(q);
-  if (id) return showMod(id);
   const ref = await invoke("source_resolve", { input: q });
-  if (!ref) throw "Enter a Cyberpunk 2077 mod URL or numeric ID, or a GitHub repository link";
+  if (!ref) throw "Enter a Cyberpunk 2077 mod or collection link, a mod ID, or a GitHub repository link";
   await selectSource(ref.source, false);
   await showSourceDetails(ref.source, ref.id);
 }));
@@ -1059,6 +1054,61 @@ async function showMod(modId, highlightFile) {
   $("main").scrollTop = 0;
 }
 
+// A Nexus collection: its mods, queued in the order the collection lists
+// them. Free accounts click once per mod in the Nexus window, as with any
+// queued Nexus mod; Premium downloads them straight away.
+async function showCollection(slug, revision = null) {
+  if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account to open collections"; }
+  const [c, installed] = await Promise.all([invoke("nexus_collection", { slug, revision }), installedNexusIds()]);
+  refreshQuota().catch(() => {});
+  const seed = (m) => ({ kind: "nexus", name: m.mod_name, modId: m.mod_id, fileId: m.file_id });
+  const missing = (m) => !installed.has(m.mod_id);
+  const required = c.mods.filter((m) => !m.optional);
+  const optional = c.mods.filter((m) => m.optional);
+  const queueButton = (label, list, primary) => {
+    const todo = list.filter(missing);
+    return el("button", {
+      class: primary ? "primary" : "",
+      disabled: todo.length ? null : "",
+      title: todo.length ? "" : "All of them are installed already",
+      onclick: (e) => busy(e.target, async () => enqueue(todo.map(seed))),
+    }, `${label} (${todo.length})`);
+  };
+  const row = (m) => el("div", { class: "file" },
+    el("div", {},
+      el("b", {}, m.mod_name), " ",
+      m.optional ? el("span", { class: "badge" }, "optional") : null, " ",
+      installed.has(m.mod_id) ? el("span", { class: "badge ok" }, "installed") : null,
+      el("div", { class: "muted mono" }, [m.file_name, m.version && `v${m.version}`].filter(Boolean).join(" · "))),
+    el("div", { class: "actions" },
+      el("button", { onclick: (e) => busy(e.target, () => showMod(m.mod_id, m.file_id)) }, "Open")));
+  $("#nexus-list").classList.toggle("hidden", !!browse);
+  $("#nexus-result").classList.remove("hidden");
+  $("#nexus-result").replaceChildren(el("div", { class: "card mod-detail" },
+    el("div", { class: "row" },
+      browse ? el("button", { onclick: () => {
+        $("#nexus-result").classList.add("hidden");
+        $("#nexus-list").classList.remove("hidden");
+      } }, "← Back to results") : null,
+      el("span", { class: "spacer" }),
+      el("button", { onclick: (e) => busy(e.target, () => invoke("nexus_open_collection", { slug: c.slug })) }, "Open on nexusmods.com")),
+    el("h2", {}, c.name),
+    el("p", { class: "muted" }, [c.author && `by ${c.author}`, c.revision && `revision ${c.revision}`,
+      c.game_version && `for game ${c.game_version}`, `${c.mods.length} mods`].filter(Boolean).join(" · ")),
+    c.summary ? el("p", {}, c.summary) : null,
+    el("div", { class: "row" },
+      queueButton("Install required mods", required, true), " ",
+      optional.length ? queueButton("Install all, with optional", c.mods, false) : null),
+    nexusUser.is_premium ? null : el("p", { class: "muted" },
+      "Free account: the Nexus window opens each mod's file in turn. Click “Slow download” once per mod and the queue does the rest."),
+    c.external.length ? el("div", { class: "card notice" },
+      "Not on Nexus, get these by hand: ", c.external.join(", ")) : null,
+    el("p", { class: "muted" }, "Collections can also change load order and settings; only the mods themselves are installed here."),
+    el("h3", {}, `Required (${required.length})`), ...required.map(row),
+    optional.length ? el("details", {}, el("summary", {}, `Optional (${optional.length})`), ...optional.map(row)) : null));
+  $("main").scrollTop = 0;
+}
+
 function fileRow(modId, f, highlightFile) {
   return el("div", { class: "file" },
     el("div", {},
@@ -1094,6 +1144,13 @@ async function download(modId, fileId, key = null, expires = null, replaces = nu
 }
 
 async function handleNxm(url) {
+  // "Download collection" on Nexus opens a collection nxm:// link.
+  const ref = await invoke("nexus_resolve", { input: url });
+  if (ref?.kind === "collection") {
+    await selectSource("nexus", false);
+    showTab("nexus");
+    return showCollection(ref.slug, ref.revision);
+  }
   const link = await invoke("parse_nxm", { url });
   if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account first, then click the link again"; }
   if (link.expires && link.expires * 1000 < Date.now()) throw "This download link has expired; click it on Nexus again";
@@ -1113,7 +1170,8 @@ function showProgress(done, total, label = "Downloading") {
 }
 
 listen("nxm-link", (e) => busy(null, async () => {
-  if (queueTakeNxm(await invoke("parse_nxm", { url: e.payload }))) return;
+  const ref = await invoke("nexus_resolve", { input: e.payload });
+  if (ref?.kind !== "collection" && queueTakeNxm(await invoke("parse_nxm", { url: e.payload }))) return;
   await handleNxm(e.payload);
 }));
 listen("download-progress", (e) => {

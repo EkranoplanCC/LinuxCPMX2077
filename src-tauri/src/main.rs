@@ -13,7 +13,7 @@ use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::fomod;
 use cp2077mm_core::install::{EnableReport, FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
 use cp2077mm_core::nexus::{self, NxmLink};
-use cp2077mm_core::nexus_browse::{self, Category, List, ModDetails, Page, Search};
+use cp2077mm_core::nexus_browse::{self, Category, Collection, List, ModDetails, NexusRef, Page, Search};
 use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
 use cp2077mm_core::linux_setup::{self, Check};
 use cp2077mm_core::{Error, Result, desktop, paths, secrets, sso, updates};
@@ -602,6 +602,27 @@ async fn nexus_mod_details(mod_id: i64) -> Result<ModDetails> {
     blocking(move || nexus_client()?.mod_details(mod_id)).await
 }
 
+/// What a pasted Nexus link, id or collection nxm:// link points at.
+#[tauri::command]
+fn nexus_resolve(input: String) -> Option<NexusRef> {
+    nexus_browse::parse_nexus_ref(&input)
+}
+
+/// A collection's mods, to queue them for install.
+#[tauri::command]
+async fn nexus_collection(slug: String, revision: Option<u32>) -> Result<Collection> {
+    blocking(move || nexus_client()?.collection(&slug, revision)).await
+}
+
+/// A collection's page in the browser (built here, like `nexus_open_page`).
+#[tauri::command]
+async fn nexus_open_collection(slug: String) -> Result<()> {
+    if !nexus_browse::is_collection_slug(&slug) {
+        return Err(Error::Other(format!("`{slug}` is not a collection id")));
+    }
+    blocking(move || desktop::open_url(&nexus_browse::collection_page_url(&slug))).await
+}
+
 /// The API quota as Nexus last reported it.
 #[tauri::command]
 fn nexus_rate() -> nexus::RateLimit {
@@ -1119,6 +1140,9 @@ fn main() {
             nexus_search,
             nexus_categories,
             nexus_mod_details,
+            nexus_resolve,
+            nexus_collection,
+            nexus_open_collection,
             nexus_rate,
             nexus_open_page,
             nexus_open_in_app,

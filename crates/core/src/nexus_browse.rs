@@ -148,6 +148,149 @@ pub fn mod_page_url(mod_id: i64, file_id: Option<i64>) -> String {
     }
 }
 
+/// What a pasted Nexus link or id points at.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum NexusRef {
+    Mod { mod_id: i64 },
+    /// `revision` is `None` for "the latest published one".
+    Collection { slug: String, revision: Option<u32> },
+}
+
+/// A Cyberpunk 2077 mod or collection from a numeric id, a website link
+/// (old `/cyberpunk2077/mods/N` and new `/games/cyberpunk2077/...` forms) or a
+/// collection `nxm://` link. Anything else, including other games, is `None`.
+pub fn parse_nexus_ref(input: &str) -> Option<NexusRef> {
+    let s = input.trim();
+    if let Ok(id) = s.parse::<i64>() {
+        return (id > 0).then_some(NexusRef::Mod { mod_id: id });
+    }
+    let url = url::Url::parse(s).ok()?;
+    let segs: Vec<&str> = url.path_segments()?.filter(|p| !p.is_empty()).collect();
+    let rest: &[&str] = match url.scheme() {
+        "https" | "http" => {
+            let host = url.host_str()?.to_ascii_lowercase();
+            if host != "nexusmods.com" && !host.ends_with(".nexusmods.com") {
+                return None;
+            }
+            match segs.as_slice() {
+                ["games", game, rest @ ..] | [game, rest @ ..] if game.eq_ignore_ascii_case(NEXUS_GAME_DOMAIN) => rest,
+                _ => return None,
+            }
+        }
+        // nxm://cyberpunk2077/collections/<slug>/revisions/<n>
+        "nxm" if url.host_str()?.eq_ignore_ascii_case(NEXUS_GAME_DOMAIN) => &segs,
+        _ => return None,
+    };
+    match rest {
+        ["mods", id, ..] => id.parse().ok().filter(|i| *i > 0).map(|mod_id| NexusRef::Mod { mod_id }),
+        ["collections", slug, tail @ ..] if is_collection_slug(slug) => {
+            let revision = match tail {
+                ["revisions", n, ..] => Some(n.parse().ok()?),
+                _ => None,
+            };
+            Some(NexusRef::Collection { slug: slug.to_ascii_lowercase(), revision })
+        }
+        _ => None,
+    }
+}
+
+/// Collection ids are short and alphanumeric (`rcwfx9`).
+pub fn is_collection_slug(s: &str) -> bool {
+    (1..=32).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// One mod file a collection asks for.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CollectionMod {
+    pub mod_id: i64,
+    pub file_id: i64,
+    pub mod_name: String,
+    pub file_name: Option<String>,
+    pub version: Option<String>,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Collection {
+    pub slug: String,
+    pub name: String,
+    pub author: Option<String>,
+    pub summary: Option<String>,
+    pub revision: Option<u32>,
+    pub game_version: Option<String>,
+    pub mods: Vec<CollectionMod>,
+    /// Files hosted outside Nexus, which the user has to fetch by hand.
+    pub external: Vec<String>,
+    pub page_url: String,
+}
+
+pub fn collection_page_url(slug: &str) -> String {
+    format!("https://www.nexusmods.com/games/{NEXUS_GAME_DOMAIN}/collections/{slug}")
+}
+
+const COLLECTION_QUERY: &str = "query CollectionRevision($slug: String!, $domain: String, $revision: Int) {
+  collectionRevision(slug: $slug, domainName: $domain, revision: $revision, viewAdultContent: true) {
+    revisionNumber
+    gameVersions { reference }
+    collection { name summary user { name } }
+    modFiles { fileId optional file { fileId name version mod { modId name } } }
+    externalResources { name }
+  }
+}";
+
+fn collection_from_graphql(slug: &str, data: &Value) -> Result<Collection> {
+    let rev = data
+        .get("collectionRevision")
+        .filter(|v| !v.is_null())
+        .ok_or_else(|| Error::Nexus(format!("collection `{slug}` was not found (it may be hidden or removed)")))?;
+    let text = |v: Option<&Value>, max: usize| clean_line(v.and_then(Value::as_str), max);
+    let mut mods: Vec<CollectionMod> = rev
+        .get("modFiles")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| {
+                    let file = m.get("file").filter(|f| !f.is_null());
+                    let file_id = m.get("fileId").or_else(|| file?.get("fileId")).and_then(as_id)?;
+                    let md = file?.get("mod")?;
+                    let mod_id = md.get("modId").and_then(as_id)?;
+                    Some(CollectionMod {
+                        mod_id,
+                        file_id,
+                        mod_name: text(md.get("name"), 200).unwrap_or_else(|| format!("Mod {mod_id}")),
+                        file_name: text(file?.get("name"), 200),
+                        version: text(file?.get("version"), 50),
+                        optional: m.get("optional").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    mods.dedup_by_key(|m| (m.mod_id, m.file_id));
+    let coll = rev.get("collection");
+    Ok(Collection {
+        slug: slug.to_string(),
+        name: text(coll.and_then(|c| c.get("name")), 200).unwrap_or_else(|| slug.to_string()),
+        author: text(coll.and_then(|c| c.pointer("/user/name")), 100),
+        summary: text(coll.and_then(|c| c.get("summary")), 1000),
+        revision: rev.get("revisionNumber").and_then(Value::as_u64).map(|n| n as u32),
+        game_version: text(rev.pointer("/gameVersions/0/reference"), 50),
+        mods,
+        external: rev
+            .get("externalResources")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|r| text(r.get("name"), 200)).collect())
+            .unwrap_or_default(),
+        page_url: collection_page_url(slug),
+    })
+}
+
+/// GraphQL ids come back as numbers or strings depending on the field.
+fn as_id(v: &Value) -> Option<i64> {
+    v.as_i64().or_else(|| v.as_str()?.parse().ok()).filter(|i| *i > 0)
+}
+
 /// The UI's content security policy only allows images from this host.
 fn safe_image(u: Option<&str>) -> Option<String> {
     let url = url::Url::parse(u?.trim()).ok()?;
@@ -227,7 +370,8 @@ pub fn clean_query(s: &str) -> String {
 }
 
 /// `stemmed`: Nexus' full-text name match (what the website uses). Without
-/// it, a plain `*text*` wildcard on the name.
+/// it, Nexus' WILDCARD name match, which already matches anywhere in the
+/// name and treats `*` literally.
 pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
     let text = clean_query(&q.text);
     let mut filter = json!({ "gameDomainName": [{ "value": NEXUS_GAME_DOMAIN, "op": "EQUALS" }] });
@@ -235,8 +379,8 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
         if stemmed {
             filter["nameStemmed"] = json!([{ "value": text, "op": "MATCHES" }]);
         } else {
-            let wild = text.replace(['*', '?'], " ");
-            filter["name"] = json!([{ "value": format!("*{}*", wild.trim()), "op": "WILDCARD" }]);
+            let wild = clean_query(&text.replace(['*', '?'], " "));
+            filter["name"] = json!([{ "value": wild, "op": "WILDCARD" }]);
         }
     }
     if let Some(cat) = q.category.as_deref().map(clean_query).filter(|c| !c.is_empty()) {
@@ -324,6 +468,15 @@ impl Client {
         Ok(Page { mods, total, offset: q.offset.min(MAX_OFFSET), count: returned, hidden_adult })
     }
 
+    /// The mods of a collection revision (the latest when `revision` is `None`).
+    pub fn collection(&self, slug: &str, revision: Option<u32>) -> Result<Collection> {
+        if !is_collection_slug(slug) {
+            return Err(Error::Nexus(format!("`{slug}` is not a collection id")));
+        }
+        let vars = json!({ "slug": slug, "domain": NEXUS_GAME_DOMAIN, "revision": revision });
+        collection_from_graphql(slug, &self.graphql(COLLECTION_QUERY, vars)?)
+    }
+
     /// Mod page and file list, for browsing (cached).
     pub fn mod_details(&self, mod_id: i64) -> Result<ModDetails> {
         let info: ModInfo = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}.json"), DETAIL_TTL)?;
@@ -368,6 +521,16 @@ impl Client {
     }
 }
 
+/// At most the first `max` bytes of `s`, cut back to a character boundary
+/// (descriptions are full of em dashes and other multi-byte characters).
+fn head(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -377,7 +540,7 @@ fn decode_entities(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let end = rest[..rest.len().min(12)].find(';');
+        let end = head(rest, 12).find(';');
         let decoded = end.and_then(|e| {
             let ent = &rest[1..e];
             let c = match ent {
@@ -436,7 +599,7 @@ pub fn bbcode_to_text(src: &str) -> String {
                 continue;
             }
         };
-        let Some(end) = rest[..rest.len().min(300)].find(close) else {
+        let Some(end) = head(rest, 300).find(close) else {
             out.push(c);
             rest = &rest[1..];
             continue;
@@ -652,7 +815,7 @@ mod tests {
         let v = graphql_variables(&Search::default(), true);
         assert_eq!(v["sort"][0]["endorsements"]["direction"], "DESC", "relevance needs text");
         let v = graphql_variables(&Search { text: "a*b".into(), ..Default::default() }, false);
-        assert_eq!(v["filter"]["name"][0]["value"], "*a b*");
+        assert_eq!(v["filter"]["name"][0]["value"], "a b");
     }
 
     #[test]
@@ -667,7 +830,7 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         let second: Value = serde_json::from_str(&seen[1].body).unwrap();
-        assert_eq!(second["variables"]["filter"]["name"][0]["value"], "*vehicle*");
+        assert_eq!(second["variables"]["filter"]["name"][0]["value"], "vehicle");
         assert_eq!(second["variables"]["filter"]["name"][0]["op"], "WILDCARD");
     }
 
@@ -751,6 +914,62 @@ mod tests {
         assert_eq!(decode_entities("&#65;&#x42;&bogus; &"), "AB&bogus; &");
         let long = "x".repeat(MAX_DESCRIPTION_CHARS + 10);
         assert_eq!(bbcode_to_text(&long).chars().count(), MAX_DESCRIPTION_CHARS + 1);
+        // Multi-byte characters near the 300-byte tag and 12-byte entity limits.
+        let wide = format!("[{}— x", "a".repeat(298));
+        assert_eq!(bbcode_to_text(&wide), wide);
+        assert_eq!(decode_entities("&ééééééé; ok"), "&ééééééé; ok");
+    }
+
+    #[test]
+    fn parses_mod_and_collection_links() {
+        let m = |id| Some(NexusRef::Mod { mod_id: id });
+        assert_eq!(parse_nexus_ref("107"), m(107));
+        assert_eq!(parse_nexus_ref("https://www.nexusmods.com/cyberpunk2077/mods/107?tab=files"), m(107));
+        assert_eq!(parse_nexus_ref("https://www.nexusmods.com/games/cyberpunk2077/mods/107"), m(107));
+        assert_eq!(parse_nexus_ref(" https://nexusmods.com/games/Cyberpunk2077/mods/4198/ "), m(4198));
+        let c = |slug: &str, revision| Some(NexusRef::Collection { slug: slug.into(), revision });
+        assert_eq!(parse_nexus_ref("https://www.nexusmods.com/games/cyberpunk2077/collections/rcwfx9"), c("rcwfx9", None));
+        assert_eq!(parse_nexus_ref("https://next.nexusmods.com/cyberpunk2077/collections/RCWFX9/revisions/12"), c("rcwfx9", Some(12)));
+        assert_eq!(parse_nexus_ref("nxm://cyberpunk2077/collections/rcwfx9/revisions/7"), c("rcwfx9", Some(7)));
+        for bad in [
+            "https://www.nexusmods.com/games/skyrimspecialedition/mods/1",
+            "https://evilnexusmods.com/games/cyberpunk2077/mods/1",
+            "https://www.nexusmods.com/games/cyberpunk2077/collections/../x",
+            "nxm://skyrim/collections/abc/revisions/1",
+            "0",
+            "hello",
+        ] {
+            assert_eq!(parse_nexus_ref(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn reads_a_collection_revision() {
+        let body = r#"{"data":{"collectionRevision":{"revisionNumber":12,"gameVersions":[{"reference":"2.31"}],
+            "collection":{"name":"Night City Overhaul","summary":"Many mods","user":{"name":"someone"}},
+            "modFiles":[
+              {"fileId":"1001","optional":false,"file":{"fileId":1001,"name":"Main file","version":"1.37.1","mod":{"modId":107,"name":"Cyber Engine Tweaks"}}},
+              {"fileId":2002,"optional":true,"file":{"fileId":2002,"name":"Extra","version":null,"mod":{"modId":"4198","name":"Some Mod"}}},
+              {"fileId":3003,"optional":false,"file":null}],
+            "externalResources":[{"name":"Off-site texture pack"}]}}}"#;
+        let (addr, seen) = serve(vec![("/v2/graphql", 200, vec![], body.into())]);
+        let c = client(&addr).collection("rcwfx9", None).unwrap();
+        assert_eq!(c.name, "Night City Overhaul");
+        assert_eq!(c.revision, Some(12));
+        assert_eq!(c.game_version.as_deref(), Some("2.31"));
+        assert_eq!(c.mods.len(), 2, "entries without a file are skipped");
+        assert_eq!((c.mods[0].mod_id, c.mods[0].file_id, c.mods[0].optional), (107, 1001, false));
+        assert_eq!((c.mods[1].mod_id, c.mods[1].optional), (4198, true));
+        assert_eq!(c.external, vec!["Off-site texture pack".to_string()]);
+        let req = seen.lock().unwrap()[0].body.clone();
+        let req: Value = serde_json::from_str(&req).unwrap();
+        assert_eq!(req["variables"]["slug"], "rcwfx9");
+        assert!(req["variables"]["revision"].is_null());
+
+        let (addr, _) = serve(vec![("/v2/graphql", 200, vec![], r#"{"data":{"collectionRevision":null}}"#.into())]);
+        let e = client(&addr).collection("gone12", Some(3)).unwrap_err();
+        assert!(e.to_string().contains("not found"), "{e}");
+        assert!(client(&addr).collection("../x", None).is_err());
     }
 
     #[test]
