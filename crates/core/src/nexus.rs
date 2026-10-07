@@ -5,7 +5,6 @@
 //! which opens an `nxm://` link that this app handles. Premium accounts can
 //! download straight from the app.
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -13,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::nexus_cache::{RequestLog, RequestRecord, ResponseCache, Served, loggable_endpoint, started_ms};
 use crate::{APP_NAME, APP_VERSION, Error, NEXUS_GAME_DOMAIN, Result, hash};
 
 pub const API_BASE: &str = "https://api.nexusmods.com/v1";
@@ -322,12 +322,14 @@ pub fn parse_time(s: &str) -> Option<i64> {
     Some(days * 86400 + h * 3600 + mi * 60 + se - offset)
 }
 
-/// State that outlives a single [`Client`]: the quota and a small response
-/// cache for browsing, so flipping between lists doesn't spend requests.
+/// State that outlives a single [`Client`]: the quota, the browse response
+/// cache (so flipping between lists doesn't spend requests) and the log of
+/// recent requests.
 #[derive(Default)]
 pub struct Shared {
     pub(crate) rate: Mutex<RateLimit>,
-    cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
+    pub(crate) cache: ResponseCache,
+    pub(crate) log: RequestLog,
 }
 
 impl Shared {
@@ -339,21 +341,28 @@ impl Shared {
         self.rate.lock().unwrap().clone()
     }
 
+    /// Keep browse responses in `dir` too, so pages open instantly (and
+    /// without Nexus) after a restart.
+    pub fn set_cache_dir(&self, dir: PathBuf) -> std::io::Result<()> {
+        self.cache.set_dir(dir)
+    }
+
     pub fn clear_cache(&self) {
-        self.cache.lock().unwrap().clear();
+        self.cache.clear();
     }
 
-    pub(crate) fn cached(&self, key: &str, ttl: Duration) -> Option<serde_json::Value> {
-        let c = self.cache.lock().unwrap();
-        c.get(key).filter(|(at, _)| at.elapsed() < ttl).map(|(_, v)| v.clone())
+    /// Saved responses on disk: (count, bytes).
+    pub fn cache_usage(&self) -> (usize, u64) {
+        self.cache.disk_usage()
     }
 
-    pub(crate) fn store(&self, key: String, v: serde_json::Value) {
-        let mut c = self.cache.lock().unwrap();
-        if c.len() > 300 {
-            c.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(600));
-        }
-        c.insert(key, (Instant::now(), v));
+    /// API requests made since the request with id `after`, oldest first.
+    pub fn requests_since(&self, after: u64) -> Vec<RequestRecord> {
+        self.log.since(after)
+    }
+
+    pub fn clear_request_log(&self) {
+        self.log.clear();
     }
 }
 
@@ -425,6 +434,62 @@ impl Client {
 
     /// Send an API request, honouring and recording Nexus' rate limits.
     pub(crate) fn send_api(&self, prio: Priority, req: reqwest::blocking::RequestBuilder) -> Result<reqwest::blocking::Response> {
+        self.send_api_as(prio, req, None)
+    }
+
+    /// [`Self::send_api`], with a name for the request in the debug log.
+    pub(crate) fn send_api_as(
+        &self,
+        prio: Priority,
+        req: reqwest::blocking::RequestBuilder,
+        label: Option<&str>,
+    ) -> Result<reqwest::blocking::Response> {
+        let (method, endpoint) = req
+            .try_clone()
+            .and_then(|r| r.build().ok())
+            .map(|r| (r.method().to_string(), loggable_endpoint(r.url())))
+            .unwrap_or_default();
+        let started = Instant::now();
+        let mut record = RequestRecord {
+            id: 0,
+            at_ms: started_ms(),
+            method,
+            endpoint,
+            label: label.map(String::from),
+            priority: if prio == Priority::Browse { "browse" } else { "essential" },
+            served: Served::Network,
+            status: None,
+            duration_ms: 0,
+            bytes: None,
+            error: None,
+            hourly_remaining: None,
+            daily_remaining: None,
+        };
+        let out = self.send_api_inner(prio, req);
+        record.duration_ms = started.elapsed().as_millis() as u64;
+        let rate = self.rate();
+        record.hourly_remaining = rate.hourly_remaining;
+        record.daily_remaining = rate.daily_remaining;
+        match &out {
+            Ok(resp) => {
+                record.status = Some(resp.status().as_u16());
+                record.bytes = resp.content_length();
+            }
+            Err(Error::Nexus(msg)) if msg.starts_with("429") => {
+                record.status = Some(429);
+                record.error = Some(msg.clone());
+            }
+            Err(e @ Error::Nexus(_)) => {
+                record.served = Served::Held;
+                record.error = Some(e.to_string());
+            }
+            Err(e) => record.error = Some(e.to_string()),
+        }
+        self.shared.log.push(record);
+        out
+    }
+
+    fn send_api_inner(&self, prio: Priority, req: reqwest::blocking::RequestBuilder) -> Result<reqwest::blocking::Response> {
         self.shared.rate.lock().unwrap().check(prio, now_unix())?;
         let mut req = req
             .header("Application-Name", APP_NAME)

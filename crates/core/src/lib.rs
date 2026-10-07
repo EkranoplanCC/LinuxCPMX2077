@@ -18,6 +18,8 @@ pub mod linux_setup;
 pub mod mcp;
 pub mod nexus;
 pub mod nexus_browse;
+pub mod nexus_cache;
+pub mod nexus_markup;
 pub mod paths;
 pub mod secrets;
 pub mod sources;
