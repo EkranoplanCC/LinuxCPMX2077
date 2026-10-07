@@ -97,6 +97,51 @@ CREATE TABLE IF NOT EXISTS downloads (
     downloaded_at  TEXT NOT NULL DEFAULT (datetime('now'))
     -- More columns are added by MIGRATIONS.
 );
+-- Nexus collections the user installed from and follows (see modpacks.rs).
+CREATE TABLE IF NOT EXISTS tracked_collections (
+    game_id         INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    slug            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    author          TEXT,
+    revision        INTEGER,                -- the revision the user installed
+    game_version    TEXT,
+    latest_revision INTEGER,                -- newest revision seen on Nexus
+    added_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (game_id, slug)
+);
+-- The mod files of each tracked collection's installed revision.
+CREATE TABLE IF NOT EXISTS collection_mods (
+    game_id       INTEGER NOT NULL,
+    slug          TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    nexus_mod_id  INTEGER NOT NULL,
+    nexus_file_id INTEGER NOT NULL,
+    mod_name      TEXT NOT NULL,
+    file_name     TEXT,
+    version       TEXT,
+    optional      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (game_id, slug, nexus_mod_id, nexus_file_id),
+    FOREIGN KEY (game_id, slug) REFERENCES tracked_collections (game_id, slug) ON DELETE CASCADE
+);
+-- The user's own mod categories, and which mod is in which. Mods are keyed
+-- by where they came from (modpacks::mod_key), so a category survives
+-- updates and reinstalls.
+CREATE TABLE IF NOT EXISTS custom_categories (
+    name     TEXT PRIMARY KEY COLLATE NOCASE,
+    color    TEXT,
+    position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS mod_custom_categories (
+    mod_key  TEXT PRIMARY KEY,
+    category TEXT NOT NULL REFERENCES custom_categories (name) ON DELETE CASCADE ON UPDATE CASCADE
+);
+-- What a Nexus mod's page says it needs (JSON list of
+-- nexus_browse::Requirement), cached between runs.
+CREATE TABLE IF NOT EXISTS nexus_requirements (
+    nexus_mod_id INTEGER PRIMARY KEY,
+    requirements TEXT NOT NULL,
+    fetched_at   INTEGER NOT NULL           -- unix seconds
+);
 "#;
 
 /// Columns added after v0.1, as (table, column, declaration). Applied to
