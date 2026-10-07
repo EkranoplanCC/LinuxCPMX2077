@@ -181,13 +181,31 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
             None => out.skipped.push(f.clone()),
         }
     }
-    if out.files.is_empty() {
-        return Err(Error::Other(
-            "could not tell where this mod's files go (no archive/, bin/, r6/, red4ext/ folders or .archive files)".into(),
-        ));
+    if !out.files.is_empty() {
+        return Ok(out);
     }
-    Ok(out)
+
+    // 5. Nothing but engine config tweaks: loose .ini files go where the
+    // game reads them (mod pages say "put user.ini in engine/config/platform/pc").
+    let ini: Vec<&String> = files.iter().filter(|f| lower_ext(f) == "ini").collect();
+    if !ini.is_empty() {
+        let mut out = Plan { files: vec![], skipped: vec![], layout: "engine-config".into() };
+        for f in files {
+            if lower_ext(f) == "ini" {
+                out.files.push(PlannedFile { staged: f.clone(), target: format!("{ENGINE_CONFIG_DIR}/{}", file_name(f)) });
+            } else {
+                out.skipped.push(f.clone());
+            }
+        }
+        return Ok(out);
+    }
+    Err(Error::Other(
+        "could not tell where this mod's files go (no archive/, bin/, r6/, red4ext/ folders or .archive files)".into(),
+    ))
 }
+
+/// Where the game loads extra engine settings (`user.ini` and friends).
+const ENGINE_CONFIG_DIR: &str = "engine/config/platform/pc";
 
 fn sanitize_folder(name: &str) -> String {
     let s: String = name
@@ -793,6 +811,16 @@ mod tests {
         // A stray info.json without REDmod folders isn't REDmod.
         let p = plan(&s(&["info.json", "a.archive"]), "x").unwrap();
         assert_eq!(p.layout, "loose");
+
+        // Engine config tweaks shipped as a bare user.ini (True next-gen shadows).
+        let p = plan(&s(&["USER CFG/user.ini", "USER CFG/readme.txt"]), "x").unwrap();
+        assert_eq!(p.layout, "engine-config");
+        assert_eq!(p.files[0].target, "engine/config/platform/pc/user.ini");
+        assert_eq!(p.skipped, s(&["USER CFG/readme.txt"]));
+        // An .ini next to an archive mod stays out of the engine config.
+        let p = plan(&s(&["a.archive", "settings.ini"]), "x").unwrap();
+        assert_eq!(p.layout, "loose");
+        assert_eq!(p.skipped, s(&["settings.ini"]));
 
         assert!(plan(&s(&["readme.md"]), "x").is_err());
     }
