@@ -1,22 +1,29 @@
-//! Browsing Nexus Mods from inside the app. Search and sorted lists go through
-//! the v2 GraphQL API; Nexus' own trending/latest lists and mod pages through
-//! v1. Everything here is read-only, cached briefly and sent at
+//! Browsing Nexus Mods from inside the app. Search and every list (trending,
+//! latest, most endorsed...) go through the v2 GraphQL API, so they all page
+//! the same way; mod pages through v1. Everything here is read-only, cached
+//! (and saved to disk, see [`crate::nexus_cache`]) and sent at
 //! [`Priority::Browse`] so it can't eat the quota downloads need.
 
 use std::time::Duration;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::nexus::{Client, FileInfo, ModInfo, Priority, parse_time};
+use crate::nexus::{Client, FileInfo, ModInfo, Priority, now_unix, parse_time};
+use crate::nexus_cache::{DISK_MAX_AGE, RequestRecord, Served, started_ms};
+use crate::nexus_markup::{self, Node};
 use crate::{Error, NEXUS_GAME_DOMAIN, Result};
 
 const LIST_TTL: Duration = Duration::from_secs(5 * 60);
 const DETAIL_TTL: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_PAGE: u32 = 20;
-pub const MAX_PAGE: u32 = 50;
-const MAX_OFFSET: u32 = 10_000;
+/// Nexus returns at most 80 mods per request, whatever is asked for.
+pub const MAX_PAGE: u32 = 80;
+const MAX_OFFSET: u32 = 100_000;
+/// Nexus' id for Cyberpunk 2077 (some GraphQL filters need it).
+pub const NEXUS_GAME_ID: i64 = 3333;
+/// "Trending" is the most downloaded of the mods added in this many days.
+pub const TRENDING_DAYS: i64 = 14;
 const MAX_QUERY_CHARS: usize = 100;
 const MAX_DESCRIPTION_CHARS: usize = 20_000;
 
@@ -42,22 +49,18 @@ pub struct ModCard {
 #[derive(Debug, Clone, Serialize)]
 pub struct Page {
     pub mods: Vec<ModCard>,
-    /// Total matches, when Nexus reports it (GraphQL only).
+    /// Total matches, as Nexus reports it.
     pub total: Option<i64>,
     pub offset: u32,
     pub count: u32,
     /// Results left out because they are marked adult and the user hasn't
     /// opted in.
     pub hidden_adult: u32,
-}
-
-/// Nexus' curated v1 lists (10 mods each).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum List {
-    Trending,
-    LatestAdded,
-    LatestUpdated,
+    /// When Nexus sent this page (Unix seconds); older than now when it came
+    /// from the cache.
+    pub fetched_at: i64,
+    /// Nexus couldn't be asked, so this is a saved copy (see `fetched_at`).
+    pub saved_copy: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -68,8 +71,11 @@ pub enum Sort {
     Relevance,
     Endorsements,
     Downloads,
+    /// Mods that have had an update, newest update first.
     Updated,
     Created,
+    /// Most downloaded of the mods added in the last [`TRENDING_DAYS`] days.
+    Trending,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -85,6 +91,9 @@ pub struct Search {
     /// Only mods in this Nexus category (by name, as `categories()` lists it).
     #[serde(default)]
     pub category: Option<String>,
+    /// Ask Nexus even if a recent copy is cached.
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// A mod category on Nexus, e.g. "Gameplay" or "Appearance".
@@ -134,9 +143,40 @@ pub struct ModDetails {
     pub info: ModInfo,
     /// The mod page description with BBCode/HTML removed.
     pub description_text: String,
+    /// The description's formatting as a tree of known-safe elements, for
+    /// showing it the way the website does.
+    pub description: Vec<Node>,
     pub files: Vec<FileInfo>,
     pub file_updates: Vec<FileUpdate>,
     pub page_url: String,
+    /// What the author lists under "Requirements" (absent if Nexus' GraphQL
+    /// API didn't answer).
+    pub requirements: Option<Requirements>,
+    pub tags: Vec<String>,
+    pub fetched_at: i64,
+    pub saved_copy: bool,
+}
+
+/// The "Requirements" section of a mod page.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Requirements {
+    /// Other Nexus mods this one needs.
+    pub nexus: Vec<Requirement>,
+    /// Things to get elsewhere (a link, not a Nexus mod).
+    pub external: Vec<Requirement>,
+    /// Expansions it needs, e.g. "Phantom Liberty".
+    pub dlc: Vec<String>,
+    /// How many mods list this one as a requirement.
+    pub required_by: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Requirement {
+    pub mod_id: Option<i64>,
+    pub name: String,
+    pub notes: Option<String>,
+    /// Only for off-site requirements; https/http only.
+    pub url: Option<String>,
 }
 
 /// Mod page on the website; `file_id` jumps to that file's entry on the
@@ -303,26 +343,6 @@ fn clean_line(s: Option<&str>, max: usize) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-fn card_from_v1(m: &ModInfo) -> Option<ModCard> {
-    if !m.available || m.status.as_deref().is_some_and(|s| s != "published") {
-        return None;
-    }
-    Some(ModCard {
-        mod_id: m.mod_id,
-        name: clean_line(m.name.as_deref(), 300)?,
-        summary: clean_line(m.summary.as_deref(), 1000),
-        author: clean_line(m.author.as_deref().or(m.uploaded_by.as_deref()), 200),
-        version: clean_line(m.version.as_deref(), 100),
-        picture_url: safe_image(m.picture_url.as_deref()),
-        endorsements: m.endorsement_count,
-        downloads: m.mod_downloads,
-        created: m.created_timestamp,
-        updated: m.updated_timestamp,
-        adult: m.contains_adult_content,
-        category_id: m.category_id,
-    })
-}
-
 fn card_from_graphql(n: &Value) -> Option<ModCard> {
     let s = |k: &str| n.get(k).and_then(Value::as_str);
     let i = |k: &str| n.get(k).and_then(Value::as_i64);
@@ -386,10 +406,19 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
     if let Some(cat) = q.category.as_deref().map(clean_query).filter(|c| !c.is_empty()) {
         filter["categoryName"] = json!([{ "value": cat, "op": "EQUALS" }]);
     }
+    match q.sort {
+        Sort::Updated => filter["hasUpdated"] = json!([{ "value": true }]),
+        Sort::Trending => {
+            // Whole days, so the request (and its cache key) stays the same all day.
+            let since = (now_unix() / 86400 - TRENDING_DAYS) * 86400;
+            filter["createdAt"] = json!([{ "value": since.to_string(), "op": "GTE" }]);
+        }
+        _ => {}
+    }
     let key = match q.sort {
         Sort::Relevance if !text.is_empty() => "relevance",
         Sort::Relevance | Sort::Endorsements => "endorsements",
-        Sort::Downloads => "downloads",
+        Sort::Downloads | Sort::Trending => "downloads",
         Sort::Updated => "updatedAt",
         Sort::Created => "createdAt",
     };
@@ -402,70 +431,177 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
     })
 }
 
-impl Client {
-    fn cached_v1<T: DeserializeOwned>(&self, path: &str, ttl: Duration) -> Result<T> {
-        let key = format!("v1:{path}");
-        if let Some(v) = self.shared.cached(&key, ttl) {
-            return Ok(serde_json::from_value(v)?);
-        }
-        let v: Value = self.get_with(Priority::Browse, path, &[])?;
-        let out = serde_json::from_value(v.clone())?;
-        self.shared.store(key, v);
-        Ok(out)
-    }
+/// A response and where it came from.
+struct Fetched {
+    value: Value,
+    fetched_at: i64,
+    saved: bool,
+}
 
-    /// One of Nexus' curated lists.
-    pub fn browse_list(&self, which: List, include_adult: bool) -> Result<Page> {
-        let name = match which {
-            List::Trending => "trending",
-            List::LatestAdded => "latest_added",
-            List::LatestUpdated => "latest_updated",
+const MOD_EXTRAS_QUERY: &str = "query ModExtras($filter: ModsFilter) {
+  mods(filter: $filter, count: 1) {
+    nodes {
+      modId
+      tags { name }
+      modRequirements {
+        nexusRequirements { nodes { modId modName notes url externalRequirement } }
+        dlcRequirements { gameExpansion { name } notes }
+        modsRequiringThisMod { totalCount }
+      }
+    }
+  }
+}";
+
+fn requirements_from_graphql(data: &Value) -> (Option<Requirements>, Vec<String>) {
+    let Some(node) = data.pointer("/mods/nodes/0") else { return (None, vec![]) };
+    let text = |v: Option<&Value>, max: usize| clean_line(v.and_then(Value::as_str), max);
+    let tags = node
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|t| text(t.get("name"), 60)).take(50).collect())
+        .unwrap_or_default();
+    let Some(r) = node.get("modRequirements").filter(|r| !r.is_null()) else { return (None, tags) };
+    let mut out = Requirements {
+        required_by: r.pointer("/modsRequiringThisMod/totalCount").and_then(Value::as_i64),
+        ..Default::default()
+    };
+    for n in r.pointer("/nexusRequirements/nodes").and_then(Value::as_array).into_iter().flatten().take(200) {
+        let Some(name) = text(n.get("modName"), 200) else { continue };
+        let external = n.get("externalRequirement").and_then(Value::as_bool).unwrap_or(false);
+        let req = Requirement {
+            mod_id: if external { None } else { n.get("modId").and_then(as_id) },
+            name,
+            notes: text(n.get("notes"), 500),
+            url: text(n.get("url"), 500).filter(|u| nexus_markup::safe_link(u).is_some()),
         };
-        let mods: Vec<ModInfo> = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{name}.json"), LIST_TTL)?;
-        let (mods, hidden_adult) = split_adult(mods.iter().filter_map(card_from_v1).collect(), include_adult);
-        let count = mods.len() as u32;
-        Ok(Page { mods, total: None, offset: 0, count, hidden_adult })
+        if external { out.external.push(req) } else { out.nexus.push(req) }
+    }
+    out.dlc = r
+        .get("dlcRequirements")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|d| text(d.pointer("/gameExpansion/name"), 100)).collect())
+        .unwrap_or_default();
+    (Some(out), tags)
+}
+
+impl Client {
+    /// `key` from the cache when it is younger than `ttl` (unless `refresh`),
+    /// otherwise from `fetch`. When `fetch` fails and `allow_saved`, an
+    /// older saved copy stands in.
+    fn through_cache(
+        &self,
+        key: &str,
+        ttl: Duration,
+        refresh: bool,
+        allow_saved: bool,
+        what: (&str, &str, Option<&str>),
+        fetch: impl FnOnce() -> Result<Value>,
+    ) -> Result<Fetched> {
+        let now = now_unix();
+        let note = |served: Served, fetched_at: i64| {
+            let rate = self.shared.rate();
+            self.shared.log.push(RequestRecord {
+                id: 0,
+                at_ms: started_ms(),
+                method: what.0.into(),
+                endpoint: what.1.into(),
+                label: Some(match what.2 {
+                    Some(l) => format!("{l} · copy from {} s ago", now - fetched_at),
+                    None => format!("copy from {} s ago", now - fetched_at),
+                }),
+                priority: "browse",
+                served,
+                status: None,
+                duration_ms: 0,
+                bytes: None,
+                error: None,
+                hourly_remaining: rate.hourly_remaining,
+                daily_remaining: rate.daily_remaining,
+            });
+        };
+        if !refresh && let Some(e) = self.shared.cache.fresh(key, ttl, now) {
+            note(Served::Cache, e.fetched_at);
+            return Ok(Fetched { value: e.value, fetched_at: e.fetched_at, saved: false });
+        }
+        match fetch() {
+            Ok(value) => {
+                self.shared.cache.store(key.to_string(), value.clone(), now);
+                Ok(Fetched { value, fetched_at: now, saved: false })
+            }
+            Err(err) => {
+                let saved = allow_saved
+                    .then(|| self.shared.cache.get(key))
+                    .flatten()
+                    .filter(|e| now - e.fetched_at < DISK_MAX_AGE.as_secs() as i64);
+                match saved {
+                    Some(e) => {
+                        log::warn!("Nexus request failed ({err}); showing a saved copy");
+                        note(Served::Saved, e.fetched_at);
+                        Ok(Fetched { value: e.value, fetched_at: e.fetched_at, saved: true })
+                    }
+                    None => Err(err),
+                }
+            }
+        }
     }
 
-    fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
+    fn cached_v1(&self, path: &str, ttl: Duration, refresh: bool, allow_saved: bool) -> Result<Fetched> {
+        let endpoint = format!("/v1{path}");
+        self.through_cache(&format!("v1:{path}"), ttl, refresh, allow_saved, ("GET", &endpoint, None), || {
+            self.get_with(Priority::Browse, path, &[])
+        })
+    }
+
+    fn graphql(&self, query: &str, variables: Value, refresh: bool) -> Result<Fetched> {
         let body = json!({ "query": query, "variables": variables });
-        let key = format!("gql:{body}");
-        if let Some(v) = self.shared.cached(&key, LIST_TTL) {
-            return Ok(v);
-        }
-        let resp = self.send_api(Priority::Browse, self.http.post(&self.graphql).json(&body))?;
-        let status = resp.status();
-        let text = resp.text()?;
-        let v: Value = serde_json::from_str(&text).map_err(|_| {
-            Error::Nexus(format!("{status}: unexpected reply from the Nexus search API: {}", text.chars().take(200).collect::<String>()))
-        })?;
-        if let Some(err) = v.pointer("/errors/0/message").and_then(Value::as_str) {
-            return Err(Error::Nexus(format!("search API: {}", err.chars().take(300).collect::<String>())));
-        }
-        if !status.is_success() {
-            return Err(Error::Nexus(format!("{status}: Nexus search API request failed")));
-        }
-        let data = v.get("data").cloned().filter(|d| !d.is_null()).ok_or_else(|| Error::Nexus("search API returned no data".into()))?;
-        self.shared.store(key, data.clone());
-        Ok(data)
+        // "query BrowseMods(...)" -> "BrowseMods", for the request log.
+        let op = query.split_whitespace().nth(1).map(|w| w.split('(').next().unwrap_or(w).to_string());
+        self.through_cache(&format!("gql:{body}"), LIST_TTL, refresh, true, ("POST", "/v2/graphql", op.as_deref()), || {
+            let resp = self.send_api_as(Priority::Browse, self.http.post(&self.graphql).json(&body), op.as_deref())?;
+            let status = resp.status();
+            let text = resp.text()?;
+            let v: Value = serde_json::from_str(&text).map_err(|_| {
+                Error::Nexus(format!(
+                    "{status}: unexpected reply from the Nexus search API: {}",
+                    text.chars().take(200).collect::<String>()
+                ))
+            })?;
+            if let Some(err) = v.pointer("/errors/0/message").and_then(Value::as_str) {
+                return Err(Error::Nexus(format!("search API: {}", err.chars().take(300).collect::<String>())));
+            }
+            if !status.is_success() {
+                return Err(Error::Nexus(format!("{status}: Nexus search API request failed")));
+            }
+            v.get("data").cloned().filter(|d| !d.is_null()).ok_or_else(|| Error::Nexus("search API returned no data".into()))
+        })
     }
 
-    /// Search by name and/or list mods sorted by endorsements, downloads or date.
+    /// Search by name and/or list mods: trending, newest, latest updated,
+    /// most endorsed or downloaded. Every list pages through all of Nexus.
     pub fn search(&self, q: &Search, include_adult: bool) -> Result<Page> {
         let has_text = !clean_query(&q.text).is_empty();
-        let data = match self.graphql(MODS_QUERY, graphql_variables(q, true)) {
+        let got = match self.graphql(MODS_QUERY, graphql_variables(q, true), q.refresh) {
             // If Nexus rejects the full-text filter, fall back to a wildcard.
             Err(Error::Nexus(msg)) if has_text && msg.starts_with("search API:") => {
                 log::warn!("stemmed search failed ({msg}); retrying with wildcard");
-                self.graphql(MODS_QUERY, graphql_variables(q, false))?
+                self.graphql(MODS_QUERY, graphql_variables(q, false), q.refresh)?
             }
             r => r?,
         };
+        let data = &got.value;
         let mods = data.pointer("/mods/nodes").and_then(Value::as_array).cloned().unwrap_or_default();
         let total = data.pointer("/mods/totalCount").and_then(Value::as_i64);
         let returned = mods.len() as u32;
         let (mods, hidden_adult) = split_adult(mods.iter().filter_map(card_from_graphql).collect(), include_adult);
-        Ok(Page { mods, total, offset: q.offset.min(MAX_OFFSET), count: returned, hidden_adult })
+        Ok(Page {
+            mods,
+            total,
+            offset: q.offset.min(MAX_OFFSET),
+            count: returned,
+            hidden_adult,
+            fetched_at: got.fetched_at,
+            saved_copy: got.saved,
+        })
     }
 
     /// The mods of a collection revision (the latest when `revision` is `None`).
@@ -474,32 +610,51 @@ impl Client {
             return Err(Error::Nexus(format!("`{slug}` is not a collection id")));
         }
         let vars = json!({ "slug": slug, "domain": NEXUS_GAME_DOMAIN, "revision": revision });
-        collection_from_graphql(slug, &self.graphql(COLLECTION_QUERY, vars)?)
+        collection_from_graphql(slug, &self.graphql(COLLECTION_QUERY, vars, false)?.value)
     }
 
-    /// Mod page and file list, for browsing (cached).
-    pub fn mod_details(&self, mod_id: i64) -> Result<ModDetails> {
-        let info: ModInfo = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}.json"), DETAIL_TTL)?;
-        let (files, file_updates) = self.files_with_updates(mod_id)?;
-        let description_text = info.description.as_deref().map(bbcode_to_text).unwrap_or_default();
-        Ok(ModDetails { info, description_text, files, file_updates, page_url: mod_page_url(mod_id, None) })
+    /// Mod page, file list, requirements and tags, for browsing (cached).
+    pub fn mod_details(&self, mod_id: i64, refresh: bool) -> Result<ModDetails> {
+        let got = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}.json"), DETAIL_TTL, refresh, true)?;
+        let info: ModInfo = serde_json::from_value(got.value)?;
+        let files = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL, refresh, true)?;
+        let (files, file_updates) = parse_files(files.value)?;
+        let filter = json!({
+            "gameId": [{ "value": NEXUS_GAME_ID.to_string(), "op": "EQUALS" }],
+            "modId": [{ "value": mod_id.to_string(), "op": "EQUALS" }],
+        });
+        // The page still shows without them.
+        let (requirements, tags) = match self.graphql(MOD_EXTRAS_QUERY, json!({ "filter": filter }), refresh) {
+            Ok(f) => requirements_from_graphql(&f.value),
+            Err(e) => {
+                log::warn!("mod {mod_id}: no requirements from Nexus ({e})");
+                (None, vec![])
+            }
+        };
+        let raw = info.description.as_deref().unwrap_or_default();
+        Ok(ModDetails {
+            description_text: bbcode_to_text(raw),
+            description: nexus_markup::to_nodes(raw),
+            info,
+            files,
+            file_updates,
+            page_url: mod_page_url(mod_id, None),
+            requirements,
+            tags,
+            fetched_at: got.fetched_at,
+            saved_copy: got.saved,
+        })
     }
 
-    /// A mod's files and the author's update chain between them (cached).
+    /// A mod's files and the author's update chain between them (cached
+    /// briefly; never an old saved copy, since update checks rely on it).
     pub fn files_with_updates(&self, mod_id: i64) -> Result<(Vec<FileInfo>, Vec<FileUpdate>)> {
-        #[derive(Deserialize)]
-        struct Files {
-            files: Vec<FileInfo>,
-            #[serde(default)]
-            file_updates: Vec<FileUpdate>,
-        }
-        let f: Files = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL)?;
-        Ok((f.files, f.file_updates))
+        parse_files(self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL, false, false)?.value)
     }
 
     /// Nexus' mod categories for the game (cached for a day).
     pub fn categories(&self) -> Result<Vec<Category>> {
-        let v: Value = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}.json"), Duration::from_secs(24 * 3600))?;
+        let v = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}.json"), Duration::from_secs(24 * 3600), false, true)?.value;
         let mut out: Vec<Category> = v
             .get("categories")
             .and_then(Value::as_array)
@@ -521,9 +676,20 @@ impl Client {
     }
 }
 
+fn parse_files(v: Value) -> Result<(Vec<FileInfo>, Vec<FileUpdate>)> {
+    #[derive(Deserialize)]
+    struct Files {
+        files: Vec<FileInfo>,
+        #[serde(default)]
+        file_updates: Vec<FileUpdate>,
+    }
+    let f: Files = serde_json::from_value(v)?;
+    Ok((f.files, f.file_updates))
+}
+
 /// At most the first `max` bytes of `s`, cut back to a character boundary
 /// (descriptions are full of em dashes and other multi-byte characters).
-fn head(s: &str, max: usize) -> &str {
+pub(crate) fn head(s: &str, max: usize) -> &str {
     let mut end = s.len().min(max);
     while !s.is_char_boundary(end) {
         end -= 1;
@@ -531,7 +697,7 @@ fn head(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
-fn decode_entities(s: &str) -> String {
+pub(crate) fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }
@@ -682,6 +848,7 @@ pub fn bbcode_to_text(src: &str) -> String {
 mod tests {
     use super::*;
     use crate::nexus::{BROWSE_RESERVE, Shared};
+    use crate::nexus_cache::Served;
     use crate::testutil::serve;
 
     fn rl(hourly: u32, daily: u32) -> Vec<(&'static str, String)> {
@@ -705,29 +872,34 @@ mod tests {
     }
 
     #[test]
-    fn trending_list_filters_and_tracks_quota() {
-        let (addr, seen) = serve(vec![("/mods/trending.json", 200, rl(99, 19876), fixture("trending.json"))]);
+    fn lists_page_through_graphql_cache_and_track_quota() {
+        let (addr, seen) = serve(vec![("graphql", 200, rl(99, 19876), fixture("search.json"))]);
         let c = client(&addr);
-        let page = c.browse_list(List::Trending, false).unwrap();
-        let names: Vec<_> = page.mods.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(names, ["Cyber Engine Tweaks", "Better Vehicle Handling & Physics", "Appearance Menu Mod"]);
+        let q = Search { sort: Sort::Trending, offset: 40, count: 40, ..Default::default() };
+        let page = c.search(&q, false).unwrap();
+        assert_eq!((page.offset, page.total, page.saved_copy), (40, Some(57), false));
         assert_eq!(page.hidden_adult, 1, "adult mod hidden by default");
-        let cet = &page.mods[0];
-        assert_eq!(cet.mod_id, 107);
-        assert_eq!(cet.endorsements, Some(91234));
-        assert!(cet.picture_url.as_deref().unwrap().starts_with("https://staticdelivery.nexusmods.com/"));
         // Off-host image URLs are dropped rather than shown.
-        assert_eq!(page.mods[2].picture_url, None);
-        // Entities in names are decoded.
-        assert_eq!(page.mods[1].name, "Better Vehicle Handling & Physics");
+        assert!(page.mods.iter().all(|m| m.picture_url.as_deref().is_none_or(|u| u.starts_with("https://staticdelivery.nexusmods.com/"))));
 
-        let with_adult = c.browse_list(List::Trending, true).unwrap();
-        assert_eq!(with_adult.mods.len(), 4);
-        // Second call was served from the cache.
+        // The same list again comes from the cache, adult mods included or not.
+        let again = c.search(&q, true).unwrap();
+        assert_eq!(again.mods.len(), 3);
+        assert_eq!(again.fetched_at, page.fetched_at);
         assert_eq!(seen.lock().unwrap().len(), 1);
+        // "Refresh" asks Nexus again.
+        c.search(&Search { refresh: true, ..q.clone() }, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 2);
 
+        let body: Value = serde_json::from_str(&seen.lock().unwrap()[0].body).unwrap();
+        let v = &body["variables"];
+        assert_eq!(v["sort"][0]["downloads"]["direction"], "DESC");
+        assert_eq!(v["filter"]["createdAt"][0]["op"], "GTE");
+        let since: i64 = v["filter"]["createdAt"][0]["value"].as_str().unwrap().parse().unwrap();
+        assert_eq!(since % 86400, 0, "whole days keep the cache key stable");
+        assert!((now_unix() - since) / 86400 >= TRENDING_DAYS);
+        assert_eq!((v["offset"].as_u64(), v["count"].as_u64()), (Some(40), Some(40)));
         let req = &seen.lock().unwrap()[0];
-        assert!(req.line.starts_with("GET /v1/games/cyberpunk2077/mods/trending.json"));
         assert!(req.headers.iter().any(|(k, v)| k == "apikey" && v == "test-key"));
         assert!(req.headers.iter().any(|(k, _)| k == "application-name"));
 
@@ -735,6 +907,48 @@ mod tests {
         assert_eq!(rate.hourly_remaining, Some(99));
         assert_eq!(rate.daily_remaining, Some(19876));
         assert_eq!(rate.hourly_reset, parse_time("2099-01-01T13:00:00Z"));
+
+        // The debug log saw: sent, cached, sent again.
+        let log = c.shared.requests_since(0);
+        let served: Vec<_> = log.iter().map(|r| r.served).collect();
+        assert_eq!(served, [Served::Network, Served::Cache, Served::Network]);
+        assert_eq!(log[0].label.as_deref(), Some("BrowseMods"));
+        assert_eq!((log[0].method.as_str(), log[0].status), ("POST", Some(200)));
+        assert_eq!(log[0].endpoint, "/v2/graphql");
+        assert_eq!(log[0].hourly_remaining, Some(99));
+        assert_eq!(c.shared.requests_since(log[1].id).len(), 1);
+    }
+
+    #[test]
+    fn latest_lists_sort_by_date_and_updated_needs_an_update() {
+        let v = graphql_variables(&Search { sort: Sort::Updated, ..Default::default() }, true);
+        assert_eq!(v["sort"][0]["updatedAt"]["direction"], "DESC");
+        assert_eq!(v["filter"]["hasUpdated"][0]["value"], true);
+        let v = graphql_variables(&Search { sort: Sort::Created, ..Default::default() }, true);
+        assert_eq!(v["sort"][0]["createdAt"]["direction"], "DESC");
+        assert!(v["filter"].get("hasUpdated").is_none() && v["filter"].get("createdAt").is_none());
+        let v = graphql_variables(&Search { offset: 5_000_000, count: 1000, ..Default::default() }, true);
+        assert_eq!((v["offset"].as_u64(), v["count"].as_u64()), (Some(MAX_OFFSET as u64), Some(MAX_PAGE as u64)));
+    }
+
+    #[test]
+    fn shows_a_saved_copy_when_nexus_fails() {
+        let (addr, _) = serve(vec![
+            ("graphql", 200, vec![], fixture("search.json")),
+            ("graphql", 500, vec![], "oops".into()),
+        ]);
+        let c = client(&addr);
+        let q = Search { sort: Sort::Endorsements, ..Default::default() };
+        let first = c.search(&q, true).unwrap();
+        let second = c.search(&Search { refresh: true, ..q }, true).unwrap();
+        assert!(second.saved_copy);
+        assert_eq!((second.fetched_at, second.mods.len()), (first.fetched_at, first.mods.len()));
+        let log = c.shared.requests_since(0);
+        assert_eq!(log.last().unwrap().served, Served::Saved);
+        assert_eq!(log[log.len() - 2].status, Some(500));
+        // Update checks never get an old copy.
+        let (addr, _) = serve(vec![]);
+        assert!(client(&addr).files_with_updates(1).is_err());
     }
 
     #[test]
@@ -778,7 +992,7 @@ mod tests {
     fn search_uses_graphql_with_filters_and_paging() {
         let (addr, seen) = serve(vec![("graphql", 200, vec![], fixture("search.json"))]);
         let c = client(&addr);
-        let q = Search { text: "  vehicle\u{7}  handling ".into(), sort: Sort::Relevance, offset: 20, count: 500, category: None };
+        let q = Search { text: "  vehicle\u{7}  handling ".into(), sort: Sort::Relevance, offset: 20, count: 500, ..Default::default() };
         let page = c.search(&q, false).unwrap();
         assert_eq!(page.total, Some(57));
         assert_eq!(page.offset, 20);
@@ -846,9 +1060,9 @@ mod tests {
     fn http_429_blocks_further_requests_locally() {
         let mut headers = rl(0, 0);
         headers.push(("Retry-After", "120".into()));
-        let (addr, seen) = serve(vec![("/mods/trending.json", 429, headers, r#"{"msg":"Rate limit exceeded"}"#.into())]);
+        let (addr, seen) = serve(vec![("/games/cyberpunk2077.json", 429, headers, r#"{"msg":"Rate limit exceeded"}"#.into())]);
         let c = client(&addr);
-        let e = c.browse_list(List::Trending, false).unwrap_err().to_string();
+        let e = c.categories().unwrap_err().to_string();
         assert!(e.contains("limit reached"), "{e}");
         // Even essential calls now wait, without touching the network.
         let e = c.validate().unwrap_err().to_string();
@@ -862,11 +1076,11 @@ mod tests {
         let user = r#"{"user_id":1,"key":"x","name":"V","is_premium":true,"is_supporter":true,"email":"v@example.com","profile_url":""}"#;
         let (addr, seen) = serve(vec![
             ("/users/validate.json", 200, rl(BROWSE_RESERVE - 5, 0), user.into()),
-            ("/mods/trending.json", 200, rl(99, 100), fixture("trending.json")),
+            ("/games/cyberpunk2077.json", 200, rl(99, 100), fixture("game.json")),
         ]);
         let c = client(&addr);
         assert_eq!(c.validate().unwrap().name, "V");
-        let e = c.browse_list(List::Trending, false).unwrap_err().to_string();
+        let e = c.categories().unwrap_err().to_string();
         assert!(e.contains("browsing is paused"), "{e}");
         assert!(c.validate().is_ok(), "essential calls still go out");
         assert_eq!(seen.lock().unwrap().len(), 2);
@@ -877,9 +1091,10 @@ mod tests {
         let (addr, seen) = serve(vec![
             ("/mods/107/files.json", 200, rl(98, 19870), fixture("files_107.json")),
             ("/mods/107.json", 200, rl(97, 19869), fixture("mod_107.json")),
+            ("graphql", 200, vec![], fixture("mod_extras_4198.json")),
         ]);
         let c = client(&addr);
-        let d = c.mod_details(107).unwrap();
+        let d = c.mod_details(107, false).unwrap();
         assert_eq!(d.info.name.as_deref(), Some("Cyber Engine Tweaks"));
         assert_eq!(d.info.endorsement_count, Some(91234));
         assert_eq!(d.files.len(), 3);
@@ -890,8 +1105,38 @@ mod tests {
         assert!(!d.description_text.contains("<script"));
         assert!(!d.description_text.contains("i.imgur.com"), "image URLs dropped");
         assert_eq!(d.page_url, "https://www.nexusmods.com/cyberpunk2077/mods/107");
-        c.mod_details(107).unwrap();
-        assert_eq!(seen.lock().unwrap().len(), 2, "second view cached");
+        // The formatted description keeps headings and list items.
+        let doc = serde_json::to_string(&d.description).unwrap();
+        assert!(doc.contains(r#""tag":"li""#) && doc.contains("RED4ext"), "{doc}");
+        assert!(!doc.contains("<script") && !doc.contains("alert"), "{doc}");
+
+        let r = d.requirements.as_ref().unwrap();
+        assert_eq!(r.nexus, vec![Requirement { mod_id: Some(2380), name: "RED4ext".into(), notes: None, url: None }]);
+        assert_eq!(r.external.len(), 1);
+        assert_eq!(r.external[0].url.as_deref(), Some("https://aka.ms/vs/17/release/vc_redist.x64.exe"));
+        assert_eq!(r.dlc, vec!["Phantom Liberty".to_string()]);
+        assert_eq!(r.required_by, Some(7497));
+        assert_eq!(d.tags, vec!["Modder's Resource".to_string(), "Utilities for Players".to_string()]);
+        let gql: Value = serde_json::from_str(&seen.lock().unwrap()[2].body).unwrap();
+        assert_eq!(gql["variables"]["filter"]["gameId"][0]["value"], "3333");
+        assert_eq!(gql["variables"]["filter"]["modId"][0]["value"], "107");
+
+        c.mod_details(107, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 3, "second view cached");
+        c.mod_details(107, true).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 6, "refresh asks again");
+    }
+
+    #[test]
+    fn mod_page_shows_without_requirements() {
+        let (addr, _) = serve(vec![
+            ("/mods/107/files.json", 200, vec![], fixture("files_107.json")),
+            ("/mods/107.json", 200, vec![], fixture("mod_107.json")),
+            ("graphql", 200, vec![], r#"{"errors":[{"message":"boom"}],"data":null}"#.into()),
+        ]);
+        let d = client(&addr).mod_details(107, false).unwrap();
+        assert!(d.requirements.is_none() && d.tags.is_empty());
+        assert_eq!(d.files.len(), 3);
     }
 
     #[test]
