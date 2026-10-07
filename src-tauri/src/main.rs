@@ -17,6 +17,8 @@ use cp2077mm_core::nexus_browse::{self, Category, Collection, ModDetails, NexusR
 use cp2077mm_core::nexus_cache::RequestRecord;
 use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
 use cp2077mm_core::linux_setup::{self, Check};
+use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, Location, MoveReport};
+use cp2077mm_core::game_versions::{self, Loadout, VersionEntry};
 use cp2077mm_core::{Error, Result, desktop, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -191,6 +193,121 @@ fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadRow>> {
     state.db.lock().unwrap().downloads()
 }
 
+/// Downloads grouped by mod, each with its versions (newest first).
+#[tauri::command]
+async fn list_download_groups(app: AppHandle) -> Result<Vec<DownloadGroup>> {
+    blocking(move || {
+        let rows = app.state::<AppState>().db.lock().unwrap().downloads()?;
+        Ok(dl_store::group(rows))
+    })
+    .await
+}
+
+/// The folder for a new download of `mod_name`, inside the download location.
+fn download_dir(app: &AppHandle, row: &DownloadRow) -> Result<PathBuf> {
+    let root = dl_store::location(&app.state::<AppState>().db.lock().unwrap())?;
+    let dir = dl_store::folder_for(&root, row);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+#[tauri::command]
+fn downloads_location(state: State<'_, AppState>) -> Result<Location> {
+    dl_store::describe_location(&state.db.lock().unwrap())
+}
+
+/// Move `moves`, keeping the library in step with each file. The database is
+/// only locked per file, so the app stays usable during a long copy.
+fn run_moves(app: &AppHandle, moves: &[dl_store::PlannedMove]) -> MoveReport {
+    dl_store::run_moves(moves, |m, to| {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        for id in &m.ids {
+            db.set_download_path(*id, &to.to_string_lossy())?;
+        }
+        Ok(())
+    })
+}
+
+/// Use a new download location. With `move_files`, the files already
+/// downloaded go along (sorted into their mod folders); otherwise they stay
+/// where they are and keep working from there.
+#[tauri::command]
+async fn set_downloads_location(app: AppHandle, path: Option<String>, move_files: bool) -> Result<MoveReport> {
+    blocking(move || {
+        let (old, rows) = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            (dl_store::location(&db)?, db.downloads()?)
+        };
+        let new = match path {
+            Some(p) => dl_store::validate_location(std::path::Path::new(&p))?,
+            None => paths::downloads_dir()?,
+        };
+        let report = if move_files { run_moves(&app, &dl_store::plan_moves(&rows, &new)) } else { MoveReport::default() };
+        app.state::<AppState>().db.lock().unwrap().set_setting(dl_store::LOCATION_KEY, &new.to_string_lossy())?;
+        if move_files {
+            dl_store::prune_empty_dirs(&old);
+        }
+        Ok(report)
+    })
+    .await
+}
+
+/// Sort downloads in the current location into one folder per mod.
+#[tauri::command]
+async fn organize_downloads(app: AppHandle) -> Result<MoveReport> {
+    blocking(move || {
+        let (root, rows) = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            (dl_store::location(&db)?, db.downloads()?)
+        };
+        // Only files already inside the location; others stay where they are.
+        let inside: Vec<DownloadRow> = rows.into_iter().filter(|d| std::path::Path::new(&d.path).starts_with(&root)).collect();
+        let report = run_moves(&app, &dl_store::plan_moves(&inside, &root));
+        dl_store::prune_empty_dirs(&root);
+        Ok(report)
+    })
+    .await
+}
+
+/// Delete a downloaded file and forget it. Installed mods keep working:
+/// they run from their own extracted copy.
+#[tauri::command]
+async fn delete_download(app: AppHandle, download_id: i64) -> Result<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        let d = db.download(download_id)?;
+        match std::fs::remove_file(&d.path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+        // Every entry for this file (it may have been downloaded twice).
+        db.delete_downloads_at(&d.path)?;
+        if let Some(dir) = std::path::Path::new(&d.path).parent()
+            && dir != dl_store::location(&db)? {
+                let _ = std::fs::remove_dir(dir); // only when empty
+            }
+        Ok(())
+    })
+    .await
+}
+
+/// Game versions seen for this install, oldest first, with the mods
+/// installed on each.
+#[tauri::command]
+fn game_version_history(state: State<'_, AppState>, game_id: i64) -> Result<Vec<VersionEntry>> {
+    game_versions::history(&state.db.lock().unwrap(), game_id)
+}
+
+/// The mods installed when the game left version `id`, against now.
+#[tauri::command]
+fn game_version_loadout(state: State<'_, AppState>, game_id: i64, id: i64) -> Result<Loadout> {
+    game_versions::loadout(&state.db.lock().unwrap(), game_id, id)
+}
+
 #[tauri::command]
 async fn install_archive(app: AppHandle, game_id: i64, path: String, name: Option<String>, overwrite: bool) -> Result<InstallOutcome> {
     blocking(move || {
@@ -208,7 +325,7 @@ async fn install_download(app: AppHandle, download_id: i64, game_id: i64, overwr
         let d = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            db.downloads()?.into_iter().find(|d| d.id == download_id).ok_or_else(|| Error::Other("download not found".into()))?
+            db.download(download_id)?
         };
         let source = if d.source.is_empty() { "nexus".to_string() } else { d.source.clone() };
         let meta = NewMod {
@@ -852,18 +969,23 @@ fn run_download(
     replaces: Option<i64>,
 ) -> Result<DownloadResult> {
     let c = nexus_client()?;
-    let dl = c.download(mod_id, file_id, key.as_deref(), expires, &paths::downloads_dir()?, |done, total| {
-        let _ = app.emit("download-progress", Progress { mod_id, file_id, done, total });
-    })?;
-    // Shown in the Downloads tab and kept for installing later. Best effort:
-    // the download itself already succeeded.
+    // For the Downloads tab and the mod's folder. Best effort: the download
+    // doesn't depend on them.
     let info = c.mod_info(mod_id).ok();
     let file = c.file_info(mod_id, file_id).ok();
+    let name = info.as_ref().and_then(|i| i.name.clone());
+    let dest = download_dir(app, &DownloadRow { nexus_mod_id: Some(mod_id), mod_name: name.clone(), ..Default::default() })?;
+    let dl = c.download(mod_id, file_id, key.as_deref(), expires, &dest, |done, total| {
+        let _ = app.emit("download-progress", Progress { mod_id, file_id, done, total });
+    })?;
     let category = info.as_ref().and_then(|i| i.category_id).and_then(|id| {
         c.categories().ok()?.into_iter().find(|cat| cat.category_id == id).map(|cat| cat.name)
     });
-    let name = info.as_ref().and_then(|i| i.name.clone());
     let version = file.as_ref().and_then(|f| f.version.clone().or(f.mod_version.clone()));
+    let channel = dl_store::channel_of(
+        &[version.as_deref(), file.as_ref().and_then(|f| f.name.as_deref()), Some(dl.file_name.as_str())],
+        false,
+    );
     let state = app.state::<AppState>();
     let download_id = {
         let db = state.db.lock().unwrap();
@@ -882,6 +1004,7 @@ fn run_download(
             category: category.clone(),
             game_version: game_version(&db, install_to),
             checked: Some(if dl.verified { "MD5 matches Nexus" } else { "unverified: Nexus checksum lookup failed" }.into()),
+            channel: Some(channel.as_str().into()),
             ..Default::default()
         })?
     };
@@ -1009,8 +1132,13 @@ async fn source_download(
                 SourceProgress { source: source.clone(), id: id.clone(), file_id: file_id.clone(), done, total },
             );
         };
-        let dl = src.download(&id, &file_id, &paths::downloads_dir()?, &mut progress)?;
+        let dest = download_dir(
+            &app,
+            &DownloadRow { source: source.clone(), source_ref: Some(id.clone()), mod_name: Some(details.listing.name.clone()), ..Default::default() },
+        )?;
+        let dl = src.download(&id, &file_id, &dest, &mut progress)?;
         let version = file.version.clone().or(details.listing.version.clone());
+        let channel = dl_store::channel_of(&[version.as_deref(), Some(file.file_name.as_str())], file.prerelease);
         let download_id = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
@@ -1029,6 +1157,7 @@ async fn source_download(
                 category: details.listing.category.clone(),
                 game_version: game_version(&db, install_to),
                 checked: Some(dl.check.clone()),
+                channel: Some(channel.as_str().into()),
                 ..Default::default()
             })?
         };
@@ -1156,6 +1285,13 @@ fn main() {
             setup_undo,
             list_mods,
             list_downloads,
+            list_download_groups,
+            downloads_location,
+            set_downloads_location,
+            organize_downloads,
+            delete_download,
+            game_version_history,
+            game_version_loadout,
             install_archive,
             install_download,
             fomod_evaluate,
