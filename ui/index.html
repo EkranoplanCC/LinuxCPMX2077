@@ -56,6 +56,8 @@
           <button id="install-file" class="primary">Install from archive…</button>
         </div>
       </header>
+      <div id="version-ribbon" class="ribbon hidden" role="tablist" aria-label="Game versions"></div>
+      <div id="version-loadout" class="card hidden"></div>
       <div class="row filters">
         <select id="mods-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
         <span id="updates-note" class="muted small"></span>
@@ -258,9 +260,21 @@
     </section>
 
     <section id="tab-downloads" class="tab">
-      <header><h2>Downloads</h2></header>
+      <header>
+        <h2>Downloads</h2>
+        <div class="row">
+          <select id="downloads-channel" class="inline" aria-label="Release channel">
+            <option value="">Stable, beta and nightly</option>
+            <option value="stable">Stable only</option>
+            <option value="testing">Beta and nightly only</option>
+          </select>
+          <button id="downloads-expand" class="link">Open all folders</button>
+        </div>
+      </header>
+      <p class="muted small">Saved in <span id="downloads-where" class="mono"></span>, one folder per mod.
+        <button class="link inline" data-goto="settings">Change</button></p>
       <div id="progress" class="hidden"><div id="progress-bar"></div><span id="progress-text"></span></div>
-      <table>
+      <table class="tree">
         <thead><tr><th>Mod</th><th>Version</th><th>Game version</th><th>Source</th><th>Size</th><th>Verified</th><th></th></tr></thead>
         <tbody id="downloads-body"></tbody>
       </table>
@@ -269,6 +283,17 @@
 
     <section id="tab-settings" class="tab">
       <header><h2>Settings</h2></header>
+      <div class="card">
+        <h3>Download location</h3>
+        <p>Downloaded archives are kept here, one folder per mod with every version you downloaded inside, so you can
+           reinstall or switch versions without downloading again.</p>
+        <p><span id="dl-location" class="mono"></span> <span id="dl-location-default" class="badge hidden">default</span></p>
+        <div class="row">
+          <button id="dl-change">Change…</button>
+          <button id="dl-reset" class="hidden">Use the default folder</button>
+          <button id="dl-organize" title="Move files that are loose in the download folder into their mod's folder">Sort into mod folders</button>
+        </div>
+      </div>
       <div class="card">
         <h3>Nexus downloads from your browser</h3>
         <p>CPMX2077's own Nexus window always works. To also catch “Mod Manager Download” (nxm://) links you click

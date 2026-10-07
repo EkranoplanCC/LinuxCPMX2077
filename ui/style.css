@@ -202,3 +202,25 @@ button.select-mode.active { border-color: var(--yellow); color: var(--yellow); }
 .mod-card.selected::after { content: "✓"; position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%;
   background: var(--yellow); color: #111; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 #select-bar { position: sticky; bottom: -20px; z-index: 4; border-left: 3px solid var(--yellow); box-shadow: 0 -6px 18px rgba(0, 0, 0, .45); }
+
+/* Downloads: one folder per mod with its versions under it */
+table.tree tr.folder { cursor: pointer; }
+table.tree tr.folder:hover { background: var(--panel); }
+table.tree tr.child td { border-bottom-color: #1f1f2e; }
+table.tree .indent { padding-left: 34px; position: relative; }
+table.tree .indent::before { content: "└"; position: absolute; left: 14px; color: var(--muted); }
+button.twisty { background: none; border: 0; padding: 0 6px 0 0; color: var(--muted); width: 20px; }
+.folder-icon { margin-right: 6px; }
+.badge.channel.stable { color: var(--muted); }
+.badge.channel.beta { color: #111; background: var(--yellow); }
+.badge.channel.nightly { color: #111; background: #ff9f43; }
+
+/* Installed mods: game version ribbon */
+.ribbon { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 4px 0 10px; margin-bottom: 6px; }
+.ribbon-label { align-self: center; margin-right: 4px; white-space: nowrap; }
+.ribbon-arrow { align-self: center; color: var(--muted); }
+.ribbon .chip { display: flex; flex-direction: column; align-items: flex-start; gap: 0; padding: 5px 12px; white-space: nowrap; flex-shrink: 0; }
+.ribbon .chip.current b::after { content: " ●"; color: var(--green); font-size: 10px; }
+.ribbon .chip.active { border-color: var(--yellow); background: #2a2810; }
+#version-loadout details table { margin-top: 8px; }
+table.tree td.actions { white-space: nowrap; }
