@@ -65,6 +65,7 @@ function showTab(name) {
   if (name === "downloads") busy(null, loadDownloads);
   if (name === "nexus") busy(null, () => selectSource(currentSource));
   if (name === "diagnostics") busy(null, runDiagnostics);
+  if (name === "modpacks") busy(null, loadModpacks);
 }
 
 // ---- game ---------------------------------------------------------------
@@ -214,6 +215,8 @@ $("#add-path").addEventListener("click", (e) => busy(e.target, async () => {
 // ---- mods ---------------------------------------------------------------
 let mods = [];
 let updatesByMod = new Map(); // installed mod id -> update from check_updates
+// The user's own categories and which installed mod is in which (modpacks.js).
+let customCategories = { categories: [], mods: {} };
 let modSort = loadPref("modSort", { key: "name", dir: 1 });
 const NO_CATEGORY = "__none__";
 
@@ -226,7 +229,8 @@ function sourceLabel(m) {
 
 const SORT_KEYS = {
   name: (m) => m.name,
-  category: (m) => m.category || "",
+  // Your own category first, then Nexus'.
+  category: (m) => customCategories.mods[m.id] || m.category || "",
   version: (m) => m.version || "",
   source: (m) => sourceLabel(m),
 };
@@ -245,6 +249,8 @@ function sortMods(list) {
 async function loadMods() {
   if (!currentGame) return;
   mods = await invoke("list_mods", { gameId: currentGame.id });
+  // Custom categories and dependencies (modpacks.js).
+  await loadModExtras().catch((e) => toast(String(e), true));
   renderMods();
   refreshGame().catch(() => {});
 }
@@ -253,18 +259,26 @@ function renderMods() {
   const sel = $("#mods-category");
   const keep = sel.value;
   const cats = [...new Set(mods.map((m) => m.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const own = customCategories.categories;
   sel.replaceChildren(el("option", { value: "" }, "All categories"),
-    ...cats.map((c) => el("option", { value: c }, c)),
-    cats.length && mods.some((m) => !m.category) ? el("option", { value: NO_CATEGORY }, "No category") : null);
+    own.length ? el("optgroup", { label: "Your categories" },
+      ...own.map((c) => el("option", { value: `own:${c.name}` }, c.name)),
+      el("option", { value: `own:${NO_CATEGORY}` }, "Not in one of yours")) : null,
+    el("optgroup", { label: "Nexus categories" },
+      ...cats.map((c) => el("option", { value: c }, c)),
+      cats.length && mods.some((m) => !m.category) ? el("option", { value: NO_CATEGORY }, "No category") : null));
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   const f = sel.value;
-  const shown = sortMods(mods.filter((m) => !f || (f === NO_CATEGORY ? !m.category : m.category === f)));
+  const ownOf = (m) => customCategories.mods[m.id];
+  const shown = sortMods(mods.filter((m) => !f
+    || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
+      : f === NO_CATEGORY ? !m.category : m.category === f)));
   document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
     th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
   });
   $("#mods-empty").classList.toggle("hidden", mods.length > 0);
-  $("#mods-body").replaceChildren(...shown.map(modRow));
+  $("#mods-body").replaceChildren(...shown.flatMap((m) => [modRow(m), ...dependencyRows(m)]));
 }
 
 function modRow(m) {
@@ -278,7 +292,7 @@ function modRow(m) {
     el("td", {}, sw),
     el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
       el("div", { class: "muted mono" }, m.archive_name)),
-    el("td", {}, m.category || "—"),
+    el("td", {}, customCategoryPicker(m), el("div", { class: "muted small" }, m.category || "")),
     el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.to_stable ? "stable " : ""}${up.latest} available`) : null),
     el("td", {}, el("span", { class: "badge" }, sourceLabel(m))),
     el("td", {}, m.file_count),
@@ -854,9 +868,10 @@ function fmtDate(unix) {
   return unix ? new Date(unix * 1000).toLocaleDateString() : "—";
 }
 
-// Only Nexus' image CDN is allowed (the CSP enforces the same).
+// Only Nexus' image CDNs are allowed (the CSP enforces the same).
 function nexusImage(url, cls) {
-  if (typeof url !== "string" || !url.startsWith("https://staticdelivery.nexusmods.com/")) return el("div", { class: `${cls} noimg` });
+  const ok = typeof url === "string" && ["https://staticdelivery.nexusmods.com/", "https://media.nexusmods.com/"].some((h) => url.startsWith(h));
+  if (!ok) return el("div", { class: `${cls} noimg` });
   return el("img", { class: cls, src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
 }
 
@@ -1054,61 +1069,6 @@ async function showMod(modId, highlightFile) {
   $("main").scrollTop = 0;
 }
 
-// A Nexus collection: its mods, queued in the order the collection lists
-// them. Free accounts click once per mod in the Nexus window, as with any
-// queued Nexus mod; Premium downloads them straight away.
-async function showCollection(slug, revision = null) {
-  if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account to open collections"; }
-  const [c, installed] = await Promise.all([invoke("nexus_collection", { slug, revision }), installedNexusIds()]);
-  refreshQuota().catch(() => {});
-  const seed = (m) => ({ kind: "nexus", name: m.mod_name, modId: m.mod_id, fileId: m.file_id });
-  const missing = (m) => !installed.has(m.mod_id);
-  const required = c.mods.filter((m) => !m.optional);
-  const optional = c.mods.filter((m) => m.optional);
-  const queueButton = (label, list, primary) => {
-    const todo = list.filter(missing);
-    return el("button", {
-      class: primary ? "primary" : "",
-      disabled: todo.length ? null : "",
-      title: todo.length ? "" : "All of them are installed already",
-      onclick: (e) => busy(e.target, async () => enqueue(todo.map(seed))),
-    }, `${label} (${todo.length})`);
-  };
-  const row = (m) => el("div", { class: "file" },
-    el("div", {},
-      el("b", {}, m.mod_name), " ",
-      m.optional ? el("span", { class: "badge" }, "optional") : null, " ",
-      installed.has(m.mod_id) ? el("span", { class: "badge ok" }, "installed") : null,
-      el("div", { class: "muted mono" }, [m.file_name, m.version && `v${m.version}`].filter(Boolean).join(" · "))),
-    el("div", { class: "actions" },
-      el("button", { onclick: (e) => busy(e.target, () => showMod(m.mod_id, m.file_id)) }, "Open")));
-  $("#nexus-list").classList.toggle("hidden", !!browse);
-  $("#nexus-result").classList.remove("hidden");
-  $("#nexus-result").replaceChildren(el("div", { class: "card mod-detail" },
-    el("div", { class: "row" },
-      browse ? el("button", { onclick: () => {
-        $("#nexus-result").classList.add("hidden");
-        $("#nexus-list").classList.remove("hidden");
-      } }, "← Back to results") : null,
-      el("span", { class: "spacer" }),
-      el("button", { onclick: (e) => busy(e.target, () => invoke("nexus_open_collection", { slug: c.slug })) }, "Open on nexusmods.com")),
-    el("h2", {}, c.name),
-    el("p", { class: "muted" }, [c.author && `by ${c.author}`, c.revision && `revision ${c.revision}`,
-      c.game_version && `for game ${c.game_version}`, `${c.mods.length} mods`].filter(Boolean).join(" · ")),
-    c.summary ? el("p", {}, c.summary) : null,
-    el("div", { class: "row" },
-      queueButton("Install required mods", required, true), " ",
-      optional.length ? queueButton("Install all, with optional", c.mods, false) : null),
-    nexusUser.is_premium ? null : el("p", { class: "muted" },
-      "Free account: the Nexus window opens each mod's file in turn. Click “Slow download” once per mod and the queue does the rest."),
-    c.external.length ? el("div", { class: "card notice" },
-      "Not on Nexus, get these by hand: ", c.external.join(", ")) : null,
-    el("p", { class: "muted" }, "Collections can also change load order and settings; only the mods themselves are installed here."),
-    el("h3", {}, `Required (${required.length})`), ...required.map(row),
-    optional.length ? el("details", {}, el("summary", {}, `Optional (${optional.length})`), ...optional.map(row)) : null));
-  $("main").scrollTop = 0;
-}
-
 function fileRow(modId, f, highlightFile) {
   return el("div", { class: "file" },
     el("div", {},
@@ -1146,11 +1106,7 @@ async function download(modId, fileId, key = null, expires = null, replaces = nu
 async function handleNxm(url) {
   // "Download collection" on Nexus opens a collection nxm:// link.
   const ref = await invoke("nexus_resolve", { input: url });
-  if (ref?.kind === "collection") {
-    await selectSource("nexus", false);
-    showTab("nexus");
-    return showCollection(ref.slug, ref.revision);
-  }
+  if (ref?.kind === "collection") return showCollection(ref.slug, ref.revision);
   const link = await invoke("parse_nxm", { url });
   if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account first, then click the link again"; }
   if (link.expires && link.expires * 1000 < Date.now()) throw "This download link has expired; click it on Nexus again";
@@ -1782,7 +1738,9 @@ $("#copy-mcp").addEventListener("click", async () => {
 });
 
 // ---- boot ---------------------------------------------------------------
-(async () => {
+// After every script has run: modpacks.js and graph.js add to the mod list
+// and diagnostics.
+window.addEventListener("DOMContentLoaded", async () => {
   await busy(null, loadSources);
   await busy(null, detect);
   await busy(null, refreshNexus);
@@ -1793,4 +1751,4 @@ $("#copy-mcp").addEventListener("click", async () => {
   for (const l of links) await busy(null, () => handleNxm(l));
   // Quietly, so a slow or rate-limited source doesn't hold up the window.
   checkUpdates(true).catch(() => { $("#updates-note").textContent = ""; });
-})();
+});
