@@ -166,7 +166,41 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
         return Ok(out);
     }
 
-    // 4. Loose archive / redscript / tweak files.
+    // 4. ReShade presets: shaders and preset .ini files go next to the
+    // game exe, where ReShade looks for them (not into the engine config).
+    let is_reshade_dir = |d: &str| d.eq_ignore_ascii_case("reshade-shaders");
+    if let Some(root) = files
+        .iter()
+        .filter_map(|f| {
+            let parts: Vec<&str> = f.split('/').collect();
+            let i = parts[..parts.len() - 1].iter().position(|p| is_reshade_dir(p))?;
+            Some(parts[..i].join("/"))
+        })
+        .min_by_key(|r| r.matches('/').count())
+    {
+        let pfx = if root.is_empty() { String::new() } else { format!("{root}/") };
+        let mut out = Plan { files: vec![], skipped: vec![], layout: "reshade".into() };
+        for f in files {
+            let target = match f.strip_prefix(&pfx) {
+                Some(rest) if rest.split('/').next().is_some_and(is_reshade_dir) => Some(format!("bin/x64/{rest}")),
+                _ if lower_ext(f) == "ini" => Some(format!("bin/x64/{}", file_name(f))),
+                _ => None,
+            };
+            match target {
+                Some(t) => out.files.push(PlannedFile { staged: f.clone(), target: t }),
+                None => out.skipped.push(f.clone()),
+            }
+        }
+        return Ok(out);
+    }
+
+    // A program with its own files (WolvenKit, save editors) isn't a mod,
+    // even if it ships an example .yaml or .archive.
+    if files.iter().any(|f| lower_ext(f) == "exe") {
+        return Err(Error::Other(not_a_game_mod(files)));
+    }
+
+    // 5. Loose archive / redscript / tweak files.
     let mut out = Plan { files: vec![], skipped: vec![], layout: "loose".into() };
     let script_dir = sanitize_folder(mod_name);
     for f in files {
@@ -185,7 +219,7 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
         return Ok(out);
     }
 
-    // 5. Nothing but engine config tweaks: loose .ini files go where the
+    // 6. Nothing but engine config tweaks: loose .ini files go where the
     // game reads them (mod pages say "put user.ini in engine/config/platform/pc").
     let ini: Vec<&String> = files.iter().filter(|f| lower_ext(f) == "ini").collect();
     if !ini.is_empty() {
@@ -204,14 +238,21 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
 
 /// Why an archive has nothing to install, in words the user can act on.
 fn not_a_game_mod(files: &[String]) -> String {
-    let with_ext = |exts: &[&str]| files.iter().find(|f| exts.contains(&lower_ext(f).as_str())).map(|f| file_name(f).to_string());
+    // The shallowest match names the program itself, not a helper tool.
+    let with_ext = |exts: &[&str]| {
+        files
+            .iter()
+            .filter(|f| exts.contains(&lower_ext(f).as_str()))
+            .min_by_key(|f| f.matches('/').count())
+            .map(|f| file_name(f).to_string())
+    };
     if let Some(exe) = with_ext(&["exe"]) {
         return format!("this download is a standalone program ({exe}), not a game mod: run it outside the game instead of installing it");
     }
     if let Some(script) = with_ext(&["bat", "cmd", "ps1", "sh"]) {
         return format!("this download is a script ({script}), not a game mod: there is nothing to install into the game");
     }
-    const DOCS: &[&str] = &["pdf", "txt", "md", "rtf", "doc", "docx", "html", "htm", "png", "jpg", "jpeg", "gif", "webp", "bmp", "url"];
+    const DOCS: &[&str] = &["pdf", "txt", "md", "rtf", "doc", "docx", "html", "htm", "png", "jpg", "jpeg", "gif", "webp", "bmp", "url", "xlsx", "xls", "csv", "odt", "ods"];
     if !files.is_empty() && files.iter().all(|f| DOCS.contains(&lower_ext(f).as_str())) {
         return "this download only has documents or pictures (instructions, previews), no game files".into();
     }
@@ -959,7 +1000,15 @@ mod tests {
         assert_eq!(p.layout, "loose");
         assert_eq!(p.skipped, s(&["settings.ini"]));
 
+        // ReShade presets go next to the exe, not into the engine config.
+        let p = plan(&s(&["Preset v2/Main files/reshade-shaders/Shaders/CAS.fx", "Preset v2/Main files/ReShade.ini", "Preset v2/Main files/My Preset.ini", "Preset v2/readme.txt"]), "x").unwrap();
+        assert_eq!(p.layout, "reshade");
+        let t: Vec<&str> = p.files.iter().map(|f| f.target.as_str()).collect();
+        assert_eq!(t, ["bin/x64/reshade-shaders/Shaders/CAS.fx", "bin/x64/ReShade.ini", "bin/x64/My Preset.ini"]);
+
         let e = |files: &[&str]| plan(&s(files), "x").unwrap_err().to_string();
+        assert!(e(&["opus-tools/opusdec.exe", "WolvenKit.exe", "lib/texconv.dll", "photomode_npc_template.yaml"]).contains("standalone program (WolvenKit.exe)"));
+        assert!(e(&["Command List.xlsx"]).contains("only has documents"));
         assert!(e(&["readme.md", "shot.png"]).contains("only has documents"));
         assert!(e(&["Tool/CP2077SaveEditor.exe", "Tool/kraken.dll", "Tool/config.json"]).contains("standalone program (CP2077SaveEditor.exe)"));
         assert!(e(&["Saves Backup.bat"]).contains("a script (Saves Backup.bat)"));
