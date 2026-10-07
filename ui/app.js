@@ -83,6 +83,7 @@ async function detect() {
 }
 
 function selectGame(id) {
+  if (currentGame?.id !== Number(id)) { ribbonPick = null; gameVersions = []; }
   currentGame = games.find((g) => g.id === Number(id)) || games[0];
   $("#game-select").value = currentGame.id;
   renderGame();
@@ -251,7 +252,9 @@ async function loadMods() {
   mods = await invoke("list_mods", { gameId: currentGame.id });
   // Custom categories and dependencies (modpacks.js).
   await loadModExtras().catch((e) => toast(String(e), true));
+  await loadVersionRibbon().catch(() => {});
   renderMods();
+  showLoadout().catch(() => {});
   refreshGame().catch(() => {});
 }
 
@@ -270,9 +273,9 @@ function renderMods() {
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   const f = sel.value;
   const ownOf = (m) => customCategories.mods[m.id];
-  const shown = sortMods(mods.filter((m) => !f
+  const shown = sortMods(mods.filter((m) => (!f
     || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
-      : f === NO_CATEGORY ? !m.category : m.category === f)));
+      : f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
   document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
     th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
@@ -1695,40 +1698,287 @@ listen("queue-control", (e) => (e.payload === "skip" ? queueSkip() : queueCancel
 listen("nexus-window-closed", queueWindowClosed);
 
 // ---- downloads ------------------------------------------------------------
+// One row per mod; a mod with several downloaded versions is a folder that
+// opens to show them, newest first, like in a file manager.
+let openFolders = new Set(loadPref("downloadsOpen", []));
+let downloadGroups = [];
+let downloadsInstalled = [];
+const CHANNEL_TITLE = {
+  stable: "A regular release",
+  beta: "A test build (beta, alpha, release candidate or preview): newer features, more likely to break",
+  nightly: "An automatic development build: the newest changes, least tested",
+};
+
+function channelBadge(ch) {
+  return el("span", { class: `badge channel ${ch}`, title: CHANNEL_TITLE[ch] || "" }, ch);
+}
+
+function channelShown(ch) {
+  const f = $("#downloads-channel").value;
+  return !f || (f === "stable" ? ch === "stable" : ch !== "stable");
+}
+
 async function loadDownloads() {
-  const [rows, installed] = await Promise.all([
-    invoke("list_downloads"),
+  const [groups, installed, where] = await Promise.all([
+    invoke("list_download_groups"),
     currentGame ? invoke("list_mods", { gameId: currentGame.id }).catch(() => []) : [],
+    invoke("downloads_location").catch(() => null),
   ]);
-  $("#downloads-empty").classList.toggle("hidden", rows.length > 0);
-  $("#downloads-body").replaceChildren(...rows.map((d) => {
-    const m = installed.find((x) => x.archive_sha256 && x.archive_sha256 === d.sha256);
-    const up = m && updatesByMod.get(m.id);
-    const checked = d.checked || (d.verified ? "MD5 matches Nexus" : "unverified");
-    return el("tr", {},
-      el("td", {}, el("b", {}, d.mod_name || d.file_name),
-        m ? el("span", { class: "badge ok" }, m.status === "installed" ? "installed" : "installed, off") : null,
-        el("div", { class: "muted mono" }, d.file_name)),
-      el("td", {}, d.version || "—", up ? el("div", { class: "badge ok" }, `${up.latest} available`) : null),
-      el("td", {}, d.game_version || "—"),
-      el("td", {}, el("span", { class: "badge" }, sourceLabel({ ...d, source: d.source || "nexus" }))),
-      el("td", {}, fmtSize(d.size)),
-      el("td", {}, el("span", { class: d.verified ? "badge ok" : "badge bad", title: `SHA-256 ${d.sha256}` }, checked)),
-      el("td", { class: "actions" },
-        up ? el("button", {
+  downloadGroups = groups;
+  downloadsInstalled = installed;
+  if (where) $("#downloads-where").textContent = where.path;
+  renderDownloads();
+}
+
+function renderDownloads() {
+  const rows = [];
+  let shownAny = false;
+  for (const g of downloadGroups) {
+    const entries = g.entries.filter((e) => channelShown(e.channel));
+    if (!entries.length) continue;
+    shownAny = true;
+    if (entries.length === 1) {
+      rows.push(downloadRow(entries[0], 0));
+      continue;
+    }
+    const open = openFolders.has(g.key);
+    const installedEntry = entries.find((e) => installedFor(e));
+    const newest = entries[0];
+    const toggle = () => {
+      if (openFolders.has(g.key)) openFolders.delete(g.key); else openFolders.add(g.key);
+      savePref("downloadsOpen", [...openFolders]);
+      renderDownloads();
+    };
+    const channels = ["stable", "beta", "nightly"].filter((c) => entries.some((e) => e.channel === c));
+    rows.push(el("tr", { class: "folder", onclick: (e) => { if (e.target.tagName !== "BUTTON" || e.target.classList.contains("twisty")) toggle(); } },
+      el("td", {},
+        el("button", { class: "twisty", "aria-expanded": String(open), title: open ? "Hide versions" : "Show versions" }, open ? "▾" : "▸"),
+        el("span", { class: "folder-icon", "aria-hidden": "true" }, "📁"),
+        el("b", {}, g.name),
+        el("span", { class: "muted small" }, ` · ${entries.length} versions`),
+        installedEntry ? el("span", { class: "badge ok" }, `${installedEntry.version || "one"} installed`) : null),
+      el("td", {}, newest.version || "—", " ", newest.channel === "stable" ? null : channelBadge(newest.channel),
+        channels.length > 1 ? el("div", { class: "muted small" }, channels.join(", ")) : null),
+      el("td", {}, [...new Set(entries.map((e) => e.game_version).filter(Boolean))].join(", ") || "—"),
+      el("td", {}, el("span", { class: "badge" }, sourceLabel({ ...newest, source: newest.source || "nexus" }))),
+      el("td", {}, fmtSize(entries.reduce((n, e) => n + e.size, 0))),
+      el("td", {}),
+      el("td", {})));
+    if (open) rows.push(...entries.map((e) => downloadRow(e, 1)));
+  }
+  $("#downloads-empty").textContent = downloadGroups.length ? "Nothing matches this filter." : "Nothing downloaded yet.";
+  $("#downloads-empty").classList.toggle("hidden", shownAny);
+  $("#downloads-body").replaceChildren(...rows);
+}
+
+function installedFor(d) {
+  return downloadsInstalled.find((x) => x.archive_sha256 && x.archive_sha256 === d.sha256);
+}
+
+function downloadRow(d, depth) {
+  const m = installedFor(d);
+  const up = m && updatesByMod.get(m.id);
+  const checked = d.checked || (d.verified ? "MD5 matches Nexus" : "unverified");
+  return el("tr", { class: depth ? "child" : "" },
+    el("td", {}, el("div", { class: depth ? "indent" : "" },
+      depth ? null : el("b", {}, d.mod_name || d.file_name),
+      m ? el("span", { class: "badge ok" }, m.status === "installed" ? "installed" : "installed, off") : null,
+      d.on_disk ? null : el("span", { class: "badge bad", title: d.path }, "file missing"),
+      el("div", { class: "muted mono", title: d.path }, d.file_name))),
+    el("td", {}, d.version || "—", " ", channelBadge(d.channel),
+      up ? el("div", { class: "badge ok" }, `${up.latest} available`) : null),
+    el("td", {}, d.game_version || "—"),
+    el("td", {}, depth ? null : el("span", { class: "badge" }, sourceLabel({ ...d, source: d.source || "nexus" }))),
+    el("td", {}, fmtSize(d.size)),
+    el("td", {}, el("span", { class: d.verified ? "badge ok" : "badge bad", title: `SHA-256 ${d.sha256}` }, checked)),
+    el("td", { class: "actions" },
+      up ? el("button", {
         class: "update",
         title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
         onclick: (e) => busy(e.target, () => applyUpdate(up)),
       }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
-        m ? null : el("button", {
-          onclick: (e) => busy(e.target, async () => {
-            if (!currentGame) throw "Select a game first";
-            const r = await invoke("install_download", { downloadId: d.id, gameId: currentGame.id, overwrite: $("#overwrite").checked, replaces: null });
-            await handleOutcome(r);
-            loadDownloads().catch(() => {});
-          }),
-        }, "Install")));
-  }));
+      m || !d.on_disk ? null : el("button", {
+        onclick: (e) => busy(e.target, async () => {
+          if (!currentGame) throw "Select a game first";
+          // Another version of this mod is installed: switch to this one.
+          let other = downloadsInstalled.find((x) => sameMod(x, d));
+          if (other && !(await dialog.ask(`${other.name} ${other.version || ""} (${other.archive_name}) is installed. Replace it with ${d.version || d.file_name}?`,
+            { title: "Switch version", kind: "info", okLabel: "Replace it", cancelLabel: "No" }))) {
+            // A Nexus mod can have several files meant to go in together.
+            if (!(await dialog.ask(`Install ${d.file_name} next to ${other.archive_name} instead?`, { title: "Switch version", kind: "info" }))) return;
+            other = null;
+          }
+          const r = await invoke("install_download", { downloadId: d.id, gameId: currentGame.id, overwrite: $("#overwrite").checked, replaces: other?.id ?? null });
+          await handleOutcome(r);
+          loadDownloads().catch(() => {});
+        }),
+      }, downloadsInstalled.some((x) => sameMod(x, d)) ? "Switch to this" : "Install"), " ",
+      el("button", {
+        class: "danger",
+        title: m ? "The installed mod keeps working; only the downloaded archive is deleted" : "",
+        onclick: (e) => busy(e.target, async () => {
+          if (!(await dialog.ask(`Delete ${d.file_name}${d.version ? ` (${d.version})` : ""} from your downloads?`, { title: "Delete download", kind: "warning" }))) return;
+          await invoke("delete_download", { downloadId: d.id });
+          loadDownloads().catch(() => {});
+        }),
+      }, "Delete")));
+}
+
+// The installed mod a download is another version of.
+function sameMod(m, d) {
+  if (m.archive_sha256 === d.sha256) return false;
+  if (d.nexus_mod_id) return m.nexus_mod_id === d.nexus_mod_id;
+  if (d.source_ref) return m.source === d.source && m.source_ref === d.source_ref;
+  return false;
+}
+
+$("#downloads-channel").value = loadPref("downloadsChannel", "");
+$("#downloads-channel").addEventListener("change", () => {
+  savePref("downloadsChannel", $("#downloads-channel").value);
+  renderDownloads();
+});
+$("#downloads-expand").addEventListener("click", () => {
+  const folders = downloadGroups.filter((g) => g.entries.length > 1).map((g) => g.key);
+  const allOpen = folders.every((k) => openFolders.has(k));
+  openFolders = allOpen ? new Set() : new Set(folders);
+  $("#downloads-expand").textContent = allOpen ? "Open all folders" : "Close all folders";
+  savePref("downloadsOpen", [...openFolders]);
+  renderDownloads();
+});
+document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.goto)));
+
+// ---- download location (Settings) ----------------------------------------
+async function refreshLocation() {
+  const loc = await invoke("downloads_location");
+  $("#dl-location").textContent = loc.path;
+  $("#dl-location-default").classList.toggle("hidden", !loc.is_default);
+  $("#dl-reset").classList.toggle("hidden", loc.is_default);
+  $("#downloads-where").textContent = loc.path;
+}
+
+function moveSummary(r) {
+  const lines = [`Moved ${r.moved} file${r.moved === 1 ? "" : "s"}.`];
+  if (r.missing.length) lines.push(`${r.missing.length} listed file${r.missing.length === 1 ? " was" : "s were"} already gone.`);
+  if (r.failed.length) lines.push(`Couldn't move ${r.failed.length}; they stay where they were:`, ...r.failed.slice(0, 4));
+  return lines.join("\n");
+}
+
+async function changeLocation(path) {
+  const count = (await invoke("list_downloads")).length;
+  let move = false;
+  if (count) {
+    move = await dialog.ask(
+      `Move the ${count} file${count === 1 ? "" : "s"} you've already downloaded to the new folder too? They're sorted into one folder per mod.\n\n`
+      + "If you leave them, they stay where they are and keep working from there.",
+      { title: "Download location", kind: "info", okLabel: "Move them", cancelLabel: "Leave them" });
+  }
+  const r = await invoke("set_downloads_location", { path, moveFiles: move });
+  await refreshLocation();
+  toast(move ? `Download location changed.\n${moveSummary(r)}` : "Download location changed. New downloads go there.", r.failed.length > 0);
+  if ($("#tab-downloads").classList.contains("active")) loadDownloads().catch(() => {});
+}
+
+$("#dl-change").addEventListener("click", (e) => busy(e.target, async () => {
+  const path = await dialog.open({ directory: true, title: "Where should downloads be saved?" });
+  if (path) await changeLocation(path);
+}));
+$("#dl-reset").addEventListener("click", (e) => busy(e.target, () => changeLocation(null)));
+$("#dl-organize").addEventListener("click", (e) => busy(e.target, async () => {
+  const r = await invoke("organize_downloads");
+  toast(r.moved || r.failed.length ? moveSummary(r) : "Everything is already in its mod's folder.", r.failed.length > 0);
+}));
+
+// ---- game versions (Installed mods) --------------------------------------
+// A ribbon of every game version seen, newest on the right. Picking one
+// shows the mods installed on it and, for an older version, what changed in
+// the mod list since the game moved on.
+let gameVersions = [];
+let ribbonPick = null; // index into gameVersions, or null for all
+
+function versionLabel(v) {
+  return v.version || (v.build_id ? `build ${v.build_id}` : "unknown");
+}
+
+async function loadVersionRibbon() {
+  if (!currentGame) return;
+  const gameId = currentGame.id;
+  const list = await invoke("game_version_history", { gameId });
+  if (currentGame?.id !== gameId) return;
+  const before = ribbonPick != null ? gameVersions[ribbonPick] : null;
+  gameVersions = list;
+  ribbonPick = before ? list.findIndex((v) => v.id === before.id && v.version === before.version) : null;
+  if (ribbonPick === -1) ribbonPick = null;
+  renderVersionRibbon();
+}
+
+function renderVersionRibbon() {
+  const ribbon = $("#version-ribbon");
+  ribbon.classList.toggle("hidden", gameVersions.length === 0);
+  // Two versions with one exe version (a Steam hotfix) are told apart by build.
+  const dupe = (v) => gameVersions.filter((x) => x.version === v.version).length > 1;
+  const chip = (label, sub, i, title, extra = "") => el("button", {
+    class: `chip${ribbonPick === i ? " active" : ""}${extra}`, role: "tab", "aria-selected": String(ribbonPick === i), title,
+    onclick: () => { ribbonPick = i; renderVersionRibbon(); renderMods(); showLoadout().catch((e) => toast(String(e), true)); },
+  }, el("b", {}, label), el("span", { class: "muted small" }, sub));
+  ribbon.replaceChildren(
+    el("span", { class: "muted small ribbon-label" }, "Game version"),
+    chip("All", `${mods.length} mods`, null, "Every installed mod"),
+    ...gameVersions.map((v, i) => {
+      const label = versionLabel(v) + (dupe(v) && v.build_id ? ` · ${v.build_id}` : "");
+      const sub = `${v.mod_ids.length} installed${v.current ? " · current" : ""}`;
+      const title = [
+        v.build_id ? `Steam build ${v.build_id}` : null,
+        v.first_seen ? `First seen ${v.first_seen.slice(0, 10)}` : null,
+        v.left_at ? `Updated away from on ${v.left_at.slice(0, 10)}` : null,
+        v.id == null ? "From mods installed before CPMX2077 kept a version history" : null,
+      ].filter(Boolean).join("\n");
+      return [i ? el("span", { class: "ribbon-arrow", "aria-hidden": "true" }, "→") : null, chip(label, sub, i, title, v.current ? " current" : "")];
+    }).flat().filter(Boolean));
+}
+
+// Filter for the installed list: mods installed on the picked version.
+function ribbonFilter(m) {
+  if (ribbonPick == null) return true;
+  return gameVersions[ribbonPick]?.mod_ids.includes(m.id) ?? true;
+}
+
+async function showLoadout() {
+  const box = $("#version-loadout");
+  const v = ribbonPick != null ? gameVersions[ribbonPick] : null;
+  if (!v || v.current) {
+    box.classList.toggle("hidden", !v);
+    if (v) box.replaceChildren(el("p", { class: "muted" },
+      `Showing the ${v.mod_ids.length} mods installed or updated since the game became ${versionLabel(v)}. `
+      + "Mods from older versions are still installed; pick an older version to see them."));
+    return;
+  }
+  if (v.id == null || !v.snapshot_count) {
+    box.classList.remove("hidden");
+    box.replaceChildren(el("p", { class: "muted" },
+      `Showing the mods installed while the game was ${versionLabel(v)}. They may need an update for the current version. `
+      + "CPMX2077 hadn't recorded your full mod list for this version yet."));
+    return;
+  }
+  const l = await invoke("game_version_loadout", { gameId: currentGame.id, id: v.id });
+  const n = (c) => l.mods.filter((m) => m.change === c).length;
+  const LABEL = { same: "unchanged", updated: "updated since", disabled: "turned off since", enabled: "turned on since", removed: "removed since" };
+  const summary = ["same", "updated", "disabled", "enabled", "removed"].filter((c) => n(c)).map((c) => `${n(c)} ${LABEL[c]}`);
+  if (l.added.length) summary.push(`${l.added.length} added since`);
+  box.classList.remove("hidden");
+  box.replaceChildren(
+    el("p", {}, `When the game updated from ${versionLabel(v)}${l.left_at ? ` on ${l.left_at.slice(0, 10)}` : ""}, you had `,
+      el("b", {}, `${l.mods.length} mods`), `: ${summary.join(", ")}.`),
+    el("p", { class: "muted small" }, "The list below shows the mods still installed that were installed on that version; they may need an update for the current one."),
+    el("details", {},
+      el("summary", {}, "Mod list on that version"),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Mod"), el("th", {}, "Version then"), el("th", {}, "Now"))),
+        el("tbody", {}, ...l.mods.map((m) => el("tr", { class: m.change === "removed" ? "off" : "" },
+          el("td", {}, el("b", {}, m.name), m.enabled ? null : el("span", { class: "badge" }, "was off"),
+            el("div", { class: "muted mono" }, m.archive_name)),
+          el("td", {}, m.version || "—"),
+          el("td", {}, el("span", { class: `badge${m.change === "removed" ? " bad" : m.change === "same" ? "" : " ok"}` },
+            m.change === "updated" ? `updated to ${m.now_version || "another file"}` : LABEL[m.change]))))))));
 }
 
 // ---- agent access ------------------------------------------------------
@@ -1746,6 +1996,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   await busy(null, refreshNexus);
   await busy(null, refreshSso);
   $("#show-adult").checked = await invoke("nexus_show_adult");
+  await busy(null, refreshLocation);
   $("#mcp-cmd").textContent = await invoke("mcp_command");
   const links = await invoke("startup_links");
   for (const l of links) await busy(null, () => handleNxm(l));

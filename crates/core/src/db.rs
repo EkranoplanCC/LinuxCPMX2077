@@ -142,6 +142,29 @@ CREATE TABLE IF NOT EXISTS nexus_requirements (
     requirements TEXT NOT NULL,
     fetched_at   INTEGER NOT NULL           -- unix seconds
 );
+-- Every game version the manager has seen, oldest first. A new row is added
+-- when the game updates.
+CREATE TABLE IF NOT EXISTS game_versions (
+    id          INTEGER PRIMARY KEY,
+    game_id     INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    version     TEXT,
+    build_id    TEXT,
+    first_seen  TEXT NOT NULL DEFAULT (datetime('now')),
+    left_at     TEXT                    -- when the next version was first seen
+);
+CREATE INDEX IF NOT EXISTS game_versions_game ON game_versions (game_id, id);
+-- The mods installed when the game moved on from a version.
+CREATE TABLE IF NOT EXISTS game_version_mods (
+    game_version_id INTEGER NOT NULL REFERENCES game_versions(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    version         TEXT,
+    source          TEXT NOT NULL,
+    nexus_mod_id    INTEGER,
+    nexus_file_id   INTEGER,
+    source_ref      TEXT,
+    archive_name    TEXT NOT NULL,
+    enabled         INTEGER NOT NULL
+);
 "#;
 
 /// Columns added after v0.1, as (table, column, declaration). Applied to
@@ -164,6 +187,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("downloads", "checked", "TEXT"),
     // The mod's category, kept for installing the file later.
     ("downloads", "category", "TEXT"),
+    // Release channel: 'stable' | 'beta' | 'nightly' (see downloads.rs).
+    ("downloads", "channel", "TEXT"),
 ];
 
 pub struct Db {
@@ -256,6 +281,31 @@ pub struct DownloadRow {
     pub game_version: Option<String>,
     pub checked: Option<String>,
     pub category: Option<String>,
+    pub channel: Option<String>,
+}
+
+/// One game version in the history (see [`Db::game_versions`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameVersionRow {
+    pub id: i64,
+    pub game_id: i64,
+    pub version: Option<String>,
+    pub build_id: Option<String>,
+    pub first_seen: String,
+    pub left_at: Option<String>,
+}
+
+/// A mod as it was when the game moved on from a version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotMod {
+    pub name: String,
+    pub version: Option<String>,
+    pub source: String,
+    pub nexus_mod_id: Option<i64>,
+    pub nexus_file_id: Option<i64>,
+    pub source_ref: Option<String>,
+    pub archive_name: String,
+    pub enabled: bool,
 }
 
 impl Db {
@@ -327,11 +377,98 @@ impl Db {
                 g.exe_product_version
             ],
         )?;
-        Ok(self.conn.query_row(
+        let id = self.conn.query_row(
             "SELECT id FROM games WHERE path = ?1",
             [g.path.to_string_lossy()],
             |r| r.get(0),
-        )?)
+        )?;
+        let version = g.exe_product_version.clone().or(g.exe_file_version.clone());
+        self.record_game_version(id, version.as_deref(), g.build_id.as_deref())?;
+        Ok(id)
+    }
+
+    /// Note the game's current version. When it differs from the last one
+    /// seen (the game updated), the installed mods are kept as the old
+    /// version's snapshot and a new version starts. Returns whether a new
+    /// version was added.
+    pub fn record_game_version(&self, game_id: i64, version: Option<&str>, build_id: Option<&str>) -> Result<bool> {
+        if version.is_none() && build_id.is_none() {
+            return Ok(false);
+        }
+        let last = self.game_versions(game_id)?.pop();
+        if let Some(last) = &last {
+            let same_version = last.version.as_deref() == version || version.is_none();
+            // A build id that's missing on either side (a manual install, a
+            // failed read) isn't a change.
+            let same_build = match (last.build_id.as_deref(), build_id) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            };
+            if same_version && same_build {
+                if last.build_id.is_none() && build_id.is_some() {
+                    self.conn.execute("UPDATE game_versions SET build_id = ?2 WHERE id = ?1", params![last.id, build_id])?;
+                }
+                return Ok(false);
+            }
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(last) = &last {
+            tx.execute("DELETE FROM game_version_mods WHERE game_version_id = ?1", [last.id])?;
+            tx.execute(
+                "INSERT INTO game_version_mods (game_version_id, name, version, source, nexus_mod_id, nexus_file_id,
+                   source_ref, archive_name, enabled)
+                 SELECT ?1, name, version, source, nexus_mod_id, nexus_file_id, source_ref, archive_name,
+                   status = 'installed'
+                 FROM mods WHERE game_id = ?2 ORDER BY id",
+                params![last.id, game_id],
+            )?;
+            tx.execute("UPDATE game_versions SET left_at = datetime('now') WHERE id = ?1", [last.id])?;
+        }
+        tx.execute(
+            "INSERT INTO game_versions (game_id, version, build_id) VALUES (?1, ?2, ?3)",
+            params![game_id, version, build_id],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// The game's versions, oldest first; the last one is current.
+    pub fn game_versions(&self, game_id: i64) -> Result<Vec<GameVersionRow>> {
+        let mut st = self.conn.prepare(
+            "SELECT id, game_id, version, build_id, first_seen, left_at FROM game_versions WHERE game_id = ?1 ORDER BY id",
+        )?;
+        let rows = st.query_map([game_id], |r| {
+            Ok(GameVersionRow {
+                id: r.get(0)?,
+                game_id: r.get(1)?,
+                version: r.get(2)?,
+                build_id: r.get(3)?,
+                first_seen: r.get(4)?,
+                left_at: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// The mods installed when the game moved on from version `id`.
+    pub fn game_version_mods(&self, id: i64) -> Result<Vec<SnapshotMod>> {
+        let mut st = self.conn.prepare(
+            "SELECT name, version, source, nexus_mod_id, nexus_file_id, source_ref, archive_name, enabled
+             FROM game_version_mods WHERE game_version_id = ?1 ORDER BY name COLLATE NOCASE",
+        )?;
+        let rows = st.query_map([id], |r| {
+            Ok(SnapshotMod {
+                name: r.get(0)?,
+                version: r.get(1)?,
+                source: r.get(2)?,
+                nexus_mod_id: r.get(3)?,
+                nexus_file_id: r.get(4)?,
+                source_ref: r.get(5)?,
+                archive_name: r.get(6)?,
+                enabled: r.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     pub fn games(&self) -> Result<Vec<GameRow>> {
@@ -514,8 +651,8 @@ impl Db {
     pub fn insert_download(&self, d: &DownloadRow) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO downloads (nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified,
-               source, source_ref, source_file, mod_name, version, game_version, checked, category)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+               source, source_ref, source_file, mod_name, version, game_version, checked, category, channel)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 d.nexus_mod_id,
                 d.nexus_file_id,
@@ -533,6 +670,7 @@ impl Db {
                 d.game_version,
                 d.checked,
                 d.category,
+                d.channel,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -541,7 +679,7 @@ impl Db {
     pub fn downloads(&self) -> Result<Vec<DownloadRow>> {
         let mut st = self.conn.prepare(
             "SELECT id, nexus_mod_id, nexus_file_id, file_name, path, sha256, md5, size, verified, downloaded_at,
-                    source, source_ref, source_file, mod_name, version, game_version, checked, category
+                    source, source_ref, source_file, mod_name, version, game_version, checked, category, channel
              FROM downloads ORDER BY id DESC",
         )?;
         let rows = st.query_map([], |r| {
@@ -564,9 +702,29 @@ impl Db {
                 game_version: r.get(15)?,
                 checked: r.get(16)?,
                 category: r.get(17)?,
+                channel: r.get(18)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn download(&self, id: i64) -> Result<DownloadRow> {
+        self.downloads()?
+            .into_iter()
+            .find(|d| d.id == id)
+            .ok_or_else(|| crate::Error::Other("download not found".into()))
+    }
+
+    /// Forget every download entry for the file at `path`.
+    pub fn delete_downloads_at(&self, path: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM downloads WHERE path = ?1", [path])?;
+        Ok(())
+    }
+
+    /// The file moved (a new download location, or sorted into its folder).
+    pub fn set_download_path(&self, id: i64, path: &str) -> Result<()> {
+        self.conn.execute("UPDATE downloads SET path = ?2 WHERE id = ?1", params![id, path])?;
+        Ok(())
     }
 }
 
