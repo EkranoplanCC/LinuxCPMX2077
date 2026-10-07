@@ -50,6 +50,21 @@ make it executable (`chmod +x`) and run it.
   Nexus page, has the same name apart from version numbers, or mostly
   overlaps. An optional file from the same Nexus page that shares no files
   with the main one is installed next to it.
+- **Modpacks tab**: browse and search Nexus collections, open one to see
+  which of its mods you have, which are missing, turned off or on another
+  version, and install the missing ones through the download queue.
+  Installing from a collection follows it: "Check for updates" asks Nexus
+  for new revisions, and opening one shows what the new revision adds,
+  changes and drops, with one button to update. Your own categories (with
+  colors) sort installed mods your way and stay with a mod through updates.
+  "Export mod list" saves your mods, categories and followed collections to
+  a JSON file; "Import mod list" applies its categories and offers to get
+  the mods you don't have.
+- **Dependencies**: "Show dependencies" in Installed mods lists what each mod
+  needs indented under it, from its Nexus page and from the frameworks its
+  files use (redscript for `.reds`, ArchiveXL for `.xl`, …), marked
+  installed, turned off, already in the game folder or missing, with a button
+  to get what's missing, plus which mods need it.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed
@@ -184,7 +199,5 @@ release with a SHA256SUMS file.
 
 ## Roadmap
 
-- Nexus collections (modpacks) via the v2 GraphQL API, fed into the
-  download queue
 - A one-click list of the core frameworks from GitHub
 - Load order for `.archive` files

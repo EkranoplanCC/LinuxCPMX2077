@@ -65,6 +65,8 @@ function showTab(name) {
   if (name === "downloads") busy(null, loadDownloads);
   if (name === "nexus") busy(null, () => selectSource(currentSource));
   if (name === "diagnostics") busy(null, runDiagnostics);
+  if (name === "modpacks") busy(null, loadModpacks);
+  if (name === "settings") refreshCacheInfo().catch(() => {});
 }
 
 // ---- game ---------------------------------------------------------------
@@ -215,6 +217,8 @@ $("#add-path").addEventListener("click", (e) => busy(e.target, async () => {
 // ---- mods ---------------------------------------------------------------
 let mods = [];
 let updatesByMod = new Map(); // installed mod id -> update from check_updates
+// The user's own categories and which installed mod is in which (modpacks.js).
+let customCategories = { categories: [], mods: {} };
 let modSort = loadPref("modSort", { key: "name", dir: 1 });
 const NO_CATEGORY = "__none__";
 
@@ -227,7 +231,8 @@ function sourceLabel(m) {
 
 const SORT_KEYS = {
   name: (m) => m.name,
-  category: (m) => m.category || "",
+  // Your own category first, then Nexus'.
+  category: (m) => customCategories.mods[m.id] || m.category || "",
   version: (m) => m.version || "",
   source: (m) => sourceLabel(m),
 };
@@ -246,6 +251,8 @@ function sortMods(list) {
 async function loadMods() {
   if (!currentGame) return;
   mods = await invoke("list_mods", { gameId: currentGame.id });
+  // Custom categories and dependencies (modpacks.js).
+  await loadModExtras().catch((e) => toast(String(e), true));
   await loadVersionRibbon().catch(() => {});
   renderMods();
   showLoadout().catch(() => {});
@@ -256,18 +263,26 @@ function renderMods() {
   const sel = $("#mods-category");
   const keep = sel.value;
   const cats = [...new Set(mods.map((m) => m.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const own = customCategories.categories;
   sel.replaceChildren(el("option", { value: "" }, "All categories"),
-    ...cats.map((c) => el("option", { value: c }, c)),
-    cats.length && mods.some((m) => !m.category) ? el("option", { value: NO_CATEGORY }, "No category") : null);
+    own.length ? el("optgroup", { label: "Your categories" },
+      ...own.map((c) => el("option", { value: `own:${c.name}` }, c.name)),
+      el("option", { value: `own:${NO_CATEGORY}` }, "Not in one of yours")) : null,
+    el("optgroup", { label: "Nexus categories" },
+      ...cats.map((c) => el("option", { value: c }, c)),
+      cats.length && mods.some((m) => !m.category) ? el("option", { value: NO_CATEGORY }, "No category") : null));
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   const f = sel.value;
-  const shown = sortMods(mods.filter((m) => (!f || (f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
+  const ownOf = (m) => customCategories.mods[m.id];
+  const shown = sortMods(mods.filter((m) => (!f
+    || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
+      : f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
   document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
     th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
   });
   $("#mods-empty").classList.toggle("hidden", mods.length > 0);
-  $("#mods-body").replaceChildren(...shown.map(modRow));
+  $("#mods-body").replaceChildren(...shown.flatMap((m) => [modRow(m), ...dependencyRows(m)]));
 }
 
 function modRow(m) {
@@ -281,7 +296,7 @@ function modRow(m) {
     el("td", {}, sw),
     el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
       el("div", { class: "muted mono" }, m.archive_name)),
-    el("td", {}, m.category || "—"),
+    el("td", {}, customCategoryPicker(m), el("div", { class: "muted small" }, m.category || "")),
     el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.to_stable ? "stable " : ""}${up.latest} available`) : null),
     el("td", {}, el("span", { class: "badge" }, sourceLabel(m))),
     el("td", {}, m.file_count),
@@ -756,14 +771,15 @@ async function refreshNexus() {
   const box = $("#nexus-user");
   box.classList.toggle("hidden", !s.user);
   if (s.user) {
-    box.replaceChildren(
+    // replaceChildren would show a null as the text "null".
+    box.replaceChildren(...[
       el("b", {}, s.user.name), " ",
       el("span", { class: "badge" }, s.user.is_premium ? "Premium" : "Free account"), " ",
       s.user.is_premium ? null : el("p", { class: "muted" },
         "Nexus only lets Premium accounts download straight through apps like this one. With a free account, "
         + "“Get from Nexus” opens the file on Nexus in a CPMX2077 window instead: sign in there once, click "
         + "“Slow download” and wait for the short countdown. CPMX2077 then downloads, checks and installs the file by itself."),
-    );
+    ].filter(Boolean));
     loadCategories().catch(() => {});
   }
   refreshNxmStatus().catch(() => {});
@@ -775,7 +791,7 @@ $("#save-key").addEventListener("click", (e) => busy(e.target, async () => {
   $("#api-key").value = "";
   await refreshNexus();
   toast("Connected to Nexus Mods");
-  if (currentSource === "nexus" && !browse) await runBrowse({ list: "trending", category: selectedCategory() });
+  if (currentSource === "nexus" && !browse) await runBrowse(startList());
 }));
 async function refreshSso() {
   const slug = await invoke("nexus_sso_slug");
@@ -867,9 +883,30 @@ $("#nexus-go").addEventListener("click", (e) => busy(e.target, async () => {
 }));
 
 // ---- nexus browsing -----------------------------------------------------
-const PAGE_SIZE = 20;
-let browse = null; // { list } or { text, sort, offset }
+// Nexus answers at most 80 mods per request and pages up to offset 100,000.
+const PER_PAGE_CHOICES = [10, 20, 40, 80];
+const MAX_OFFSET = 100000;
+let perPage = PER_PAGE_CHOICES.includes(loadPref("nexusPerPage", 20)) ? loadPref("nexusPerPage", 20) : 20;
+let browse = null; // { text, sort, offset, category }
 let browseReq = 0;
+
+function startList() {
+  return { text: "", sort: "trending", offset: 0, category: selectedCategory() };
+}
+
+function fmtAgo(unix) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - unix));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+// "Saved copy" / "updated 3 min ago" next to a list or mod page.
+function freshness(fetchedAt, saved) {
+  if (!fetchedAt) return "";
+  return saved ? `Nexus couldn't be reached: saved copy from ${fmtAgo(fetchedAt)}` : `from Nexus ${fmtAgo(fetchedAt)}`;
+}
 
 function fmtCount(n) {
   if (n === null || n === undefined) return "—";
@@ -882,9 +919,10 @@ function fmtDate(unix) {
   return unix ? new Date(unix * 1000).toLocaleDateString() : "—";
 }
 
-// Only Nexus' image CDN is allowed (the CSP enforces the same).
+// Only Nexus' image CDNs are allowed (the CSP enforces the same).
 function nexusImage(url, cls) {
-  if (typeof url !== "string" || !url.startsWith("https://staticdelivery.nexusmods.com/")) return el("div", { class: `${cls} noimg` });
+  const ok = typeof url === "string" && ["https://staticdelivery.nexusmods.com/", "https://media.nexusmods.com/"].some((h) => url.startsWith(h));
+  if (!ok) return el("div", { class: `${cls} noimg` });
   return el("img", { class: cls, src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
 }
 
@@ -928,57 +966,75 @@ function categoryIds(id) {
   return new Set([id, ...[...categoriesById.values()].filter((c) => c.parent === id).map((c) => c.category_id)]);
 }
 
-const LIST_TITLES = { trending: "Trending on Nexus", latest_added: "Latest added", latest_updated: "Latest updated" };
-const SORT_TITLES = { endorsements: "Most endorsed", downloads: "Most downloaded", updated: "Recently updated", created: "Newest", relevance: "Best match" };
+const SORT_TITLES = {
+  trending: "Trending: most downloaded of the mods added in the last two weeks",
+  endorsements: "Most endorsed", downloads: "Most downloaded",
+  updated: "Latest updated", created: "Latest added", relevance: "Best match",
+};
 
-async function runBrowse(next) {
+async function runBrowse(next, refresh = false) {
   browse = next;
   const req = ++browseReq;
   document.querySelectorAll("#nexus-browse .chips button").forEach((b) =>
-    b.classList.toggle("active", (next.list && b.dataset.list === next.list) || (!next.list && !next.text && b.dataset.sort === next.sort)));
+    b.classList.toggle("active", !next.text && b.dataset.sort === next.sort));
   $("#nexus-result").classList.add("hidden");
   $("#nexus-list").classList.remove("hidden");
   $("#nexus-list-title").textContent = "Loading…";
+  $("#nexus-fresh").textContent = "";
   try {
     const category = categoriesById.get(next.category);
     const [page, installed] = await Promise.all([
-      next.list
-        ? invoke("nexus_browse_list", { list: next.list })
-        : invoke("nexus_search", { query: { text: next.text, sort: next.sort, offset: next.offset, count: PAGE_SIZE, category: category?.name ?? null } }),
+      invoke("nexus_search", { query: {
+        text: next.text, sort: next.sort, offset: next.offset, count: perPage, category: category?.name ?? null, refresh,
+      } }),
       installedNexusIds(),
     ]);
     if (req !== browseReq) return;
-    // Curated lists can't be asked for one category: filter what they return.
-    const ids = next.list ? categoryIds(next.category) : null;
-    if (ids) page.mods = page.mods.filter((m) => ids.has(m.category_id));
     renderPage(page, installed);
   } catch (e) {
     if (req === browseReq) $("#nexus-list-title").textContent = "";
     throw e;
   } finally {
     refreshQuota().catch(() => {});
+    refreshDebug().catch(() => {});
   }
 }
 
+// The last page Nexus will hand out for this list.
+function lastOffset(total) {
+  return Math.min(MAX_OFFSET, Math.max(0, Math.ceil(total / perPage) - 1) * perPage);
+}
+
 function renderPage(page, installed) {
-  let title = browse.list ? LIST_TITLES[browse.list]
-    : browse.text ? `Results for “${browse.text}”` : SORT_TITLES[browse.sort];
+  let title = browse.text ? `Results for “${browse.text}”` : SORT_TITLES[browse.sort];
   const category = categoriesById.get(browse.category);
-  if (category) title += browse.list ? ` · only ${category.name}` : ` in ${category.name}`;
+  if (category) title += ` in ${category.name}`;
   if (page.total !== null && page.total !== undefined) title += ` · ${page.total.toLocaleString()} mods`;
   if (page.hidden_adult) title += ` · ${page.hidden_adult} adult ${page.hidden_adult === 1 ? "mod" : "mods"} hidden (Settings)`;
   $("#nexus-list-title").textContent = title;
+  $("#nexus-fresh").textContent = freshness(page.fetched_at, page.saved_copy);
+  $("#nexus-fresh").classList.toggle("warn", !!page.saved_copy);
+  $("#nexus-refresh").classList.remove("hidden");
   $("#nexus-grid").replaceChildren(...page.mods.map((m) => modCard(m, installed.has(m.mod_id))));
   if (!page.mods.length) $("#nexus-grid").append(el("p", { class: "muted" }, "No mods found."));
-  const paged = !browse.list && page.total !== null && page.total !== undefined;
+  const paged = page.total !== null && page.total !== undefined && page.total > perPage;
   $("#nexus-pager").classList.toggle("hidden", !paged);
   if (paged) {
-    const pageNo = Math.floor(page.offset / PAGE_SIZE) + 1;
-    const pages = Math.max(1, Math.ceil(page.total / PAGE_SIZE));
-    $("#nexus-page").textContent = `Page ${pageNo} of ${pages.toLocaleString()}`;
-    $("#nexus-prev").disabled = page.offset <= 0;
-    $("#nexus-next").disabled = page.offset + page.count >= page.total;
+    const pageNo = Math.floor(page.offset / perPage) + 1;
+    const pages = Math.floor(lastOffset(page.total) / perPage) + 1;
+    $("#nexus-page-input").value = pageNo;
+    $("#nexus-page-input").max = pages;
+    $("#nexus-page").textContent = `of ${pages.toLocaleString()}`;
+    $("#nexus-page").title = pages * perPage < page.total ? `Nexus only pages through the first ${MAX_OFFSET.toLocaleString()} mods of a list` : "";
+    $("#nexus-first").disabled = $("#nexus-prev").disabled = page.offset <= 0;
+    $("#nexus-next").disabled = $("#nexus-last").disabled = page.offset >= lastOffset(page.total);
+    browse.total = page.total;
   }
+}
+
+function goToPage(n) {
+  const offset = Math.min(lastOffset(browse.total ?? 0), Math.max(0, (Math.round(n) - 1) * perPage));
+  return runBrowse({ ...browse, offset });
 }
 
 function modCard(m, isInstalled) {
@@ -1004,6 +1060,7 @@ function selectedCategory() {
 }
 
 function searchFromInputs(offset = 0) {
+  if (!$("#nexus-search").value.trim() && $("#nexus-sort").value === "relevance") $("#nexus-sort").value = "endorsements";
   return { text: $("#nexus-search").value.trim(), sort: $("#nexus-sort").value, offset, category: selectedCategory() };
 }
 
@@ -1012,18 +1069,117 @@ $("#nexus-search").addEventListener("keydown", (e) => {
   if (e.key === "Enter") busy(null, () => runBrowse(searchFromInputs()));
 });
 document.querySelectorAll("#nexus-browse .chips button").forEach((b) => b.addEventListener("click", () => busy(b, () => {
-  if (b.dataset.list) return runBrowse({ list: b.dataset.list, category: selectedCategory() });
   $("#nexus-search").value = "";
   $("#nexus-sort").value = b.dataset.sort;
   return runBrowse({ text: "", sort: b.dataset.sort, offset: 0, category: selectedCategory() });
 })));
 $("#nexus-category").addEventListener("change", () => busy(null, () => runBrowse(searchFromInputs())));
-$("#nexus-prev").addEventListener("click", (e) => busy(e.target, () => runBrowse({ ...browse, offset: Math.max(0, browse.offset - PAGE_SIZE) })));
-$("#nexus-next").addEventListener("click", (e) => busy(e.target, () => runBrowse({ ...browse, offset: browse.offset + PAGE_SIZE })));
+$("#nexus-first").addEventListener("click", (e) => busy(e.target, () => goToPage(1)));
+$("#nexus-prev").addEventListener("click", (e) => busy(e.target, () => goToPage(browse.offset / perPage)));
+$("#nexus-next").addEventListener("click", (e) => busy(e.target, () => goToPage(browse.offset / perPage + 2)));
+$("#nexus-last").addEventListener("click", (e) => busy(e.target, () => goToPage(Infinity)));
+$("#nexus-page-input").addEventListener("change", (e) => {
+  const n = Number(e.target.value);
+  if (Number.isFinite(n) && n >= 1) busy(null, () => goToPage(n));
+});
+$("#nexus-refresh").addEventListener("click", (e) => busy(e.target, () => runBrowse(browse, true)));
+$("#nexus-per-page").value = String(perPage);
+$("#nexus-per-page").addEventListener("change", (e) => {
+  const first = browse ? browse.offset : 0;
+  perPage = Number(e.target.value) || 20;
+  savePref("nexusPerPage", perPage);
+  // Stay around the same mods: the page that holds the first one shown.
+  if (browse) busy(null, () => runBrowse({ ...browse, offset: Math.floor(first / perPage) * perPage }));
+});
 
 $("#show-adult").addEventListener("change", (e) => busy(null, async () => {
   await invoke("set_nexus_show_adult", { show: e.target.checked });
   if (browse) await runBrowse(browse);
+}));
+
+// ---- debug view: every Nexus API request --------------------------------
+let debugMode = loadPref("nexusDebug", false) === true;
+let debugRequests = []; // newest last
+let debugTimer = null;
+const SERVED_LABELS = { network: "Nexus", cache: "cache", saved: "saved copy", held: "held back" };
+
+async function refreshDebug() {
+  if (!debugMode) return;
+  const after = debugRequests.length ? debugRequests[debugRequests.length - 1].id : 0;
+  const fresh = await invoke("nexus_requests", { after });
+  if (!fresh.length && debugRequests.length) return;
+  debugRequests = debugRequests.concat(fresh).slice(-300);
+  renderDebug();
+}
+
+function renderDebug() {
+  const reqs = debugRequests;
+  const sent = reqs.filter((r) => r.served === "network");
+  const avg = sent.length ? Math.round(sent.reduce((a, r) => a + r.duration_ms, 0) / sent.length) : 0;
+  const counts = Object.keys(SERVED_LABELS).map((k) => [k, reqs.filter((r) => r.served === k).length]).filter(([, n]) => n);
+  $("#nexus-debug-summary").textContent = reqs.length
+    ? `· ${counts.map(([k, n]) => `${n} ${SERVED_LABELS[k]}`).join(", ")}${sent.length ? ` · ${avg} ms average` : ""}`
+    : "· none yet";
+  const slowest = Math.max(1000, ...reqs.map((r) => r.duration_ms));
+  $("#nexus-debug-list").replaceChildren(...reqs.slice().reverse().map((r) => {
+    const failed = r.error || (r.status && r.status >= 400);
+    const bar = el("div", { class: "req-bar" });
+    bar.style.width = `${Math.max(2, (100 * r.duration_ms) / slowest)}%`;
+    const quota = [r.hourly_remaining, r.daily_remaining].filter((n) => n !== null && n !== undefined);
+    return el("details", { class: `req ${r.served}${failed ? " failed" : ""}` },
+      el("summary", {},
+        el("span", { class: "mono muted" }, new Date(r.at_ms).toLocaleTimeString()),
+        el("span", { class: `badge req-${r.served}` }, SERVED_LABELS[r.served] || r.served),
+        el("span", { class: "mono" }, `${r.method} ${r.label?.split(" · ")[0] || r.endpoint}`),
+        el("span", { class: "req-time" }, bar, el("span", { class: "muted small" }, r.served === "network" ? `${r.duration_ms} ms` : "")),
+        el("span", { class: failed ? "badge bad" : "muted small" }, r.status ? String(r.status) : r.error ? "error" : "")),
+      el("dl", { class: "req-detail" },
+        ...[
+          ["Endpoint", r.endpoint],
+          ["What", r.label],
+          ["Answered by", SERVED_LABELS[r.served] || r.served],
+          ["Priority", r.priority === "browse" ? "browsing (pauses when the quota runs low)" : "essential (downloads, sign-in)"],
+          ["Status", r.status],
+          ["Time", r.served === "network" ? `${r.duration_ms} ms` : null],
+          ["Size", r.bytes ? fmtSize(r.bytes) : null],
+          ["Requests left", quota.length ? `hourly ${r.hourly_remaining ?? "?"}, daily ${r.daily_remaining ?? "?"}` : null],
+          ["Error", r.error],
+        ].filter(([, v]) => v !== null && v !== undefined && v !== "").flatMap(([k, v]) => [el("dt", {}, k), el("dd", { class: "mono" }, String(v))])));
+  }));
+}
+
+function setDebugMode(on) {
+  debugMode = on;
+  savePref("nexusDebug", on);
+  $("#nexus-debug-mode").checked = on;
+  $("#nexus-debug").classList.toggle("hidden", !on);
+  clearInterval(debugTimer);
+  debugTimer = null;
+  if (on) {
+    // Downloads and update checks call Nexus too; pick those up as they happen.
+    debugTimer = setInterval(() => {
+      if ($("#nexus-debug").open && !document.hidden) refreshDebug().catch(() => {});
+    }, 2000);
+    refreshDebug().catch(() => {});
+  }
+}
+
+$("#nexus-debug-mode").addEventListener("change", (e) => setDebugMode(e.target.checked));
+$("#nexus-debug-clear").addEventListener("click", (e) => busy(e.target, async () => {
+  await invoke("nexus_clear_requests");
+  debugRequests = [];
+  renderDebug();
+}));
+setDebugMode(debugMode);
+
+async function refreshCacheInfo() {
+  const c = await invoke("nexus_cache_info");
+  $("#nexus-cache-info").textContent = c.files ? `${c.files.toLocaleString()} saved, ${fmtSize(c.bytes)}` : "Nothing saved yet";
+}
+$("#nexus-cache-clear").addEventListener("click", (e) => busy(e.target, async () => {
+  await invoke("nexus_clear_cache");
+  await refreshCacheInfo();
+  toast("Saved Nexus pages cleared");
 }));
 
 const FILE_GROUPS = [
@@ -1031,9 +1187,99 @@ const FILE_GROUPS = [
   ["MISCELLANEOUS", "Miscellaneous"], ["OLD_VERSION", "Old versions"],
 ];
 
-async function showMod(modId, highlightFile) {
-  const [d, installed] = await Promise.all([invoke("nexus_mod_details", { modId }), installedNexusIds()]);
+// ---- mod descriptions -------------------------------------------------------
+// The core turns Nexus' BBCode into a tree of known elements; this builds it
+// with createElement, checking every tag again. Nothing is parsed as HTML.
+const DOC_TAGS = {
+  b: "b", i: "i", u: "u", s: "s", sup: "sup", sub: "sub", h2: "h3", h3: "h4", h4: "h5", quote: "blockquote",
+  code: "pre", ul: "ul", ol: "ol", li: "li", p: "p", div: "div", span: "span", table: "table", tr: "tr", td: "td", th: "th",
+};
+const SAFE_COLOR = /^(#[0-9a-f]{3}|#[0-9a-f]{6}|[a-z]{3,20})$/;
+
+function renderDoc(nodes, depth = 0) {
+  if (!Array.isArray(nodes) || depth > 60) return [];
+  return nodes.map((n) => renderDocNode(n, depth)).filter(Boolean);
+}
+
+function renderDocNode(n, depth) {
+  switch (n?.t) {
+    case "text": return document.createTextNode(String(n.text));
+    case "br": return el("br");
+    case "hr": return el("hr");
+    case "link": return docLink(n.href, renderDoc(n.children, depth + 1));
+    case "video": return docLink(n.url, ["▶ Video on YouTube"]);
+    case "image": return docImage(n);
+    case "el": {
+      const kids = renderDoc(n.children, depth + 1);
+      if (n.tag === "spoiler") return el("details", { class: "spoiler" }, el("summary", {}, "Spoiler"), ...kids);
+      if (n.tag === "center" || n.tag === "right") return el("div", { class: `align-${n.tag}` }, ...kids);
+      if (n.tag === "size") return el("span", { class: `size-${Math.min(7, Math.max(1, Number(n.size) | 0))}` }, ...kids);
+      if (n.tag === "color") {
+        const span = el("span", {}, ...kids);
+        if (typeof n.color === "string" && SAFE_COLOR.test(n.color)) span.style.color = n.color;
+        return span;
+      }
+      return el(DOC_TAGS[n.tag] || "span", {}, ...kids);
+    }
+    default: return null;
+  }
+}
+
+// Links to Nexus mods and collections open here; anything else in the
+// user's browser.
+function docLink(href, children) {
+  if (typeof href !== "string") return el("span", {}, ...children);
+  return el("a", { href: "#", class: "ext", title: href, onclick: (e) => {
+    e.preventDefault();
+    busy(null, () => openDocLink(href));
+  } }, ...(children.length ? children : [href]));
+}
+
+async function openDocLink(href) {
+  const ref = await invoke("nexus_resolve", { input: href });
+  if (ref?.kind === "mod") return showMod(ref.mod_id);
+  if (ref?.kind === "collection") return showCollection(ref.slug, ref.revision);
+  await invoke("open_web_link", { url: href });
+  toast(`Opened ${new URL(href).host} in your browser`);
+}
+
+// Only Nexus' own image host is loaded (the CSP allows nothing else); other
+// pictures are a button that opens them in the browser.
+function docImage(n) {
+  if (n.inline) {
+    const img = nexusImage(n.src, "desc-img");
+    if (img.tagName === "IMG") return img;
+  }
+  return el("button", { class: "img-placeholder", title: n.src, onclick: (e) => {
+    e.preventDefault();
+    busy(null, () => openDocLink(n.src));
+  } }, `🖼 Picture on ${n.host}: open in browser`);
+}
+
+function requirementsSection(modId, r) {
+  if (!r) return null;
+  const total = r.nexus.length + r.external.length + r.dlc.length;
+  const reqRow = (q, nexus) => el("tr", {},
+    el("td", {}, nexus && q.mod_id
+      ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); busy(null, () => showMod(q.mod_id)); } }, q.name)
+      : q.url ? docLink(q.url, [q.name]) : q.name),
+    el("td", { class: "muted" }, q.notes || ""));
+  return el("details", { class: "requirements", open: total ? "" : null },
+    el("summary", {}, total ? `Requirements (${total})` : "Requirements: none listed"),
+    r.dlc.length ? el("p", {}, "DLC: ", r.dlc.join(", ")) : null,
+    r.nexus.length ? el("table", { class: "req-table" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Nexus requirements"), el("th", {}, "Notes"))),
+      el("tbody", {}, ...r.nexus.map((q) => reqRow(q, true)))) : null,
+    r.external.length ? el("table", { class: "req-table" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Off-site requirements"), el("th", {}, "Notes"))),
+      el("tbody", {}, ...r.external.map((q) => reqRow(q, false)))) : null,
+    r.required_by ? el("p", { class: "muted" }, `${r.required_by.toLocaleString()} mods list this one as a requirement.`) : null);
+}
+
+async function showMod(modId, highlightFile, refresh = false) {
+  const [d, installed] = await Promise.all([invoke("nexus_mod_details", { modId, refresh }), installedNexusIds()]);
   refreshQuota().catch(() => {});
+  refreshDebug().catch(() => {});
   const { info, files } = d;
   const sorted = [...files].sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0));
   const groups = FILE_GROUPS.map(([cat, label]) => {
@@ -1045,11 +1291,31 @@ async function showMod(modId, highlightFile) {
       ? el("details", {}, el("summary", {}, `${label} (${fs.length})`), ...body)
       : el("div", {}, el("h3", {}, label), ...body);
   });
-  const desc = el("div", { class: "description collapsed" }, d.description_text || info.summary || "");
-  const more = el("button", { class: "link", onclick: () => {
-    desc.classList.toggle("collapsed");
-    more.textContent = desc.classList.contains("collapsed") ? "Show full description" : "Show less";
-  } }, "Show full description");
+  const shownFiles = groups.filter(Boolean).length;
+  const doc = renderDoc(d.description);
+  const description = el("div", { class: "bbcode" }, ...(doc.length ? doc : [d.description_text || info.summary || ""]));
+  const tabs = [["description", "Description"], ["files", `Files (${files.filter((f) => f.category_name !== "ARCHIVED" && f.category_name !== "DELETED").length})`]];
+  const panes = {
+    description: el("div", { class: "tab-pane" },
+      info.summary ? el("p", { class: "about" }, info.summary) : null,
+      d.tags.length ? el("div", { class: "row tags" }, ...d.tags.map((t) => el("span", { class: "badge" }, t))) : null,
+      requirementsSection(modId, d.requirements),
+      description),
+    files: el("div", { class: "tab-pane" },
+      nexusUser?.is_premium ? null : el("p", { class: "muted" },
+        "Free account: “Get from Nexus” opens the file in a CPMX2077 window. Click “Slow download” there and the file downloads and installs here by itself. "
+        + "Prefer your own browser? Use “or use your browser”."),
+      ...groups,
+      shownFiles ? null : el("p", { class: "muted" }, "No files to download.")),
+  };
+  const tabBar = el("div", { class: "mod-tabs" }, ...tabs.map(([key, label]) =>
+    el("button", { "data-pane": key, onclick: () => pick(key) }, label)));
+  const pick = (key) => {
+    tabBar.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.pane === key));
+    Object.entries(panes).forEach(([k, p]) => p.classList.toggle("hidden", k !== key));
+  };
+  pick(highlightFile ? "files" : "description");
+  const stat = (label, value) => el("div", { class: "stat" }, el("div", { class: "muted small" }, label), el("b", {}, value));
   $("#nexus-list").classList.toggle("hidden", !!browse);
   $("#nexus-result").classList.remove("hidden");
   $("#nexus-result").replaceChildren(el("div", { class: "card mod-detail" },
@@ -1059,81 +1325,30 @@ async function showMod(modId, highlightFile) {
         $("#nexus-list").classList.remove("hidden");
       } }, "← Back to results") : null,
       el("span", { class: "spacer" }),
+      el("span", { class: `muted small${d.saved_copy ? " warn" : ""}` }, freshness(d.fetched_at, d.saved_copy)),
+      el("button", { title: "Ask Nexus again instead of using the saved copy",
+        onclick: (e) => busy(e.target, () => showMod(modId, highlightFile, true)) }, "Refresh"),
       el("button", { onclick: (e) => busy(e.target, () => invoke("nexus_open_page", { modId, fileId: null })) }, "Open on nexusmods.com")),
     el("div", { class: "mod-head" },
       nexusImage(info.picture_url, "hero"),
       el("div", {},
         el("h2", {}, info.name || `Mod ${modId}`),
-        el("p", { class: "muted" }, `by ${info.author || info.uploaded_by || "unknown"} · v${info.version || "?"}`),
-        el("div", { class: "stats" },
-          el("span", {}, `♥ ${fmtCount(info.endorsement_count)} endorsements`),
-          el("span", {}, `⬇ ${fmtCount(info.mod_downloads)} downloads`),
-          el("span", {}, `Updated ${fmtDate(info.updated_timestamp)}`),
+        el("p", { class: "muted" }, `by ${info.author || info.uploaded_by || "unknown"}`
+          + (info.uploaded_by && info.uploaded_by !== info.author ? ` · uploaded by ${info.uploaded_by}` : "")),
+        el("div", { class: "row" },
           categoriesById.has(info.category_id) ? el("span", { class: "badge" }, categoriesById.get(info.category_id).name) : null,
           installed.has(modId) ? el("span", { class: "badge ok" }, "installed") : null,
-          info.contains_adult_content ? el("span", { class: "badge bad" }, "adult") : null),
-        el("p", {}, info.summary || ""))),
-    desc,
-    (d.description_text || "").length > 600 ? more : null,
-    nexusUser?.is_premium ? null : el("p", { class: "muted" },
-      "Free account: “Get from Nexus” opens the file in a CPMX2077 window. Click “Slow download” there and the file downloads and installs here by itself. "
-      + "Prefer your own browser? Use “or use your browser”."),
-    ...groups));
-  $("main").scrollTop = 0;
-}
-
-// A Nexus collection: its mods, queued in the order the collection lists
-// them. Free accounts click once per mod in the Nexus window, as with any
-// queued Nexus mod; Premium downloads them straight away.
-async function showCollection(slug, revision = null) {
-  if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account to open collections"; }
-  const [c, installed] = await Promise.all([invoke("nexus_collection", { slug, revision }), installedNexusIds()]);
-  refreshQuota().catch(() => {});
-  const seed = (m) => ({ kind: "nexus", name: m.mod_name, modId: m.mod_id, fileId: m.file_id });
-  const missing = (m) => !installed.has(m.mod_id);
-  const required = c.mods.filter((m) => !m.optional);
-  const optional = c.mods.filter((m) => m.optional);
-  const queueButton = (label, list, primary) => {
-    const todo = list.filter(missing);
-    return el("button", {
-      class: primary ? "primary" : "",
-      disabled: todo.length ? null : "",
-      title: todo.length ? "" : "All of them are installed already",
-      onclick: (e) => busy(e.target, async () => enqueue(todo.map(seed))),
-    }, `${label} (${todo.length})`);
-  };
-  const row = (m) => el("div", { class: "file" },
-    el("div", {},
-      el("b", {}, m.mod_name), " ",
-      m.optional ? el("span", { class: "badge" }, "optional") : null, " ",
-      installed.has(m.mod_id) ? el("span", { class: "badge ok" }, "installed") : null,
-      el("div", { class: "muted mono" }, [m.file_name, m.version && `v${m.version}`].filter(Boolean).join(" · "))),
-    el("div", { class: "actions" },
-      el("button", { onclick: (e) => busy(e.target, () => showMod(m.mod_id, m.file_id)) }, "Open")));
-  $("#nexus-list").classList.toggle("hidden", !!browse);
-  $("#nexus-result").classList.remove("hidden");
-  $("#nexus-result").replaceChildren(el("div", { class: "card mod-detail" },
-    el("div", { class: "row" },
-      browse ? el("button", { onclick: () => {
-        $("#nexus-result").classList.add("hidden");
-        $("#nexus-list").classList.remove("hidden");
-      } }, "← Back to results") : null,
-      el("span", { class: "spacer" }),
-      el("button", { onclick: (e) => busy(e.target, () => invoke("nexus_open_collection", { slug: c.slug })) }, "Open on nexusmods.com")),
-    el("h2", {}, c.name),
-    el("p", { class: "muted" }, [c.author && `by ${c.author}`, c.revision && `revision ${c.revision}`,
-      c.game_version && `for game ${c.game_version}`, `${c.mods.length} mods`].filter(Boolean).join(" · ")),
-    c.summary ? el("p", {}, c.summary) : null,
-    el("div", { class: "row" },
-      queueButton("Install required mods", required, true), " ",
-      optional.length ? queueButton("Install all, with optional", c.mods, false) : null),
-    nexusUser.is_premium ? null : el("p", { class: "muted" },
-      "Free account: the Nexus window opens each mod's file in turn. Click “Slow download” once per mod and the queue does the rest."),
-    c.external.length ? el("div", { class: "card notice" },
-      "Not on Nexus, get these by hand: ", c.external.join(", ")) : null,
-    el("p", { class: "muted" }, "Collections can also change load order and settings; only the mods themselves are installed here."),
-    el("h3", {}, `Required (${required.length})`), ...required.map(row),
-    optional.length ? el("details", {}, el("summary", {}, `Optional (${optional.length})`), ...optional.map(row)) : null));
+          info.contains_adult_content ? el("span", { class: "badge bad" }, "adult") : null))),
+    el("div", { class: "stat-bar" },
+      stat("Endorsements", fmtCount(info.endorsement_count)),
+      stat("Unique DLs", fmtCount(info.mod_unique_downloads)),
+      stat("Total DLs", fmtCount(info.mod_downloads)),
+      stat("Version", info.version || "?"),
+      stat("Last updated", fmtDate(info.updated_timestamp)),
+      stat("Original upload", fmtDate(info.created_timestamp))),
+    tabBar,
+    panes.description,
+    panes.files));
   $("main").scrollTop = 0;
 }
 
@@ -1174,11 +1389,7 @@ async function download(modId, fileId, key = null, expires = null, replaces = nu
 async function handleNxm(url) {
   // "Download collection" on Nexus opens a collection nxm:// link.
   const ref = await invoke("nexus_resolve", { input: url });
-  if (ref?.kind === "collection") {
-    await selectSource("nexus", false);
-    showTab("nexus");
-    return showCollection(ref.slug, ref.revision);
-  }
+  if (ref?.kind === "collection") return showCollection(ref.slug, ref.revision);
   const link = await invoke("parse_nxm", { url });
   if (!nexusUser) { showTab("nexus"); throw "Connect your Nexus account first, then click the link again"; }
   if (link.expires && link.expires * 1000 < Date.now()) throw "This download link has expired; click it on Nexus again";
@@ -1237,7 +1448,7 @@ async function selectSource(id, load = true) {
   $("#source-nexus").classList.toggle("hidden", id !== "nexus");
   $("#source-other").classList.toggle("hidden", id === "nexus");
   if (id === "nexus") {
-    if (load && nexusUser && !browse) await runBrowse({ list: "trending", category: selectedCategory() });
+    if (load && nexusUser && !browse) await runBrowse(startList());
     return;
   }
   const info = sourceInfos.find((s) => s.id === id);
@@ -2057,7 +2268,9 @@ $("#copy-mcp").addEventListener("click", async () => {
 });
 
 // ---- boot ---------------------------------------------------------------
-(async () => {
+// After every script has run: modpacks.js and graph.js add to the mod list
+// and diagnostics.
+window.addEventListener("DOMContentLoaded", async () => {
   await busy(null, loadSources);
   await busy(null, detect);
   await busy(null, refreshNexus);
@@ -2069,4 +2282,4 @@ $("#copy-mcp").addEventListener("click", async () => {
   for (const l of links) await busy(null, () => handleNxm(l));
   // Quietly, so a slow or rate-limited source doesn't hold up the window.
   checkUpdates(true).catch(() => { $("#updates-note").textContent = ""; });
-})();
+});

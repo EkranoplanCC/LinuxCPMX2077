@@ -23,6 +23,7 @@
     </section>
     <nav>
       <button data-tab="mods" class="active">Installed mods</button>
+      <button data-tab="modpacks">Modpacks</button>
       <button data-tab="diagnostics">Diagnostics</button>
       <button data-tab="nexus">Get mods</button>
       <button data-tab="downloads">Downloads</button>
@@ -60,6 +61,9 @@
       <div id="version-loadout" class="card hidden"></div>
       <div class="row filters">
         <select id="mods-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
+        <label class="check small" title="List what each mod needs under it: from its Nexus page and from the frameworks its files use">
+          <input type="checkbox" id="show-deps"> Show dependencies</label>
+        <span id="deps-note" class="muted small"></span>
         <span id="updates-note" class="muted small"></span>
       </div>
       <table>
@@ -74,6 +78,63 @@
         <tbody id="mods-body"></tbody>
       </table>
       <p id="mods-empty" class="muted">No mods installed yet. Install an archive (.zip, .7z, .rar) or get one from Nexus or GitHub.</p>
+    </section>
+
+    <section id="tab-modpacks" class="tab">
+      <header>
+        <h2>Modpacks</h2>
+        <div class="row">
+          <button id="modlist-import" title="Read a mod list exported from CPMX2077: adds its categories and offers the mods you don't have">Import mod list…</button>
+          <button id="modlist-export" title="Save your mods, categories and followed collections to a JSON file">Export mod list…</button>
+        </div>
+      </header>
+      <div id="modpacks-main">
+        <div id="import-result" class="hidden"></div>
+        <section class="card">
+          <div class="row list-head">
+            <h3>Collections you follow</h3>
+            <span class="spacer"></span>
+            <button id="collections-check" title="Ask Nexus whether the collections you follow have new revisions">Check for updates</button>
+          </div>
+          <div id="tracked-list"></div>
+          <p id="tracked-empty" class="muted">None yet. Install from a collection below (or paste a collection link in Get mods) and CPMX2077 follows it,
+            so it can tell you when the collection changes and which of its mods you're missing.</p>
+        </section>
+        <section class="card">
+          <h3>Your categories</h3>
+          <p class="muted">Sort your installed mods your own way. Pick a mod's category in the Installed mods tab;
+            categories stay with a mod through updates and go along when you export a mod list.</p>
+          <div class="row">
+            <input id="cat-name" maxlength="60" placeholder="New category, e.g. Visuals">
+            <input id="cat-color" type="color" value="#00f0ff" title="Color">
+            <button id="cat-add">Add</button>
+          </div>
+          <ul id="cat-list" class="cat-list"></ul>
+        </section>
+        <section>
+          <div class="card">
+            <div class="row">
+              <input id="coll-search" type="search" placeholder="Search Cyberpunk 2077 collections on Nexus" maxlength="100">
+              <select id="coll-sort" class="inline" aria-label="Sort">
+                <option value="endorsements">Most endorsed</option>
+                <option value="downloads">Most downloaded</option>
+                <option value="rating">Best rated</option>
+                <option value="updated">Recently updated</option>
+                <option value="created">Newest</option>
+              </select>
+              <button id="coll-search-go" class="primary">Search</button>
+            </div>
+          </div>
+          <p id="coll-title" class="muted"></p>
+          <div id="coll-grid" class="mod-grid"></div>
+          <div id="coll-pager" class="row pager hidden">
+            <button id="coll-prev">Previous</button>
+            <span id="coll-page" class="muted"></span>
+            <button id="coll-next">Next</button>
+          </div>
+        </section>
+      </div>
+      <div id="coll-detail" class="hidden"></div>
     </section>
 
     <section id="tab-diagnostics" class="tab">
@@ -184,35 +245,59 @@
             <input id="nexus-search" type="search" placeholder="Search Cyberpunk 2077 mods by name" maxlength="100">
             <select id="nexus-sort" class="inline">
               <option value="relevance">Best match</option>
+              <option value="trending">Trending</option>
               <option value="endorsements">Most endorsed</option>
               <option value="downloads">Most downloaded</option>
-              <option value="updated">Recently updated</option>
-              <option value="created">Newest</option>
+              <option value="updated">Latest updated</option>
+              <option value="created">Latest added</option>
             </select>
             <select id="nexus-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
             <button id="nexus-search-go" class="primary">Search</button>
           </div>
           <div class="row chips">
-            <button data-list="trending">Trending</button>
-            <button data-list="latest_added">Latest added</button>
-            <button data-list="latest_updated">Latest updated</button>
+            <button data-sort="trending" title="The most downloaded of the mods added in the last two weeks">Trending</button>
+            <button data-sort="created">Latest added</button>
+            <button data-sort="updated">Latest updated</button>
             <button data-sort="endorsements">Most endorsed</button>
             <button data-sort="downloads">Most downloaded</button>
             <span class="spacer"></span>
+            <label class="muted small">Mods per page
+              <select id="nexus-per-page" class="inline">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="40">40</option>
+                <option value="80">80</option>
+              </select>
+            </label>
             <span id="nexus-quota" class="muted"></span>
           </div>
         </div>
+        <details id="nexus-debug" class="card hidden">
+          <summary>API requests <span id="nexus-debug-summary" class="muted small"></span></summary>
+          <div class="row">
+            <span class="muted small">Every request to Nexus, newest first. Bars show how long each took. Your API key is never shown.</span>
+            <span class="spacer"></span>
+            <button id="nexus-debug-clear" class="small">Clear</button>
+          </div>
+          <div id="nexus-debug-list" class="req-list"></div>
+        </details>
         <div id="nexus-list">
           <div class="row list-head">
             <p id="nexus-list-title" class="muted"></p>
+            <span id="nexus-fresh" class="muted small"></span>
+            <button id="nexus-refresh" class="small hidden" title="Ask Nexus again instead of using the saved copy">Refresh</button>
             <span class="spacer"></span>
             <button class="select-mode" title="Pick several mods and download them in one go">Select several</button>
           </div>
           <div id="nexus-grid" class="mod-grid"></div>
           <div id="nexus-pager" class="row hidden">
+            <button id="nexus-first" title="First page">«</button>
             <button id="nexus-prev">Previous</button>
+            <span class="muted">Page</span>
+            <input id="nexus-page-input" class="page-input" type="number" min="1" step="1" aria-label="Page number">
             <span id="nexus-page" class="muted"></span>
             <button id="nexus-next">Next</button>
+            <button id="nexus-last" title="Last page">»</button>
           </div>
         </div>
         <div id="nexus-result" class="hidden"></div>
@@ -319,6 +404,13 @@
       <div class="card">
         <h3>Nexus browsing</h3>
         <label class="check"><input type="checkbox" id="show-adult"> Show mods marked as adult content</label>
+        <label class="check"><input type="checkbox" id="nexus-debug-mode"> Debug mode: show every Nexus API request in Get Mods</label>
+        <p class="muted">Pages and searches you open are saved for a week, so they show at once (and still open when Nexus can't be reached).
+           Lists count as fresh for 5 minutes and mod pages for 10; use Refresh to ask Nexus sooner.</p>
+        <div class="row">
+          <span id="nexus-cache-info" class="muted"></span>
+          <button id="nexus-cache-clear">Clear saved pages</button>
+        </div>
       </div>
       <div class="card">
         <h3>Nexus account</h3>
@@ -369,6 +461,7 @@
 
   <div id="toast" class="hidden"></div>
   <script src="app.js"></script>
+  <script src="modpacks.js"></script>
   <script src="graph.js"></script>
 </body>
 </html>
