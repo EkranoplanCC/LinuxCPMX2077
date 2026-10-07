@@ -263,6 +263,10 @@ pub struct Collection {
     /// Files hosted outside Nexus, which the user has to fetch by hand.
     pub external: Vec<String>,
     pub page_url: String,
+    /// What the author says changed in this revision.
+    pub changelog: Option<String>,
+    /// Only ever a `https://media.nexusmods.com/` URL.
+    pub image: Option<String>,
 }
 
 pub fn collection_page_url(slug: &str) -> String {
@@ -273,7 +277,8 @@ const COLLECTION_QUERY: &str = "query CollectionRevision($slug: String!, $domain
   collectionRevision(slug: $slug, domainName: $domain, revision: $revision, viewAdultContent: true) {
     revisionNumber
     gameVersions { reference }
-    collection { name summary user { name } }
+    collectionChangelog { description }
+    collection { name summary user { name } tileImage { url } }
     modFiles { fileId optional file { fileId name version mod { modId name } } }
     externalResources { name }
   }
@@ -323,7 +328,188 @@ fn collection_from_graphql(slug: &str, data: &Value) -> Result<Collection> {
             .map(|a| a.iter().filter_map(|r| text(r.get("name"), 200)).collect())
             .unwrap_or_default(),
         page_url: collection_page_url(slug),
+        changelog: text(rev.pointer("/collectionChangelog/description"), 2000),
+        image: safe_image(coll.and_then(|c| c.pointer("/tileImage/url")).and_then(Value::as_str)),
     })
+}
+
+/// One collection in a browse or search result.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CollectionCard {
+    pub slug: String,
+    pub name: String,
+    pub author: Option<String>,
+    pub summary: Option<String>,
+    pub category: Option<String>,
+    pub endorsements: Option<i64>,
+    pub downloads: Option<i64>,
+    /// Latest published revision.
+    pub revision: Option<u32>,
+    pub mod_count: Option<i64>,
+    pub total_size: Option<u64>,
+    pub game_version: Option<String>,
+    pub updated: Option<i64>,
+    pub adult: bool,
+    /// Only ever a `https://media.nexusmods.com/` URL.
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CollectionPage {
+    pub collections: Vec<CollectionCard>,
+    pub total: Option<i64>,
+    pub offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionSort {
+    #[default]
+    Endorsements,
+    Downloads,
+    Rating,
+    Updated,
+    Created,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CollectionSearch {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub sort: CollectionSort,
+    #[serde(default)]
+    pub offset: u32,
+    #[serde(default)]
+    pub count: u32,
+}
+
+const COLLECTIONS_QUERY: &str = "query BrowseCollections($filter: CollectionsSearchFilter, $sort: [CollectionsSearchSort!], $offset: Int, $count: Int) {
+  collectionsV2(filter: $filter, sort: $sort, offset: $offset, count: $count) {
+    totalCount
+    nodes {
+      slug name summary endorsements totalDownloads updatedAt
+      user { name }
+      category { name }
+      tileImage { url }
+      latestPublishedRevision { revisionNumber modCount totalSize adultContent gameVersions { reference } }
+    }
+  }
+}";
+
+/// Variables for [`COLLECTIONS_QUERY`]. Adult collections are filtered out by
+/// Nexus unless the user opted in.
+pub fn collection_variables(q: &CollectionSearch, include_adult: bool) -> Value {
+    let mut filter = json!({ "gameDomain": [{ "value": NEXUS_GAME_DOMAIN, "op": "EQUALS" }] });
+    let text = clean_query(&q.text);
+    if !text.is_empty() {
+        // Nexus' general search over name, summary and author; a contains match.
+        filter["generalSearch"] = json!([{ "value": text, "op": "WILDCARD" }]);
+    }
+    if !include_adult {
+        filter["adultContent"] = json!([{ "value": false, "op": "EQUALS" }]);
+    }
+    let key = match q.sort {
+        CollectionSort::Endorsements => "endorsements",
+        CollectionSort::Downloads => "downloads",
+        CollectionSort::Rating => "rating",
+        CollectionSort::Updated => "updatedAt",
+        CollectionSort::Created => "createdAt",
+    };
+    let count = if q.count == 0 { DEFAULT_PAGE } else { q.count.min(MAX_PAGE) };
+    json!({
+        "filter": filter,
+        "sort": [{ key: { "direction": "DESC" } }],
+        "offset": q.offset.min(MAX_OFFSET),
+        "count": count,
+    })
+}
+
+fn collection_card(n: &Value) -> Option<CollectionCard> {
+    let slug = n.get("slug").and_then(Value::as_str).filter(|s| is_collection_slug(s))?.to_ascii_lowercase();
+    let text = |p: &str, max: usize| clean_line(n.pointer(p).and_then(Value::as_str), max);
+    let rev = n.get("latestPublishedRevision").filter(|r| !r.is_null());
+    // BigInt sizes come back as strings.
+    let big = |v: Option<&Value>| v.and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()));
+    Some(CollectionCard {
+        name: text("/name", 200).unwrap_or_else(|| slug.clone()),
+        author: text("/user/name", 100),
+        summary: text("/summary", 1000),
+        category: text("/category/name", 100),
+        endorsements: n.get("endorsements").and_then(Value::as_i64),
+        downloads: n.get("totalDownloads").and_then(Value::as_i64),
+        revision: rev.and_then(|r| r.get("revisionNumber")).and_then(Value::as_u64).map(|r| r as u32),
+        mod_count: rev.and_then(|r| r.get("modCount")).and_then(Value::as_i64),
+        total_size: big(rev.and_then(|r| r.get("totalSize"))),
+        game_version: clean_line(rev.and_then(|r| r.pointer("/gameVersions/0/reference")).and_then(Value::as_str), 50),
+        updated: n.get("updatedAt").and_then(Value::as_str).and_then(parse_time),
+        adult: rev.and_then(|r| r.get("adultContent")).and_then(Value::as_bool).unwrap_or(false),
+        image: safe_image(n.pointer("/tileImage/url").and_then(Value::as_str)),
+        slug,
+    })
+}
+
+/// Something a mod needs, as its author listed it on Nexus.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListedRequirement {
+    /// The Nexus mod, for requirements hosted on Nexus (this game only).
+    pub mod_id: Option<i64>,
+    pub name: String,
+    /// The author's note, e.g. "only for the ArchiveXL version".
+    pub notes: Option<String>,
+    /// A link for requirements hosted elsewhere.
+    pub url: Option<String>,
+    /// A game expansion (Phantom Liberty) rather than a mod.
+    pub dlc: bool,
+}
+
+const REQUIREMENTS_QUERY: &str = "query Requirements($ids: [CompositeDomainWithIdInput!]!, $count: Int) {
+  legacyModsByDomain(ids: $ids, count: $count) {
+    nodes {
+      modId
+      modRequirements {
+        nexusRequirements { nodes { modId modName url notes externalRequirement gameId } }
+        dlcRequirements { gameExpansion { name } }
+      }
+    }
+  }
+}";
+
+/// Mods per requirements request.
+const REQUIREMENTS_BATCH: usize = 50;
+
+fn batch_requirements_from_graphql(data: &Value) -> Vec<(i64, Vec<ListedRequirement>)> {
+    let nodes = data.pointer("/legacyModsByDomain/nodes").and_then(Value::as_array).cloned().unwrap_or_default();
+    nodes
+        .iter()
+        .filter_map(|n| {
+            let id = n.get("modId").and_then(as_id)?;
+            let reqs = n.get("modRequirements").filter(|r| !r.is_null());
+            let mut out: Vec<ListedRequirement> = Vec::new();
+            for r in reqs.and_then(|r| r.pointer("/nexusRequirements/nodes")).and_then(Value::as_array).into_iter().flatten() {
+                let external = r.get("externalRequirement").and_then(Value::as_bool).unwrap_or(false);
+                let same_game = r.get("gameId").and_then(as_id) == Some(NEXUS_GAME_ID);
+                let mod_id = if external || !same_game { None } else { r.get("modId").and_then(as_id).filter(|m| *m != id) };
+                let url = clean_line(r.get("url").and_then(Value::as_str), 500)
+                    .filter(|u| url::Url::parse(u).is_ok_and(|u| u.scheme() == "https" || u.scheme() == "http"));
+                let Some(name) = clean_line(r.get("modName").and_then(Value::as_str), 200) else { continue };
+                if mod_id.is_none() && url.is_none() && !external {
+                    // Another game's mod with no link: nothing to act on.
+                    continue;
+                }
+                if mod_id.is_some_and(|m| out.iter().any(|o| o.mod_id == Some(m))) {
+                    continue;
+                }
+                out.push(ListedRequirement { mod_id, name, notes: clean_line(r.get("notes").and_then(Value::as_str), 500), url, dlc: false });
+            }
+            for d in reqs.and_then(|r| r.get("dlcRequirements")).and_then(Value::as_array).into_iter().flatten() {
+                if let Some(name) = clean_line(d.pointer("/gameExpansion/name").and_then(Value::as_str), 100) {
+                    out.push(ListedRequirement { mod_id: None, name, notes: None, url: None, dlc: true });
+                }
+            }
+            Some((id, out))
+        })
+        .collect()
 }
 
 /// GraphQL ids come back as numbers or strings depending on the field.
@@ -331,10 +517,11 @@ fn as_id(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str()?.parse().ok()).filter(|i| *i > 0)
 }
 
-/// The UI's content security policy only allows images from this host.
+/// The UI's content security policy only allows images from these hosts.
 fn safe_image(u: Option<&str>) -> Option<String> {
     let url = url::Url::parse(u?.trim()).ok()?;
-    (url.scheme() == "https" && url.host_str() == Some("staticdelivery.nexusmods.com")).then(|| url.to_string())
+    let host = url.host_str()?;
+    (url.scheme() == "https" && (host == "staticdelivery.nexusmods.com" || host == "media.nexusmods.com")).then(|| url.to_string())
 }
 
 fn clean_line(s: Option<&str>, max: usize) -> Option<String> {
@@ -611,6 +798,32 @@ impl Client {
         }
         let vars = json!({ "slug": slug, "domain": NEXUS_GAME_DOMAIN, "revision": revision });
         collection_from_graphql(slug, &self.graphql(COLLECTION_QUERY, vars, false)?.value)
+    }
+
+    /// Search or list the game's collections (cached briefly).
+    pub fn search_collections(&self, q: &CollectionSearch, include_adult: bool) -> Result<CollectionPage> {
+        let data = self.graphql(COLLECTIONS_QUERY, collection_variables(q, include_adult), false)?.value;
+        let nodes = data.pointer("/collectionsV2/nodes").and_then(Value::as_array).cloned().unwrap_or_default();
+        Ok(CollectionPage {
+            collections: nodes.iter().filter_map(collection_card).collect(),
+            total: data.pointer("/collectionsV2/totalCount").and_then(Value::as_i64),
+            offset: q.offset.min(MAX_OFFSET),
+        })
+    }
+
+    /// What each of `mod_ids` needs according to its Nexus page, in batches.
+    /// Mods Nexus doesn't know are left out.
+    pub fn requirements(&self, mod_ids: &[i64]) -> Result<Vec<(i64, Vec<ListedRequirement>)>> {
+        let mut ids: Vec<i64> = mod_ids.iter().copied().filter(|i| *i > 0).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let mut out = Vec::new();
+        for chunk in ids.chunks(REQUIREMENTS_BATCH) {
+            let list: Vec<Value> = chunk.iter().map(|i| json!({ "gameDomain": NEXUS_GAME_DOMAIN, "modId": i })).collect();
+            let data = self.graphql(REQUIREMENTS_QUERY, json!({ "ids": list, "count": chunk.len() }), false)?.value;
+            out.extend(batch_requirements_from_graphql(&data));
+        }
+        Ok(out)
     }
 
     /// Mod page, file list, requirements and tags, for browsing (cached).
@@ -1191,7 +1404,9 @@ mod tests {
     #[test]
     fn reads_a_collection_revision() {
         let body = r#"{"data":{"collectionRevision":{"revisionNumber":12,"gameVersions":[{"reference":"2.31"}],
-            "collection":{"name":"Night City Overhaul","summary":"Many mods","user":{"name":"someone"}},
+            "collectionChangelog":{"description":"Updated CET"},
+            "collection":{"name":"Night City Overhaul","summary":"Many mods","user":{"name":"someone"},
+              "tileImage":{"url":"https://media.nexusmods.com/a/8/x.webp"}},
             "modFiles":[
               {"fileId":"1001","optional":false,"file":{"fileId":1001,"name":"Main file","version":"1.37.1","mod":{"modId":107,"name":"Cyber Engine Tweaks"}}},
               {"fileId":2002,"optional":true,"file":{"fileId":2002,"name":"Extra","version":null,"mod":{"modId":"4198","name":"Some Mod"}}},
@@ -1206,6 +1421,8 @@ mod tests {
         assert_eq!((c.mods[0].mod_id, c.mods[0].file_id, c.mods[0].optional), (107, 1001, false));
         assert_eq!((c.mods[1].mod_id, c.mods[1].optional), (4198, true));
         assert_eq!(c.external, vec!["Off-site texture pack".to_string()]);
+        assert_eq!(c.changelog.as_deref(), Some("Updated CET"));
+        assert_eq!(c.image.as_deref(), Some("https://media.nexusmods.com/a/8/x.webp"));
         let req = seen.lock().unwrap()[0].body.clone();
         let req: Value = serde_json::from_str(&req).unwrap();
         assert_eq!(req["variables"]["slug"], "rcwfx9");
@@ -1220,5 +1437,68 @@ mod tests {
     #[test]
     fn page_urls() {
         assert_eq!(mod_page_url(107, Some(5)), "https://www.nexusmods.com/cyberpunk2077/mods/107?tab=files&file_id=5");
+    }
+
+    #[test]
+    fn searches_collections() {
+        // Shape as returned live by collectionsV2 (2026-10-07).
+        let body = r#"{"data":{"collectionsV2":{"totalCount":70,"nodes":[
+            {"slug":"l8bhvl","name":"Blood & Chrome","summary":"Big","endorsements":60,"totalDownloads":6530,
+             "updatedAt":"2026-10-07T05:40:05Z","user":{"name":"WesternInfluence"},"category":{"name":"Total Overhaul"},
+             "tileImage":{"url":"https://media.nexusmods.com/2/e/2e0d.webp"},
+             "latestPublishedRevision":{"revisionNumber":7,"modCount":837,"totalSize":"15482852695","adultContent":true,
+               "gameVersions":[{"reference":"2.3.1.0"}]}},
+            {"slug":"../bad","name":"x"},
+            {"slug":"yeyneq","name":"Driving","tileImage":{"url":"https://evil.example/x.png"},"latestPublishedRevision":null}]}}}"#;
+        let (addr, seen) = serve(vec![("/v2/graphql", 200, vec![], body.into())]);
+        let q = CollectionSearch { text: " car\u{7} ".into(), sort: CollectionSort::Downloads, offset: 20, count: 999 };
+        let p = client(&addr).search_collections(&q, false).unwrap();
+        assert_eq!(p.total, Some(70));
+        assert_eq!(p.collections.len(), 2, "bad slugs are dropped");
+        let c = &p.collections[0];
+        assert_eq!((c.slug.as_str(), c.revision, c.mod_count, c.total_size), ("l8bhvl", Some(7), Some(837), Some(15482852695)));
+        assert_eq!(c.game_version.as_deref(), Some("2.3.1.0"));
+        assert!(c.adult);
+        assert_eq!(p.collections[1].image, None, "only Nexus image hosts");
+        let body: Value = serde_json::from_str(&seen.lock().unwrap()[0].body).unwrap();
+        let v = &body["variables"];
+        assert_eq!(v["filter"]["generalSearch"][0]["value"], "car");
+        assert_eq!(v["filter"]["adultContent"][0]["value"], false);
+        assert_eq!(v["sort"][0]["downloads"]["direction"], "DESC");
+        assert_eq!((v["offset"].as_u64(), v["count"].as_u64()), (Some(20), Some(MAX_PAGE as u64)));
+        assert!(collection_variables(&CollectionSearch::default(), true)["filter"].get("adultContent").is_none());
+    }
+
+    #[test]
+    fn reads_requirements_in_batches() {
+        // Shape as returned live by legacyModsByDomain (2026-10-07).
+        let body = r#"{"data":{"legacyModsByDomain":{"nodes":[
+            {"modId":4198,"modRequirements":{"nexusRequirements":{"nodes":[
+                {"modId":"2380","modName":"RED4ext","url":"","notes":"","externalRequirement":false,"gameId":"3333"},
+                {"modId":"2380","modName":"RED4ext again","url":"","notes":"","externalRequirement":false,"gameId":"3333"},
+                {"modId":"4198","modName":"itself","url":"","notes":"","externalRequirement":false,"gameId":"3333"},
+                {"modId":"0","modName":"Wolvenkit","url":"https://wiki.redmodding.org/","notes":"for modders","externalRequirement":true,"gameId":"3333"},
+                {"modId":"55","modName":"Skyrim thing","url":"","notes":"","externalRequirement":false,"gameId":"110"},
+                {"modId":"0","modName":"Bad link","url":"javascript:alert(1)","notes":"","externalRequirement":true,"gameId":"3333"}]},
+              "dlcRequirements":[{"gameExpansion":{"name":"Phantom Liberty"}}]}},
+            {"modId":107,"modRequirements":{"nexusRequirements":{"nodes":[]},"dlcRequirements":[]}}]}}}"#;
+        let (addr, seen) = serve(vec![("/v2/graphql", 200, vec![], body.into())]);
+        let ids: Vec<i64> = (1..=60).chain([4198, 107, 107, -1]).collect();
+        let r = client(&addr).requirements(&ids).unwrap();
+        let axl = &r.iter().find(|(id, _)| *id == 4198).unwrap().1;
+        let names: Vec<&str> = axl.iter().map(|q| q.name.as_str()).collect();
+        assert_eq!(names, ["RED4ext", "Wolvenkit", "Bad link", "Phantom Liberty"]);
+        assert_eq!(axl[0].mod_id, Some(2380));
+        assert_eq!((axl[1].mod_id, axl[1].url.as_deref(), axl[1].notes.as_deref()), (None, Some("https://wiki.redmodding.org/"), Some("for modders")));
+        assert_eq!(axl[2].url, None, "only http(s) links");
+        assert!(axl[3].dlc);
+        assert!(r.iter().any(|(id, l)| *id == 107 && l.is_empty()));
+        // 62 distinct ids: two requests of at most 50.
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        let first: Value = serde_json::from_str(&seen[0].body).unwrap();
+        assert_eq!(first["variables"]["ids"].as_array().unwrap().len(), 50);
+        assert_eq!(first["variables"]["count"], 50);
+        assert_eq!(first["variables"]["ids"][0]["gameDomain"], "cyberpunk2077");
     }
 }

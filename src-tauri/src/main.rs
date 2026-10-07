@@ -24,6 +24,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
+mod modpacks_cmd;
+
 struct AppState {
     db: Mutex<Db>,
     /// Archives extracted and waiting for the user's FOMOD choices.
@@ -1346,6 +1348,20 @@ fn main() {
             source_download,
             check_updates,
             startup_links,
+            modpacks_cmd::nexus_collections,
+            modpacks_cmd::tracked_collections,
+            modpacks_cmd::check_collection_updates,
+            modpacks_cmd::collection_view,
+            modpacks_cmd::track_collection,
+            modpacks_cmd::untrack_collection,
+            modpacks_cmd::custom_categories,
+            modpacks_cmd::add_custom_category,
+            modpacks_cmd::edit_custom_category,
+            modpacks_cmd::delete_custom_category,
+            modpacks_cmd::set_mod_custom_category,
+            modpacks_cmd::export_modlist,
+            modpacks_cmd::import_modlist,
+            modpacks_cmd::mod_dependencies,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

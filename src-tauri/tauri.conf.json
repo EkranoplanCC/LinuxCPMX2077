@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://staticdelivery.nexusmods.com; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://staticdelivery.nexusmods.com https://media.nexusmods.com; connect-src ipc: http://ipc.localhost"
     }
   },
   "plugins": {
