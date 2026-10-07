@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::Result;
 use crate::db::{Db, ModRow};
-use crate::nexus_browse::Requirement;
+use crate::nexus_browse::ListedRequirement;
 
 /// Core frameworks: key in `game::detect_frameworks`, display name, Nexus
 /// mod id, GitHub repository.
@@ -227,7 +227,7 @@ fn now() -> i64 {
 }
 
 /// Nexus mod id -> what its page lists.
-pub type Requirements = HashMap<i64, Vec<Requirement>>;
+pub type Requirements = HashMap<i64, Vec<ListedRequirement>>;
 
 /// Stored requirements for `ids`, and the ids that need fetching (never
 /// fetched, or older than the TTL).
@@ -239,7 +239,7 @@ pub fn cached_requirements(db: &Db, ids: &[i64]) -> Result<(Requirements, Vec<i6
         let row: Option<(String, i64)> = st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
         match row {
             Some((json, at)) => {
-                if let Ok(list) = serde_json::from_str::<Vec<Requirement>>(&json) {
+                if let Ok(list) = serde_json::from_str::<Vec<ListedRequirement>>(&json) {
                     have.insert(id, list);
                 }
                 if now() - at > REQUIREMENTS_TTL_SECS {
@@ -252,7 +252,7 @@ pub fn cached_requirements(db: &Db, ids: &[i64]) -> Result<(Requirements, Vec<i6
     Ok((have, stale))
 }
 
-pub fn store_requirements(db: &Db, id: i64, list: &[Requirement]) -> Result<()> {
+pub fn store_requirements(db: &Db, id: i64, list: &[ListedRequirement]) -> Result<()> {
     db.conn.execute(
         "INSERT INTO nexus_requirements (nexus_mod_id, requirements, fetched_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(nexus_mod_id) DO UPDATE SET requirements = excluded.requirements, fetched_at = excluded.fetched_at",
@@ -288,8 +288,8 @@ mod tests {
         }
     }
 
-    fn req(mod_id: Option<i64>, name: &str) -> Requirement {
-        Requirement { mod_id, name: name.into(), notes: None, url: None, dlc: false }
+    fn req(mod_id: Option<i64>, name: &str) -> ListedRequirement {
+        ListedRequirement { mod_id, name: name.into(), notes: None, url: None, dlc: false }
     }
 
     #[test]
@@ -305,8 +305,8 @@ mod tests {
             req(Some(4198), "ArchiveXL"),
             req(Some(790), "AMM"),
             req(Some(9999), "Some Library"),
-            Requirement { mod_id: None, name: "Blender".into(), notes: None, url: Some("https://blender.org".into()), dlc: false },
-            Requirement { mod_id: None, name: "Phantom Liberty".into(), notes: None, url: None, dlc: true },
+            ListedRequirement { mod_id: None, name: "Blender".into(), notes: None, url: Some("https://blender.org".into()), dlc: false },
+            ListedRequirement { mod_id: None, name: "Phantom Liberty".into(), notes: None, url: None, dlc: true },
         ]);
         let mut detected = HashMap::new();
         detected.insert(1, BTreeSet::from(["archivexl".to_string(), "tweakxl".to_string()]));

@@ -440,6 +440,46 @@ pub struct Finding {
     pub key: String,
     pub mod_ids: Vec<i64>,
     pub message: String,
+    /// Exactly what the finding covers, for the "show what's affected" list.
+    pub affected: Vec<Affected>,
+}
+
+/// One group in an expandable "what's affected" list: a mod or file and the
+/// things it touches there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Affected {
+    pub title: String,
+    pub items: Vec<String>,
+    /// Items left out past [`AFFECTED_CAP`].
+    pub more: usize,
+}
+
+/// Most items listed per group; a texture pack can replace tens of thousands
+/// of resources.
+pub const AFFECTED_CAP: usize = 2000;
+
+impl Affected {
+    pub fn new(title: impl Into<String>, items: impl IntoIterator<Item = String>) -> Affected {
+        let mut items: Vec<String> = items.into_iter().collect();
+        let more = items.len().saturating_sub(AFFECTED_CAP);
+        items.truncate(AFFECTED_CAP);
+        Affected { title: title.into(), items, more }
+    }
+}
+
+/// How a resource is listed: archives only store the FNV-1a hash of each
+/// path, shown in decimal as WolvenKit and the modding wiki tools do.
+fn resource_item(key: &str) -> String {
+    u64::from_str_radix(key, 16).map(|h| h.to_string()).unwrap_or_else(|_| key.to_string())
+}
+
+/// Resource keys grouped by the archive file they come from.
+fn resources_by_file<'a>(touches: impl IntoIterator<Item = &'a Touch>) -> Vec<Affected> {
+    let mut by_file: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for t in touches {
+        by_file.entry(&t.file).or_default().push(resource_item(&t.key));
+    }
+    by_file.into_iter().map(|(f, items)| Affected::new(f, items)).collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -496,6 +536,8 @@ pub struct Edge {
     pub weight: usize,
     pub conflict: bool,
     pub detail: Vec<String>,
+    /// The full list behind `detail` when it is only a summary (resources).
+    pub affected: Vec<Affected>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -530,6 +572,7 @@ pub fn build_graph(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks
         m
     };
     let mut resource_owners: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
+    let mut resource_touch: HashMap<(i64, &str), &Touch> = HashMap::new();
 
     for m in mods {
         let mid = format!("mod:{}", m.mod_id);
@@ -537,7 +580,7 @@ pub fn build_graph(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks
         // (target id) -> (label, detail, conflict)
         let mut edges: BTreeMap<(String, String), (BTreeSet<String>, bool)> = BTreeMap::new();
         let mut solo_records: BTreeSet<String> = BTreeSet::new();
-        let mut base_count = 0usize;
+        let mut base_touches: Vec<&Touch> = Vec::new();
         for t in m.touches {
             let conflict = conflict_keys.contains(&(t.kind, t.key.clone()));
             let (target, label, detail) = match t.kind {
@@ -578,9 +621,10 @@ pub fn build_graph(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks
                 }
                 Kind::Resource => {
                     if u64::from_str_radix(&t.key, 16).is_ok_and(|h| base.contains(&h)) {
-                        base_count += 1;
+                        base_touches.push(t);
                     }
                     resource_owners.entry(t.key.clone()).or_default().insert(m.mod_id);
+                    resource_touch.entry((m.mod_id, t.key.as_str())).or_insert(t);
                     continue;
                 }
                 Kind::Red4extPlugin => continue,
@@ -592,29 +636,48 @@ pub fn build_graph(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks
             e.1 |= conflict;
         }
         for ((to, label), (detail, conflict)) in edges {
-            g.edges.push(Edge { from: mid.clone(), to, label, weight: detail.len().max(1), conflict, detail: detail.into_iter().collect() });
+            g.edges.push(Edge { from: mid.clone(), to, label, weight: detail.len().max(1), conflict, detail: detail.into_iter().collect(), affected: vec![] });
         }
         if !solo_records.is_empty() {
             let id = format!("recs:{}", m.mod_id);
             add_node(&mut g, id.clone(), format!("{} tweak records", solo_records.len()), NodeType::Records, None, false);
-            let detail: Vec<String> = solo_records.into_iter().take(200).collect();
-            g.edges.push(Edge { from: mid.clone(), to: id, label: "tweaks".into(), weight: detail.len(), conflict: false, detail });
+            let detail: Vec<String> = solo_records.into_iter().collect();
+            g.edges.push(Edge { from: mid.clone(), to: id, label: "tweaks".into(), weight: detail.len(), conflict: false, detail, affected: vec![] });
         }
-        if base_count > 0 {
+        if !base_touches.is_empty() {
+            let n = base_touches.len();
             add_node(&mut g, "base".into(), "Base game".into(), NodeType::BaseGame, None, false);
-            g.edges.push(Edge { from: mid.clone(), to: "base".into(), label: "overrides resources".into(), weight: base_count, conflict: false, detail: vec![format!("{base_count} base-game resources replaced")] });
+            g.edges.push(Edge {
+                from: mid.clone(),
+                to: "base".into(),
+                label: "overrides resources".into(),
+                weight: n,
+                conflict: false,
+                detail: vec![format!("{n} base-game resource{} replaced", if n == 1 { "" } else { "s" })],
+                affected: resources_by_file(base_touches),
+            });
         }
     }
     // Resources shared by the same set of mods become one node.
-    let mut shared: BTreeMap<Vec<i64>, usize> = BTreeMap::new();
-    for owners in resource_owners.values().filter(|o| o.len() > 1) {
-        *shared.entry(owners.iter().copied().collect()).or_default() += 1;
+    let mut shared: BTreeMap<Vec<i64>, Vec<&str>> = BTreeMap::new();
+    for (key, owners) in resource_owners.iter().filter(|(_, o)| o.len() > 1) {
+        shared.entry(owners.iter().copied().collect()).or_default().push(key);
     }
-    for (i, (owners, count)) in shared.into_iter().enumerate() {
+    for (i, (owners, keys)) in shared.into_iter().enumerate() {
         let id = format!("res:{i}");
-        add_node(&mut g, id.clone(), format!("{count} shared resources"), NodeType::SharedResources, None, false);
+        let count = keys.len();
+        add_node(&mut g, id.clone(), format!("{count} shared resource{}", if count == 1 { "" } else { "s" }), NodeType::SharedResources, None, false);
         for o in owners {
-            g.edges.push(Edge { from: format!("mod:{o}"), to: id.clone(), label: "replaces".into(), weight: count, conflict: true, detail: vec![] });
+            let touches = keys.iter().filter_map(|k| resource_touch.get(&(o, *k)).copied());
+            g.edges.push(Edge {
+                from: format!("mod:{o}"),
+                to: id.clone(),
+                label: "replaces".into(),
+                weight: count,
+                conflict: true,
+                detail: vec![format!("{count} resource{} another mod also replaces", if count == 1 { "" } else { "s" })],
+                affected: resources_by_file(touches),
+            });
         }
     }
     g
@@ -667,10 +730,14 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
         }
     };
     let all = |ids: &[(i64, String)]| if ids.len() == 2 { "both" } else { "all" };
+    // Each mod and the file it does it in.
+    let per_mod = |ids: &[(i64, String)]| -> Vec<Affected> { ids.iter().map(|(id, f)| Affected::new(names[id], [f.clone()])).collect() };
 
     // Resources: group shared hashes per set of mods so a texture pack
     // overlapping another doesn't produce thousands of lines.
-    let mut shared_resources: BTreeMap<Vec<i64>, (usize, Vec<String>)> = BTreeMap::new();
+    // (mods) -> (count, files, (mod, file) -> resources)
+    type Shared = (usize, Vec<String>, BTreeMap<(i64, String), Vec<String>>);
+    let mut shared_resources: BTreeMap<Vec<i64>, Shared> = BTreeMap::new();
     for ((kind, key), owners) in &by_key {
         if owners.len() < 2 {
             continue;
@@ -680,16 +747,18 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
             Kind::Resource => {
                 let e = shared_resources.entry(ids).or_default();
                 e.0 += 1;
-                for (_, f) in owners {
+                for (id, f) in owners {
                     if !e.1.contains(f) {
                         e.1.push(f.clone());
                     }
+                    e.2.entry((*id, f.clone())).or_default().push(resource_item(key));
                 }
             }
             Kind::RedsReplaceMethod => findings.push(Finding {
                 severity: Severity::Error,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} replace {key}; only one replacement can win.", list(owners), all(owners)),
             }),
@@ -697,6 +766,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Error,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} each add {key}; redscript will fail to compile with a duplicate definition.", list(owners)),
             }),
@@ -704,6 +774,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Error,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} replace the global function {key}.", list(owners), all(owners)),
             }),
@@ -711,6 +782,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Warning,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} Override {key} in CET; the last one loaded wins.", list(owners), all(owners)),
             }),
@@ -718,6 +790,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Warning,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} set {key}; the tweak loaded last decides the value.", list(owners), all(owners)),
             }),
@@ -725,6 +798,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Info,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} patch {key} with ArchiveXL; patches stack but can clash.", list(owners), all(owners)),
             }),
@@ -732,6 +806,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Info,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} {} hook {key}; hooks chain, so this is usually fine.", list(owners), all(owners)),
             }),
@@ -739,13 +814,14 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 severity: Severity::Error,
                 kind: *kind,
                 key: key.clone(),
+                affected: per_mod(owners),
                 mod_ids: ids,
                 message: format!("{} each ship the RED4ext plugin {key}; keep only one copy.", list(owners)),
             }),
             Kind::TweakRecord | Kind::Requires => {}
         }
     }
-    for (ids, (count, files)) in shared_resources {
+    for (ids, (count, files, groups)) in shared_resources {
         let owners: Vec<(i64, String)> = ids.iter().map(|i| (*i, String::new())).collect();
         // The game loads archive/pc/mod alphabetically; the first file
         // containing a resource wins.
@@ -756,6 +832,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
             severity: Severity::Warning,
             kind: Kind::Resource,
             key: format!("{count} resources"),
+            affected: groups.into_iter().map(|((id, f), items)| Affected::new(format!("{} · {f}", names[&id]), items)).collect(),
             mod_ids: ids,
             message: format!(
                 "{} {} replace the same {count} game resource{}; {winner} loads first and wins.",
@@ -788,10 +865,20 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
         }
         for req in &needed {
             if !installed_frameworks.contains(req) {
+                // The files that need it; RED4ext is needed through the
+                // frameworks that run on it.
+                let via: Vec<&str> = if requires.contains(req) { vec![req.as_str()] } else { vec!["archivexl", "tweakxl", "codeware"] };
+                let files: BTreeSet<String> = m
+                    .touches
+                    .iter()
+                    .filter(|t| t.kind == Kind::Requires && via.contains(&t.key.as_str()))
+                    .map(|t| if requires.contains(req) { t.file.clone() } else { format!("{} (through {})", t.file, framework_name(&t.key)) })
+                    .collect();
                 findings.push(Finding {
                     severity: Severity::Error,
                     kind: Kind::Requires,
                     key: req.clone(),
+                    affected: vec![Affected::new(m.name, files)],
                     mod_ids: vec![m.mod_id],
                     message: format!("{} needs {}, which isn't installed.", m.name, framework_name(req)),
                 });
@@ -998,5 +1085,43 @@ protected cb func OnAction(action: ListenerAction) -> Bool { return true; }
         let replace = g.edges.iter().find(|e| e.from == "mod:1" && e.to == "class:PlayerPuppet").unwrap();
         assert!(replace.conflict && replace.label == "replaces" && replace.detail == vec!["OnAction".to_string()]);
         assert!(g.edges.iter().all(|e| has(&e.to) && has(&e.from)), "no dangling edges");
+    }
+
+    #[test]
+    fn lists_exactly_what_is_affected() {
+        let t = |kind, key: &str, file: &str| Touch { kind, key: key.into(), file: file.into() };
+        let a = vec![
+            t(Kind::Requires, "tweakxl", "r6/tweaks/a.yaml"),
+            t(Kind::Resource, "00000000000000aa", "archive/pc/mod/a1.archive"),
+            t(Kind::Resource, "00000000000000bb", "archive/pc/mod/a2.archive"),
+            t(Kind::Resource, "00000000000000cc", "archive/pc/mod/a2.archive"),
+        ];
+        let b = vec![t(Kind::Resource, "00000000000000cc", "archive/pc/mod/b.archive")];
+        let mods = [ModIndex { mod_id: 1, name: "A", touches: &a }, ModIndex { mod_id: 2, name: "B", touches: &b }];
+        let base: BTreeSet<u64> = [0xaa, 0xbb].into_iter().collect();
+        let r = analyze(&mods, &base, &BTreeSet::new());
+
+        // Base-game overrides, per archive, as decimal hashes.
+        let e = r.graph.edges.iter().find(|e| e.from == "mod:1" && e.to == "base").unwrap();
+        assert_eq!(e.detail, vec!["2 base-game resources replaced".to_string()]);
+        assert_eq!(e.affected, vec![
+            Affected { title: "archive/pc/mod/a1.archive".into(), items: vec!["170".into()], more: 0 },
+            Affected { title: "archive/pc/mod/a2.archive".into(), items: vec!["187".into()], more: 0 },
+        ]);
+        // The shared resource, from each side.
+        let shared = r.findings.iter().find(|f| f.kind == Kind::Resource).unwrap();
+        let titles: Vec<&str> = shared.affected.iter().map(|a| a.title.as_str()).collect();
+        assert_eq!(titles, ["A · archive/pc/mod/a2.archive", "B · archive/pc/mod/b.archive"]);
+        assert!(shared.affected.iter().all(|a| a.items == ["204"]));
+        let e = r.graph.edges.iter().find(|e| e.from == "mod:2" && e.to.starts_with("res:")).unwrap();
+        assert_eq!(e.affected[0].items, ["204"]);
+        // Missing frameworks name the files that need them.
+        let tx = r.findings.iter().find(|f| f.key == "tweakxl").unwrap();
+        assert_eq!(tx.affected[0].items, ["r6/tweaks/a.yaml"]);
+        let rx = r.findings.iter().find(|f| f.key == "red4ext").unwrap();
+        assert_eq!(rx.affected[0].items, ["r6/tweaks/a.yaml (through TweakXL)"]);
+
+        let big = Affected::new("x", (0..AFFECTED_CAP + 5).map(|i| i.to_string()));
+        assert_eq!((big.items.len(), big.more), (AFFECTED_CAP, 5));
     }
 }

@@ -10,6 +10,12 @@ pub fn data_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// `~/.cache/cp2077-modmanager/nexus`: saved Nexus pages and searches.
+pub fn nexus_cache_dir() -> Result<PathBuf> {
+    let base = dirs::cache_dir().ok_or_else(|| Error::Other("no XDG cache dir".into()))?;
+    Ok(base.join(APP_NAME).join("nexus"))
+}
+
 pub fn db_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("library.sqlite3"))
 }

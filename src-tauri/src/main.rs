@@ -13,7 +13,8 @@ use cp2077mm_core::game::{self, GameInstall};
 use cp2077mm_core::fomod;
 use cp2077mm_core::install::{EnableReport, FomodInfo, InstallOptions, InstallReport, Installer, Prepared, VerifyReport, resolve_ci};
 use cp2077mm_core::nexus::{self, NxmLink};
-use cp2077mm_core::nexus_browse::{self, Category, Collection, List, ModDetails, NexusRef, Page, Search};
+use cp2077mm_core::nexus_browse::{self, Category, Collection, ModDetails, NexusRef, Page, Search};
+use cp2077mm_core::nexus_cache::RequestRecord;
 use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
 use cp2077mm_core::linux_setup::{self, Check};
 use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, Location, MoveReport};
@@ -698,27 +699,63 @@ fn set_nexus_show_adult(state: State<'_, AppState>, show: bool) -> Result<()> {
     state.db.lock().unwrap().set_setting(SHOW_ADULT_SETTING, if show { "1" } else { "0" })
 }
 
-/// Nexus' curated lists: trending, latest added, latest updated.
-#[tauri::command]
-async fn nexus_browse_list(app: AppHandle, list: List) -> Result<Page> {
-    blocking(move || nexus_client()?.browse_list(list, show_adult(&app))).await
-}
-
 /// Nexus' mod categories, for the category filter.
 #[tauri::command]
 async fn nexus_categories() -> Result<Vec<Category>> {
     blocking(move || nexus_client()?.categories()).await
 }
 
-/// Name search and sorted lists (endorsements, downloads, dates), paged.
+/// Name search and every list (trending, latest, most endorsed...), paged.
 #[tauri::command]
 async fn nexus_search(app: AppHandle, query: Search) -> Result<Page> {
     blocking(move || nexus_client()?.search(&query, show_adult(&app))).await
 }
 
 #[tauri::command]
-async fn nexus_mod_details(mod_id: i64) -> Result<ModDetails> {
-    blocking(move || nexus_client()?.mod_details(mod_id)).await
+async fn nexus_mod_details(mod_id: i64, refresh: Option<bool>) -> Result<ModDetails> {
+    blocking(move || nexus_client()?.mod_details(mod_id, refresh.unwrap_or(false))).await
+}
+
+/// Nexus API requests made after the one with id `after`, for the debug view.
+#[tauri::command]
+fn nexus_requests(after: Option<u64>) -> Vec<RequestRecord> {
+    NEXUS.requests_since(after.unwrap_or(0))
+}
+
+#[tauri::command]
+fn nexus_clear_requests() {
+    NEXUS.clear_request_log();
+}
+
+#[derive(Serialize)]
+struct CacheInfo {
+    files: usize,
+    bytes: u64,
+}
+
+/// Saved Nexus pages and searches on disk.
+#[tauri::command]
+async fn nexus_cache_info() -> Result<CacheInfo> {
+    blocking(|| {
+        let (files, bytes) = NEXUS.cache_usage();
+        Ok(CacheInfo { files, bytes })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn nexus_clear_cache() -> Result<()> {
+    blocking(|| {
+        NEXUS.clear_cache();
+        Ok(())
+    })
+    .await
+}
+
+/// A link in a mod description, opened in the user's browser (https only).
+#[tauri::command]
+async fn open_web_link(url: String) -> Result<()> {
+    blocking(move || desktop::open_link(&url)).await
 }
 
 /// What a pasted Nexus link, id or collection nxm:// link points at.
@@ -1223,6 +1260,15 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { db: Mutex::new(db), pending: Mutex::new(HashMap::new()), sso_cancel: Mutex::new(None) })
         .setup(|app| {
+            // Nexus pages and searches are kept on disk between runs.
+            match paths::nexus_cache_dir() {
+                Ok(dir) => {
+                    if let Err(e) = NEXUS.set_cache_dir(dir) {
+                        log::warn!("Nexus cache folder unusable: {e}");
+                    }
+                }
+                Err(e) => log::warn!("no cache folder for Nexus pages: {e}"),
+            }
             // An updated AppImage lives at a new path: keep nxm links working.
             if let Ok(h) = home() {
                 let _ = desktop::refresh_nxm_entry(&h);
@@ -1274,10 +1320,14 @@ fn main() {
             nexus_download,
             nexus_show_adult,
             set_nexus_show_adult,
-            nexus_browse_list,
             nexus_search,
             nexus_categories,
             nexus_mod_details,
+            nexus_requests,
+            nexus_clear_requests,
+            nexus_cache_info,
+            nexus_clear_cache,
+            open_web_link,
             nexus_resolve,
             nexus_collection,
             nexus_open_collection,

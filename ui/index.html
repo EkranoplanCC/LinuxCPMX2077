@@ -155,12 +155,25 @@
         <header>
           <h3>How your mods connect</h3>
           <div class="row">
+            <label class="check">Layout
+              <select id="graph-layout">
+                <option value="force">Web</option>
+                <option value="flow">Flowchart (left to right)</option>
+              </select>
+            </label>
             <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
             <button id="graph-reset">Re-layout</button>
           </div>
         </header>
         <div id="graph-wrap">
           <canvas id="graph"></canvas>
+          <div id="graph-message" class="hidden"></div>
+          <div id="graph-controls" aria-label="Zoom">
+            <button id="graph-zoom-out" title="Zoom out">−</button>
+            <button id="graph-zoom" title="Zoom to 100%">100%</button>
+            <button id="graph-zoom-in" title="Zoom in">+</button>
+            <button id="graph-fit" title="Fit the whole graph in view">Fit</button>
+          </div>
           <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
           <div id="graph-legend"></div>
         </div>
@@ -232,35 +245,59 @@
             <input id="nexus-search" type="search" placeholder="Search Cyberpunk 2077 mods by name" maxlength="100">
             <select id="nexus-sort" class="inline">
               <option value="relevance">Best match</option>
+              <option value="trending">Trending</option>
               <option value="endorsements">Most endorsed</option>
               <option value="downloads">Most downloaded</option>
-              <option value="updated">Recently updated</option>
-              <option value="created">Newest</option>
+              <option value="updated">Latest updated</option>
+              <option value="created">Latest added</option>
             </select>
             <select id="nexus-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
             <button id="nexus-search-go" class="primary">Search</button>
           </div>
           <div class="row chips">
-            <button data-list="trending">Trending</button>
-            <button data-list="latest_added">Latest added</button>
-            <button data-list="latest_updated">Latest updated</button>
+            <button data-sort="trending" title="The most downloaded of the mods added in the last two weeks">Trending</button>
+            <button data-sort="created">Latest added</button>
+            <button data-sort="updated">Latest updated</button>
             <button data-sort="endorsements">Most endorsed</button>
             <button data-sort="downloads">Most downloaded</button>
             <span class="spacer"></span>
+            <label class="muted small">Mods per page
+              <select id="nexus-per-page" class="inline">
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="40">40</option>
+                <option value="80">80</option>
+              </select>
+            </label>
             <span id="nexus-quota" class="muted"></span>
           </div>
         </div>
+        <details id="nexus-debug" class="card hidden">
+          <summary>API requests <span id="nexus-debug-summary" class="muted small"></span></summary>
+          <div class="row">
+            <span class="muted small">Every request to Nexus, newest first. Bars show how long each took. Your API key is never shown.</span>
+            <span class="spacer"></span>
+            <button id="nexus-debug-clear" class="small">Clear</button>
+          </div>
+          <div id="nexus-debug-list" class="req-list"></div>
+        </details>
         <div id="nexus-list">
           <div class="row list-head">
             <p id="nexus-list-title" class="muted"></p>
+            <span id="nexus-fresh" class="muted small"></span>
+            <button id="nexus-refresh" class="small hidden" title="Ask Nexus again instead of using the saved copy">Refresh</button>
             <span class="spacer"></span>
             <button class="select-mode" title="Pick several mods and download them in one go">Select several</button>
           </div>
           <div id="nexus-grid" class="mod-grid"></div>
           <div id="nexus-pager" class="row hidden">
+            <button id="nexus-first" title="First page">«</button>
             <button id="nexus-prev">Previous</button>
+            <span class="muted">Page</span>
+            <input id="nexus-page-input" class="page-input" type="number" min="1" step="1" aria-label="Page number">
             <span id="nexus-page" class="muted"></span>
             <button id="nexus-next">Next</button>
+            <button id="nexus-last" title="Last page">»</button>
           </div>
         </div>
         <div id="nexus-result" class="hidden"></div>
@@ -367,6 +404,13 @@
       <div class="card">
         <h3>Nexus browsing</h3>
         <label class="check"><input type="checkbox" id="show-adult"> Show mods marked as adult content</label>
+        <label class="check"><input type="checkbox" id="nexus-debug-mode"> Debug mode: show every Nexus API request in Get Mods</label>
+        <p class="muted">Pages and searches you open are saved for a week, so they show at once (and still open when Nexus can't be reached).
+           Lists count as fresh for 5 minutes and mod pages for 10; use Refresh to ask Nexus sooner.</p>
+        <div class="row">
+          <span id="nexus-cache-info" class="muted"></span>
+          <button id="nexus-cache-clear">Clear saved pages</button>
+        </div>
       </div>
       <div class="card">
         <h3>Nexus account</h3>
