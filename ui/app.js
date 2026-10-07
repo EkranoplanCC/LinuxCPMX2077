@@ -448,13 +448,16 @@ const FRAMEWORK_NAMES = { cet: "CET", red4ext: "RED4ext", redscript: "redscript"
 async function runDiagnostics() {
   if (!currentGame) return;
   $("#diag-problems").replaceChildren(el("p", { class: "muted" }, "Checking…"));
+  window.graphPending();
   const [analysis, crash] = await Promise.allSettled([
     invoke("analyze_game", { gameId: currentGame.id }),
     invoke("crash_analysis", { gameId: currentGame.id }),
   ]);
   if (analysis.status === "fulfilled") {
-    window.showGraph(analysis.value);
+    window.showGraph(analysis.value, crash.value);
     renderCompat(analysis.value);
+  } else {
+    window.graphError(String(analysis.reason));
   }
   if (crash.status === "fulfilled") renderCrash(crash.value);
   renderProblems(analysis.value, crash.value);
@@ -464,6 +467,27 @@ async function runDiagnostics() {
 $("#run-diagnostics").addEventListener("click", (e) => busy(e.target, runDiagnostics));
 document.querySelectorAll("[data-jump]").forEach((b) => b.addEventListener("click", () =>
   document.getElementById(b.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" })));
+
+// An expandable list of exactly what a finding or graph connection covers,
+// grouped by mod or file. Built when first opened: a texture pack can list
+// thousands of resources.
+function affectedDetails(groups, { hashes = false, label = "Show what's affected" } = {}) {
+  if (!groups?.length) return null;
+  const total = groups.reduce((a, g) => a + g.items.length + g.more, 0);
+  if (!total) return null;
+  const d = el("details", { class: "affected" }, el("summary", {}, `${label} (${total})`));
+  d.addEventListener("toggle", () => {
+    if (!d.open || d.dataset.filled) return;
+    d.dataset.filled = "1";
+    if (hashes) d.append(el("p", {}, "Game archives store each resource as a hash of its path, so resources are listed by hash under the mod archive that contains them. Modding tools such as WolvenKit can turn a hash back into a path."));
+    for (const g of groups) {
+      if (g.title) d.append(el("div", { class: "affected-title" }, g.title, el("span", { class: "muted" }, ` (${g.items.length + g.more})`)));
+      d.append(el("ul", { class: "affected-items mono" }, ...g.items.map((i) => el("li", {}, i)),
+        g.more ? el("li", { class: "muted" }, `and ${g.more} more`) : null));
+    }
+  });
+  return d;
+}
 
 function showInGraph(modIds, label) {
   window.highlightGraph(modIds, label);
@@ -528,7 +552,8 @@ function renderCompat(r) {
     if (!items.length) return null;
     return el("div", { class: `card finding ${s}` },
       el("h3", {}, `${sev[s]} (${items.length})`),
-      el("ul", {}, ...items.map((f) => el("li", {}, f.message, " ", el("span", { class: "muted mono" }, f.key), " ", graphButton(f.mod_ids, f.message)))));
+      el("ul", {}, ...items.map((f) => el("li", {}, f.message, " ", el("span", { class: "muted mono" }, f.key), " ", graphButton(f.mod_ids, f.message),
+        affectedDetails(f.affected, { hashes: f.kind === "resource" })))));
   }).filter(Boolean);
   $("#findings").replaceChildren(...(groups.length ? groups
     : [el("div", { class: "card finding ok" }, r.mods.length ? "No conflicts found between your installed mods." : "No mods installed yet.")]));
