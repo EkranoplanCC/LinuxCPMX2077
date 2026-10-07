@@ -166,7 +166,41 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
         return Ok(out);
     }
 
-    // 4. Loose archive / redscript / tweak files.
+    // 4. ReShade presets: shaders and preset .ini files go next to the
+    // game exe, where ReShade looks for them (not into the engine config).
+    let is_reshade_dir = |d: &str| d.eq_ignore_ascii_case("reshade-shaders");
+    if let Some(root) = files
+        .iter()
+        .filter_map(|f| {
+            let parts: Vec<&str> = f.split('/').collect();
+            let i = parts[..parts.len() - 1].iter().position(|p| is_reshade_dir(p))?;
+            Some(parts[..i].join("/"))
+        })
+        .min_by_key(|r| r.matches('/').count())
+    {
+        let pfx = if root.is_empty() { String::new() } else { format!("{root}/") };
+        let mut out = Plan { files: vec![], skipped: vec![], layout: "reshade".into() };
+        for f in files {
+            let target = match f.strip_prefix(&pfx) {
+                Some(rest) if rest.split('/').next().is_some_and(is_reshade_dir) => Some(format!("bin/x64/{rest}")),
+                _ if lower_ext(f) == "ini" => Some(format!("bin/x64/{}", file_name(f))),
+                _ => None,
+            };
+            match target {
+                Some(t) => out.files.push(PlannedFile { staged: f.clone(), target: t }),
+                None => out.skipped.push(f.clone()),
+            }
+        }
+        return Ok(out);
+    }
+
+    // A program with its own files (WolvenKit, save editors) isn't a mod,
+    // even if it ships an example .yaml or .archive.
+    if files.iter().any(|f| lower_ext(f) == "exe") {
+        return Err(Error::Other(not_a_game_mod(files)));
+    }
+
+    // 5. Loose archive / redscript / tweak files.
     let mut out = Plan { files: vec![], skipped: vec![], layout: "loose".into() };
     let script_dir = sanitize_folder(mod_name);
     for f in files {
@@ -181,12 +215,152 @@ pub fn plan(files: &[String], mod_name: &str) -> Result<Plan> {
             None => out.skipped.push(f.clone()),
         }
     }
-    if out.files.is_empty() {
-        return Err(Error::Other(
-            "could not tell where this mod's files go (no archive/, bin/, r6/, red4ext/ folders or .archive files)".into(),
-        ));
+    if !out.files.is_empty() {
+        return Ok(out);
     }
-    Ok(out)
+
+    // 6. Nothing but engine config tweaks: loose .ini files go where the
+    // game reads them (mod pages say "put user.ini in engine/config/platform/pc").
+    let ini: Vec<&String> = files.iter().filter(|f| lower_ext(f) == "ini").collect();
+    if !ini.is_empty() {
+        let mut out = Plan { files: vec![], skipped: vec![], layout: "engine-config".into() };
+        for f in files {
+            if lower_ext(f) == "ini" {
+                out.files.push(PlannedFile { staged: f.clone(), target: format!("{ENGINE_CONFIG_DIR}/{}", file_name(f)) });
+            } else {
+                out.skipped.push(f.clone());
+            }
+        }
+        return Ok(out);
+    }
+    Err(Error::Other(not_a_game_mod(files)))
+}
+
+/// Why an archive has nothing to install, in words the user can act on.
+fn not_a_game_mod(files: &[String]) -> String {
+    // The shallowest match names the program itself, not a helper tool.
+    let with_ext = |exts: &[&str]| {
+        files
+            .iter()
+            .filter(|f| exts.contains(&lower_ext(f).as_str()))
+            .min_by_key(|f| f.matches('/').count())
+            .map(|f| file_name(f).to_string())
+    };
+    if let Some(exe) = with_ext(&["exe"]) {
+        return format!("this download is a standalone program ({exe}), not a game mod: run it outside the game instead of installing it");
+    }
+    if let Some(script) = with_ext(&["bat", "cmd", "ps1", "sh"]) {
+        return format!("this download is a script ({script}), not a game mod: there is nothing to install into the game");
+    }
+    const DOCS: &[&str] = &["pdf", "txt", "md", "rtf", "doc", "docx", "html", "htm", "png", "jpg", "jpeg", "gif", "webp", "bmp", "url", "xlsx", "xls", "csv", "odt", "ods"];
+    if !files.is_empty() && files.iter().all(|f| DOCS.contains(&lower_ext(f).as_str())) {
+        return "this download only has documents or pictures (instructions, previews), no game files".into();
+    }
+    "could not tell where this mod's files go (no archive/, bin/, r6/, red4ext/ folders or .archive files)".into()
+}
+
+/// Where the game loads extra engine settings (`user.ini` and friends).
+const ENGINE_CONFIG_DIR: &str = "engine/config/platform/pc";
+
+/// Several loose files that look like versions of one thing
+/// (`Skin_HEAD_PALE_Natural.archive`, `Skin_HEAD_TAN_Natural.archive`, ...)
+/// become a one-step installer that lets the user untick the ones they don't
+/// want. All are ticked by default, so installing without asking changes
+/// nothing. `None` when the files don't follow such a naming pattern.
+pub fn variant_choice(files: &[String]) -> Option<fomod::Installer> {
+    let p = plan(files, "x").ok()?;
+    if p.layout != "loose" {
+        return None;
+    }
+    // `X.archive` and `X.archive.xl` belong together.
+    let key = |staged: &str| {
+        let mut k = file_name(staged);
+        while let Some((stem, ext)) = k.rsplit_once('.') {
+            if !["archive", "xl", "reds", "yaml", "yml", "tweak"].contains(&ext.to_ascii_lowercase().as_str()) {
+                break;
+            }
+            k = stem;
+        }
+        k.to_string()
+    };
+    let mut groups: Vec<(String, Vec<&PlannedFile>)> = Vec::new();
+    for f in &p.files {
+        let k = key(&f.staged);
+        match groups.iter_mut().find(|(g, _)| *g == k) {
+            Some((_, v)) => v.push(f),
+            None => groups.push((k, vec![f])),
+        }
+    }
+    if groups.len() < 2 {
+        return None;
+    }
+    let keys: Vec<Vec<char>> = groups.iter().map(|(k, _)| k.chars().collect()).collect();
+    let first = &keys[0];
+    let shortest = keys.iter().map(Vec::len).min()?;
+    let mut pre = (0..shortest).take_while(|&i| keys.iter().all(|k| k[i] == first[i])).count();
+    let mut suf = (0..shortest - pre)
+        .take_while(|&i| keys.iter().all(|k| k[k.len() - 1 - i] == first[first.len() - 1 - i]))
+        .count();
+    // Cut back to a word boundary so "Cat_Red"/"Cat_Rose" read "Red"/"Rose".
+    let is_sep = |c: char| matches!(c, '_' | '-' | ' ' | '.');
+    while pre > 0 && !is_sep(first[pre - 1]) {
+        pre -= 1;
+    }
+    while suf > 0 && !is_sep(first[first.len() - suf]) {
+        suf -= 1;
+    }
+    if pre + suf < 3 {
+        return None;
+    }
+    let names: Vec<String> =
+        keys.iter().map(|k| k[pre..k.len() - suf].iter().collect::<String>().trim_matches(is_sep).to_string()).collect();
+    // An empty name is the base file the others add to ("Mod" + "Mod_patch").
+    if names.iter().any(String::is_empty) {
+        return None;
+    }
+    let shared = format!("{}…{}", first[..pre].iter().collect::<String>(), first[first.len() - suf..].iter().collect::<String>());
+    let plugins = groups
+        .iter()
+        .zip(names)
+        .map(|((_, fs), name)| fomod::Plugin {
+            name,
+            description: fs.iter().map(|f| format!("{} → {}", file_name(&f.staged), f.target)).collect::<Vec<_>>().join("\n"),
+            image: None,
+            files: fs
+                .iter()
+                .map(|f| fomod::FileEntry {
+                    source: f.staged.clone(),
+                    destination: f.staged.clone(),
+                    is_folder: false,
+                    priority: 0,
+                    always_install: false,
+                    install_if_usable: false,
+                })
+                .collect(),
+            flags: vec![],
+            type_desc: fomod::TypeDescriptor::Static(fomod::PluginType::Optional),
+        })
+        .collect();
+    Some(fomod::Installer {
+        // Empty, so the mod keeps its own name rather than the installer's.
+        module_name: String::new(),
+        module_image: None,
+        steps: vec![fomod::Step {
+            name: "Versions".into(),
+            groups: vec![fomod::Group {
+                name: format!(
+                    "This download has {} versions of the same thing ({shared}). Untick the ones you don't want: several at once can clash.",
+                    groups.len()
+                ),
+                kind: fomod::GroupKind::SelectAtLeastOne,
+                plugins,
+            }],
+            visible: None,
+        }],
+        module_dependencies: None,
+        required_files: vec![],
+        conditional: vec![],
+    })
 }
 
 fn sanitize_folder(name: &str) -> String {
@@ -270,6 +444,9 @@ pub struct FomodInfo {
     pub root: String,
     pub installer: fomod::Installer,
     pub defaults: fomod::Selections,
+    /// Not the mod's own installer: a "pick the variants" step the app made
+    /// for an archive of loose alternative files (see [`variant_choice`]).
+    pub variants: bool,
 }
 
 /// FOMOD file conditions look at what's already in the game directory.
@@ -322,7 +499,7 @@ impl Installer<'_> {
                 match read {
                     Ok(installer) => {
                         let defaults = installer.default_selections(&game_files(Path::new(&game.path)));
-                        Some(FomodInfo { root, installer, defaults })
+                        Some(FomodInfo { root, installer, defaults, variants: false })
                     }
                     Err(e) => {
                         let _ = std::fs::remove_dir_all(&dir);
@@ -330,7 +507,10 @@ impl Installer<'_> {
                     }
                 }
             }
-            None => None,
+            None => variant_choice(&extracted.files).map(|installer| {
+                let defaults = vec![vec![(0..installer.steps[0].groups[0].plugins.len()).collect()]];
+                FomodInfo { root: String::new(), installer, defaults, variants: true }
+            }),
         };
         Ok(Prepared {
             id,
@@ -356,6 +536,22 @@ impl Installer<'_> {
     /// `choices` (or the installer's defaults).
     pub fn plan_prepared(&self, game: &GameRow, p: &Prepared, name: &str, choices: Option<&fomod::Selections>) -> Result<Plan> {
         let Some(fm) = &p.fomod else { return plan(&p.files, name) };
+        if fm.variants {
+            let sel = choices.unwrap_or(&fm.defaults);
+            let chosen: HashSet<String> =
+                fm.installer.resolve(sel, &game_files(Path::new(&game.path)), &p.files)?.files.into_iter().map(|(src, _)| src).collect();
+            let offered: HashSet<&str> = fm.installer.steps[0].groups[0]
+                .plugins
+                .iter()
+                .flat_map(|pl| pl.files.iter().map(|f| f.source.as_str()))
+                .collect();
+            let mut full = plan(&p.files, name)?;
+            let (keep, drop): (Vec<_>, Vec<_>) =
+                full.files.into_iter().partition(|f| !offered.contains(f.staged.as_str()) || chosen.contains(&f.staged));
+            full.files = keep;
+            full.skipped.extend(drop.into_iter().map(|f| format!("{} (not chosen)", f.staged)));
+            return Ok(full);
+        }
         let rel: Vec<String> = p.files.iter().filter_map(|f| f.strip_prefix(&fm.root).map(String::from)).collect();
         let sel = choices.unwrap_or(&fm.defaults);
         let resolved = fm.installer.resolve(sel, &game_files(Path::new(&game.path)), &rel)?;
@@ -794,7 +990,29 @@ mod tests {
         let p = plan(&s(&["info.json", "a.archive"]), "x").unwrap();
         assert_eq!(p.layout, "loose");
 
-        assert!(plan(&s(&["readme.md"]), "x").is_err());
+        // Engine config tweaks shipped as a bare user.ini (True next-gen shadows).
+        let p = plan(&s(&["USER CFG/user.ini", "USER CFG/readme.txt"]), "x").unwrap();
+        assert_eq!(p.layout, "engine-config");
+        assert_eq!(p.files[0].target, "engine/config/platform/pc/user.ini");
+        assert_eq!(p.skipped, s(&["USER CFG/readme.txt"]));
+        // An .ini next to an archive mod stays out of the engine config.
+        let p = plan(&s(&["a.archive", "settings.ini"]), "x").unwrap();
+        assert_eq!(p.layout, "loose");
+        assert_eq!(p.skipped, s(&["settings.ini"]));
+
+        // ReShade presets go next to the exe, not into the engine config.
+        let p = plan(&s(&["Preset v2/Main files/reshade-shaders/Shaders/CAS.fx", "Preset v2/Main files/ReShade.ini", "Preset v2/Main files/My Preset.ini", "Preset v2/readme.txt"]), "x").unwrap();
+        assert_eq!(p.layout, "reshade");
+        let t: Vec<&str> = p.files.iter().map(|f| f.target.as_str()).collect();
+        assert_eq!(t, ["bin/x64/reshade-shaders/Shaders/CAS.fx", "bin/x64/ReShade.ini", "bin/x64/My Preset.ini"]);
+
+        let e = |files: &[&str]| plan(&s(files), "x").unwrap_err().to_string();
+        assert!(e(&["opus-tools/opusdec.exe", "WolvenKit.exe", "lib/texconv.dll", "photomode_npc_template.yaml"]).contains("standalone program (WolvenKit.exe)"));
+        assert!(e(&["Command List.xlsx"]).contains("only has documents"));
+        assert!(e(&["readme.md", "shot.png"]).contains("only has documents"));
+        assert!(e(&["Tool/CP2077SaveEditor.exe", "Tool/kraken.dll", "Tool/config.json"]).contains("standalone program (CP2077SaveEditor.exe)"));
+        assert!(e(&["Saves Backup.bat"]).contains("a script (Saves Backup.bat)"));
+        assert!(e(&["data.bin"]).contains("could not tell"));
     }
 
     struct Fixture {
@@ -925,6 +1143,55 @@ mod tests {
         // Uninstall works from the staged copy like any other mod.
         inst.uninstall(r.mod_id).unwrap();
         assert!(!game_dir.join("archive/pc/mod/tex.archive").exists());
+    }
+
+    #[test]
+    fn spots_loose_variants() {
+        let names = |files: &[&str]| {
+            variant_choice(&s(files)).map(|i| i.steps[0].groups[0].plugins.iter().map(|p| p.name.clone()).collect::<Vec<_>>())
+        };
+        // Universal Skin Tone: one archive per skin tone.
+        assert_eq!(
+            names(&["##_Arkhe_UniversalSkinTone_HEAD_PALE_Natural.archive", "##_Arkhe_UniversalSkinTone_HEAD_TAN_Natural.archive"]),
+            Some(vec!["PALE".to_string(), "TAN".to_string()])
+        );
+        // Apartment Cats: one tweak per colour; an .xl stays with its archive.
+        assert_eq!(names(&["CorpoCat_Red.yaml", "CorpoCat_Rose.yaml"]), Some(vec!["Red".to_string(), "Rose".to_string()]));
+        let i = variant_choice(&s(&["Hair_A.archive", "Hair_A.archive.xl", "Hair_B.archive", "Hair_B.archive.xl"])).unwrap();
+        assert_eq!(i.steps[0].groups[0].plugins[0].files.len(), 2);
+        // Not variants: one file, a base plus its patch, unrelated names, game-root layouts.
+        assert_eq!(names(&["Mod.archive", "Mod.archive.xl"]), None);
+        assert_eq!(names(&["Mod.archive", "Mod_patch.archive"]), None);
+        assert_eq!(names(&["alpha.archive", "beta.archive"]), None);
+        assert_eq!(names(&["archive/pc/mod/Cat_Red.archive", "archive/pc/mod/Cat_Blue.archive"]), None);
+    }
+
+    #[test]
+    fn installs_only_the_chosen_variants() {
+        let f = fixture();
+        let inst = Installer {
+            db: &f.db,
+            staging_root: f.root.join("staging"),
+            backups_root: f.root.join("backups"),
+            limits: Limits::default(),
+        };
+        let a = f.root.join("tones.zip");
+        zip_with(&a, &[("Tone_PALE.archive", b"pale"), ("Tone_TAN.archive", b"tan"), ("Tone_DARK.archive", b"dark"), ("readme.txt", b"hi")]);
+        let game = f.game.clone();
+        let p = inst.prepare(&game, &a).unwrap();
+        let fm = p.fomod.as_ref().expect("variant step offered");
+        assert!(fm.variants);
+        assert_eq!(fm.defaults, vec![vec![vec![0, 1, 2]]], "all ticked by default");
+        // Without choices everything installs, as before.
+        let plan = inst.plan_prepared(&game, &p, "Tones", None).unwrap();
+        assert_eq!(plan.files.len(), 3);
+        let opts = InstallOptions { meta: NewMod { name: "Tones".into(), ..Default::default() }, fomod_choices: Some(vec![vec![vec![1]]]), ..Default::default() };
+        let r = inst.finish(&game, &p, opts).unwrap();
+        assert_eq!((r.name.as_str(), r.layout.as_str(), r.files_installed), ("Tones", "loose", 1));
+        let game_dir = PathBuf::from(&game.path);
+        assert_eq!(std::fs::read(game_dir.join("archive/pc/mod/Tone_TAN.archive")).unwrap(), b"tan");
+        assert!(!game_dir.join("archive/pc/mod/Tone_PALE.archive").exists());
+        assert!(r.skipped.iter().any(|s| s == "Tone_PALE.archive (not chosen)"), "{:?}", r.skipped);
     }
 
     #[test]
