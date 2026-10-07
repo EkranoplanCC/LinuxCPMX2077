@@ -94,12 +94,25 @@
         <header>
           <h3>How your mods connect</h3>
           <div class="row">
+            <label class="check">Layout
+              <select id="graph-layout">
+                <option value="force">Web</option>
+                <option value="flow">Flowchart (left to right)</option>
+              </select>
+            </label>
             <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
             <button id="graph-reset">Re-layout</button>
           </div>
         </header>
         <div id="graph-wrap">
           <canvas id="graph"></canvas>
+          <div id="graph-message" class="hidden"></div>
+          <div id="graph-controls" aria-label="Zoom">
+            <button id="graph-zoom-out" title="Zoom out">−</button>
+            <button id="graph-zoom" title="Zoom to 100%">100%</button>
+            <button id="graph-zoom-in" title="Zoom in">+</button>
+            <button id="graph-fit" title="Fit the whole graph in view">Fit</button>
+          </div>
           <aside id="graph-info" class="muted">Drag to pan, scroll to zoom, drag a node to move it, click a node for details.</aside>
           <div id="graph-legend"></div>
         </div>
