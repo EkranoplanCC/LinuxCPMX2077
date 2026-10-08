@@ -152,7 +152,8 @@ If the game crashes or a framework does not load, see
 [Troubleshooting](user-guide.md#troubleshooting).
 To watch what the app does step by step (API requests, downloads,
 extractions, files moved), tick *Debug mode* in **Settings**: the
-[debug terminal](user-guide.md#debug-terminal) opens.
+[debug terminal](user-guide.md#debug-terminal) opens at the foot of the
+sidebar. **Pop out** moves it to its own window.
 
 ## Next steps
 
@@ -163,4 +164,6 @@ extractions, files moved), tick *Debug mode* in **Settings**: the
 - Using Ultra+ for path tracing? Once it's installed, the **Ultra+
   recommendations** card in **Installed mods** shows what its authors
   recommend with it and what conflicts with it.
+- Want ReShade? Open the **ReShade** card in **Installed mods** and click
+  **Install ReShade**. See [ReShade](user-guide.md#reshade) in the user guide.
 - Read the [user guide](user-guide.md) for everything else.

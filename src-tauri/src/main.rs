@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 mod modpacks_cmd;
+mod reshade_cmd;
 mod ultraplus_cmd;
 
 struct AppState {
@@ -112,7 +113,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
         .map_err(|e| Error::Other(format!("task failed: {e}")))?
 }
 
-fn with_installer<T>(db: &Db, f: impl FnOnce(&Installer) -> Result<T>) -> Result<T> {
+pub(crate) fn with_installer<T>(db: &Db, f: impl FnOnce(&Installer) -> Result<T>) -> Result<T> {
     let inst = Installer {
         db,
         staging_root: paths::staging_dir()?,
@@ -145,7 +146,7 @@ fn game_version(db: &Db, game_id: Option<i64>) -> Option<String> {
 
 /// Test servers for a debug build (`CPMX_NEXUS_API`, `CPMX_NEXUS_WEB`);
 /// release builds always talk to Nexus.
-fn debug_override(var: &str) -> Option<String> {
+pub(crate) fn debug_override(var: &str) -> Option<String> {
     if cfg!(debug_assertions) { std::env::var(var).ok() } else { None }
 }
 
@@ -645,7 +646,12 @@ async fn uninstall_mod(app: AppHandle, mod_id: i64) -> Result<()> {
     blocking(move || {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
-        with_installer(&db, |i| i.uninstall(mod_id))
+        let m = db.get_mod(mod_id)?;
+        with_installer(&db, |i| i.uninstall(mod_id))?;
+        if m.source == cp2077mm_core::reshade::SOURCE {
+            cp2077mm_core::reshade::after_uninstall(&db, &db.game(m.game_id)?)?;
+        }
+        Ok(())
     })
     .await
 }
@@ -864,13 +870,23 @@ fn open_debug_terminal(app: AppHandle) -> Result<()> {
         let _ = w.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
         .title("CPMX2077 debug terminal")
         .inner_size(1000.0, 620.0)
         .min_inner_size(520.0, 300.0)
         .build()
         .map_err(|e| Error::Other(format!("could not open the debug terminal: {e}")))?;
+    let _ = window.set_focus();
     Ok(())
+}
+
+/// Close the debug terminal window and show it in the main window's sidebar.
+#[tauri::command]
+fn dock_debug_terminal(app: AppHandle) {
+    let _ = app.emit_to("main", "debug-dock", ());
+    if let Some(w) = app.get_webview_window(DEBUG_WINDOW) {
+        let _ = w.close();
+    }
 }
 
 #[derive(Serialize)]
@@ -1537,6 +1553,7 @@ fn main() {
             log_ui_error,
             save_debug_log,
             open_debug_terminal,
+            dock_debug_terminal,
             nexus_cache_info,
             nexus_clear_cache,
             open_web_link,
@@ -1578,6 +1595,10 @@ fn main() {
             modpacks_cmd::requirement_states,
             ultraplus_cmd::ultraplus_report,
             ultraplus_cmd::ultraplus_refresh,
+            reshade_cmd::reshade_status,
+            reshade_cmd::reshade_latest,
+            reshade_cmd::reshade_install,
+            reshade_cmd::reshade_install_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

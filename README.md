@@ -115,6 +115,10 @@ Screenshots show sample data, with file locations blurred.
   card in Installed mods lists what the Ultra+ team's page recommends next to
   it and what conflicts with it, marks what you have, and queues the missing
   ones. Installed conflicts also show as known problems in Netrunner.
+- **ReShade**: a card in Installed mods installs ReShade from reshade.me
+  (or a setup file you downloaded), checks the DLL inside the setup before
+  using it, loads it as `dxgi.dll` (or `d3d12.dll` when that name is taken),
+  checks for updates, and uninstalls it without leftovers. Presets stay.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed
@@ -211,8 +215,8 @@ Screenshots show sample data, with file locations blurred.
   (or returns 429) until it resets, and pauses browsing when fewer than 25
   requests remain so downloads and checksum checks still work. Lists and mod
   pages are cached for a few minutes.
-- **Debug terminal**: Settings → *Debug mode* opens a terminal-style window
-  that streams every Nexus and GitHub API request and every operation on
+- **Debug terminal**: Settings → *Debug mode* opens a terminal, docked in
+  the sidebar or popped out into its own window, that streams every Nexus and GitHub API request and every operation on
   your machine (downloads, checksum checks, extractions, files copied,
   backed up, moved or deleted, Linux setup fixes), with filters, Copy and
   Save…. API keys and signed download links are never shown.

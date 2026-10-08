@@ -77,3 +77,38 @@ pub fn serve(responses: Vec<Canned>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     });
     (addr, seen)
 }
+
+/// Like [`serve`], for binary bodies: (path substring, status, body). The
+/// returned log holds each request line.
+pub fn serve_bytes(responses: Vec<(&'static str, u16, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            loop {
+                let mut h = String::new();
+                reader.read_line(&mut h).unwrap();
+                if h.trim_end().is_empty() {
+                    break;
+                }
+            }
+            log.lock().unwrap().push(line.trim().to_string());
+            let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+            let (status, body) = responses
+                .iter()
+                .find(|(p, ..)| path.contains(p))
+                .map(|(_, s, b)| (*s, b.clone()))
+                .unwrap_or((404, b"not found".to_vec()));
+            let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    (addr, seen)
+}

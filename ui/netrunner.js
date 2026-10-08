@@ -97,9 +97,16 @@
     // Selecting reveals the node: every folder above it opens, and a click
     // opens the folder itself too (arrow keys only move).
     if (open) expanded[group].add(node.key);
+    // Clicking a mod in the "by mod" view opens its whole folder structure.
+    if (open && node.mod_id != null) expandAll(node);
     for (let p = node.parent; p; p = p.parent) expanded[group].add(p.key);
     render();
     focusKey(node.key);
+  }
+
+  function expandAll(node) {
+    expanded[group].add(node.key);
+    for (const c of node.folders) expandAll(c);
   }
 
   function focusKey(key) {

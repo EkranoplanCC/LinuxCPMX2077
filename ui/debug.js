@@ -1,8 +1,13 @@
 // Debug terminal: streams Nexus API requests (from the request log) and what
 // the app does on this machine (from the activity log), oldest at the top.
 // Everything is shown as text only; nothing from the logs is parsed as HTML.
-const { invoke } = window.__TAURI__.core;
-const dialog = window.__TAURI__.dialog;
+// Docked in the main window's sidebar it runs in a frame of that window
+// (`debug.html?docked`) and uses the window's Tauri API.
+const docked = new URLSearchParams(location.search).has("docked");
+const tauri = window.__TAURI__ || window.parent.__TAURI__;
+const { invoke } = tauri.core;
+const dialog = tauri.dialog;
+document.documentElement.classList.add(docked ? "docked" : "windowed");
 
 const $ = (sel) => document.querySelector(sel);
 const MAX_LINES = 5000;
@@ -188,6 +193,18 @@ $("#save").addEventListener("click", async () => {
     $("#status").textContent = `Couldn't save: ${e}`;
   }
 });
+
+$("#filters-toggle").addEventListener("click", () => {
+  const open = document.documentElement.classList.toggle("filters-open");
+  $("#filters-toggle").setAttribute("aria-expanded", String(open));
+  $("#filters-toggle").classList.toggle("on", open);
+});
+// The main window decides what docking means (see app.js).
+$("#popout").addEventListener("click", () => window.parent.cpmxDebugTerminal?.popOut());
+$("#hide").addEventListener("click", () => window.parent.cpmxDebugTerminal?.hide());
+$("#dock").addEventListener("click", () => invoke("dock_debug_terminal").catch((e) => {
+  $("#status").textContent = `Couldn't dock: ${e}`;
+}));
 
 render();
 tick();

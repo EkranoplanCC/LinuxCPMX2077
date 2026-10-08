@@ -77,6 +77,12 @@ one is installed next to it instead.
 
 The left-hand panel shows the install the rest of the app works on.
 
+To make the left-hand menu wider or narrower, drag the line between it and
+the main area left or right. The width is kept the next time you open the
+app, and a docked debug terminal fills whatever width you choose. Double-click
+the line to put it back to the default. With the line selected (Tab to
+it), the left and right arrow keys also resize it.
+
 - **Game drop-down**: every install found. Steam libraries (native, Flatpak
   and Snap Steam) and Heroic's GOG installs are scanned. **Rescan** looks
   again; **Add path…** adds a game folder by hand.
@@ -179,6 +185,43 @@ can't be told apart by name. Installed conflicts and the setting notes also
 show under **Known problems** in Netrunner's
 [Crashes & logs](#crashes--logs).
 
+### ReShade
+
+The **ReShade** card above the list installs
+[ReShade](https://reshade.me/), the post-processing injector used for
+sharpening, colour grading and presets, and keeps it up to date. Its heading
+line shows the installed version and the DLL name it loads as, or *not
+installed*. Click the heading to open or fold the card.
+
+- **Install ReShade** reads the newest version from reshade.me, downloads
+  the standard setup (`ReShade_Setup_<version>.exe`, not the add-on build)
+  from reshade.me only, and takes `ReShade64.dll` out of it. Before
+  installing, the app checks that the DLL is a 64-bit Windows DLL, that its
+  version information names ReShade, and that its version matches the setup's
+  file name. reshade.me publishes no checksums, so the SHA-256 of the setup is
+  recorded and shown as **Setup SHA-256** instead.
+- **Install from setup file…** does the same with a setup you downloaded
+  from reshade.me in your browser, for when the app can't reach the site.
+- ReShade goes in as `bin/x64/dxgi.dll`, the name it loads under in a
+  DirectX 12 game. If another program (an upscaler or another injector)
+  already uses `dxgi.dll`, it goes in as `bin/x64/d3d12.dll`; if both names
+  are taken, the card names what's using them and installs nothing. A ReShade
+  you copied in yourself is backed up and put back when you uninstall.
+- If the game has no `bin/x64/ReShade.ini`, the app writes one that points
+  ReShade at `bin/x64/reshade-shaders/` for effects and textures. An existing
+  `ReShade.ini` is left alone.
+- ReShade is listed in the mod table like any mod (source *reshade.me*), so
+  the **On** switch, **Verify**, **Uninstall** and the File map work on it.
+  The card has **Disable**/**Enable** and **Uninstall** too.
+- **Check for update** reads the newest version from reshade.me; when it's
+  newer, **Update to &lt;version&gt;** installs it in place of the old one
+  under the same DLL name. ReShade's settings and your presets stay.
+- **Uninstall** removes the DLL, the `ReShade.ini` the app wrote (with any
+  changes ReShade made to it) and ReShade's log. Presets you made
+  (`ReShadePreset.ini` and others) stay in `bin/x64`.
+
+In game, the Home key opens ReShade's overlay.
+
 ## Modpacks
 
 Nexus collections, your own tags, and mod list import/export. Needs a
@@ -256,7 +299,8 @@ game folder; click it to open that folder, hover for the full path), the
 A red **!** next to a folder means something inside it is missing or
 overridden. **By folder** / **By mod** switches between the game's folder
 layout and one branch per mod (click a mod name in the list to jump to its
-branch). **Find a file or mod…** lists every file whose path or mod name
+branch). In **By mod**, clicking a mod opens its whole folder structure at
+once; the other mods stay collapsed. **Find a file or mod…** lists every file whose path or mod name
 matches. The map only shows files CPMX2077 installed, not the game's own
 files or mods installed by hand.
 
@@ -467,27 +511,42 @@ Every archive you downloaded, grouped by mod with each version under it.
   the read-only MCP server, with **Copy**.
 - **Nexus browser sign-in**: the application slug Nexus issues for browser
   sign-in.
-- **Nexus browsing**: show adult content, debug mode, **Open debug
-  terminal** and **Clear saved pages**. Ticking *Debug mode* adds the API
-  request list to Get mods, opens the [debug terminal](#debug-terminal) and
-  adds a **Debug terminal** button under the tabs in the sidebar. Pages and
+- **Nexus browsing**: show adult content, debug mode, *Debug terminal
+  opens* (**In the sidebar**, the default, or **In its own window**), **Open
+  debug terminal** and **Clear saved pages**. Ticking *Debug mode* adds the
+  API request list to Get mods, opens the [debug terminal](#debug-terminal)
+  and adds a **Debug terminal** button under the tabs in the sidebar. Pages and
   searches are saved for a week; lists count as fresh for 5 minutes and mod
   pages for 10.
 - **Nexus account**: **Forget API key** removes it from the keyring.
 
 ### Debug terminal
 
-A terminal-style window that shows, live and oldest first, every Nexus API
-request and everything the app does on your machine. Open it with **Open
-debug terminal** in Settings or in Get mods' *API requests* list, or with
-**Debug terminal** in the sidebar while debug mode is on. It works the same
-on Linux and Windows and needs no terminal program.
+A terminal that shows, live and oldest first, every Nexus API request and
+everything the app does on your machine. It works the same on Linux and
+Windows and needs no terminal program.
+
+By default it sits at the foot of the main window's sidebar, under the
+**Debug terminal** button. That button shows or hides it, and **Open debug
+terminal** in Settings or in Get mods' *API requests* list shows it too.
+Drag its bottom-right corner to make it taller.
+
+- **Pop out** (in the docked terminal) moves it to a window of its own.
+- **Dock** (in that window) closes the window and puts it back in the
+  sidebar.
+- **Hide** (in the docked terminal) tucks it away; the app remembers this
+  until you show it again.
+- To always open it as a window, set *Debug terminal opens* in Settings to
+  **In its own window**.
+
+Docked, it is a compact version: the filter checkboxes are behind
+**Filters**, and each line's text goes under its time and tag.
 
 It looks like the computer terminals in Cyberpunk 2077: a black screen
 with glowing yellow-green text and scanlines, next to a light panel with the
 CPMX2077 emblem. **STATUS** at the top reads *ONLINE* while lines stream in
-and *PAUSED* after **Pause**. The light panel is hidden when the window is
-narrow.
+and *PAUSED* after **Pause**. The light panel is shown only in the
+separate window, when it's wide enough.
 
 Each line has a time, a tag and what happened, with the file or folder in
 brighter text. `VERIFY` and `INFO` results sit on a highlighted bar, and
@@ -539,6 +598,10 @@ part of download links are never shown.
 - GitHub downloads come only over HTTPS from GitHub's hosts and must match
   the asset's published SHA-256. Older assets without a digest are marked
   unverified.
+- ReShade comes only over HTTPS from reshade.me, with no redirects to other
+  hosts. The DLL taken out of the setup must be a 64-bit Windows DLL that
+  names ReShade in its version information and has the version in the setup's
+  file name, or the setup is discarded.
 - The in-app Nexus window can't call any of the app's functions. It only
   hands over `nxm://` links; other sites open in your browser.
 
@@ -566,6 +629,7 @@ logs are only readable from a fixed list of known locations.
 | Staged copies of mods | `~/.local/share/cp2077-modmanager/staging/` |
 | Backed-up game files | `~/.local/share/cp2077-modmanager/backups/` |
 | Linux setup records and backups | `~/.local/share/cp2077-modmanager/setup/<game>/` |
+| ReShade setups from reshade.me | `~/.local/share/cp2077-modmanager/reshade/` |
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
 | Refreshed Ultra+ recommendations | In the library database (settings) |
 | Nexus API key | System keyring (Secret Service) only |
