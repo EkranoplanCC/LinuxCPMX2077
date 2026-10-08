@@ -30,6 +30,7 @@ pub mod sso;
 mod testutil;
 pub mod updates;
 pub mod vdf;
+pub mod winsys;
 
 pub use error::{Error, Result};
 

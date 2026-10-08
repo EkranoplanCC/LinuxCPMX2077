@@ -592,7 +592,7 @@ function renderCrash(r) {
   const errors = r.issues.filter((i) => i.level === "error");
   const warnings = r.issues.filter((i) => i.level === "warning");
   $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length ? "error" : "ok") },
-    r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found in the Proton prefix."),
+    r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found."),
     r.suspects.length
       ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]), " ",
         graphButton([...new Set(r.suspects.flatMap(([name]) => [...(ids.get(name) || [])]))], "Mods named in log errors"))

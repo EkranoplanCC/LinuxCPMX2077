@@ -117,7 +117,10 @@ fn with_installer<T>(db: &Db, f: impl FnOnce(&Installer) -> Result<T>) -> Result
 }
 
 fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| Error::Other("HOME is not set".into()))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| Error::Other("HOME is not set".into()))
 }
 
 /// Quota tracking and the browse cache live as long as the app.

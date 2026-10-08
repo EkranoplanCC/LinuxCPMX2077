@@ -1,5 +1,6 @@
-//! Locating a Cyberpunk 2077 install on Linux (Steam/Proton first, GOG via
-//! Heroic, or a path the user picks) and reading what's in it.
+//! Locating a Cyberpunk 2077 install (Steam/Proton first, GOG via Heroic, on
+//! Windows also GOG Galaxy and Epic, or a path the user picks) and reading
+//! what's in it.
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,7 @@ pub const GAME_EXE: &str = "bin/x64/Cyberpunk2077.exe";
 pub enum Store {
     Steam,
     Gog,
+    Epic,
     Manual,
 }
 
@@ -43,7 +45,8 @@ pub struct Framework {
     pub installed: bool,
 }
 
-/// Steam roots in the places distros and Flatpak/Snap put them.
+/// Steam roots in the places distros and Flatpak/Snap put them, and on
+/// Windows where the registry says Steam is.
 pub fn steam_roots(home: &Path) -> Vec<PathBuf> {
     let candidates = [
         ".steam/steam",
@@ -54,8 +57,7 @@ pub fn steam_roots(home: &Path) -> Vec<PathBuf> {
         "snap/steam/common/.local/share/Steam",
     ];
     let mut out: Vec<PathBuf> = Vec::new();
-    for c in candidates {
-        let p = home.join(c);
+    for p in candidates.iter().map(|c| home.join(c)).chain(crate::winsys::steam_roots()) {
         if p.join("steamapps").is_dir() {
             let canon = p.canonicalize().unwrap_or(p);
             if !out.contains(&canon) {
@@ -117,7 +119,40 @@ pub fn detect(home: &Path) -> Vec<GameInstall> {
         found.push(g);
     }
     found.extend(detect_heroic_gog(home));
+    for g in detect_windows_launchers() {
+        if !found.iter().any(|f| same_dir(&f.path, &g.path)) {
+            found.push(g);
+        }
+    }
     found
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || a.canonicalize().ok().is_some_and(|a| b.canonicalize().ok().is_some_and(|b| a == b))
+}
+
+/// GOG Galaxy and Epic installs on Windows (none elsewhere).
+fn detect_windows_launchers() -> Vec<GameInstall> {
+    let gog = crate::winsys::gog_installs().into_iter().map(|p| (p, Store::Gog));
+    let epic = crate::winsys::epic_manifests().into_iter().filter_map(|m| epic_install(&m)).map(|p| (p, Store::Epic));
+    gog.chain(epic)
+        .filter(|(p, _)| p.join(GAME_EXE).is_file())
+        .map(|(p, store)| {
+            let mut g = inspect(&p, store);
+            g.warnings = warnings(&g);
+            g
+        })
+        .collect()
+}
+
+/// The install folder an Epic launcher manifest points at, if it's this game.
+pub fn epic_install(manifest: &Path) -> Option<PathBuf> {
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(manifest).ok()?).ok()?;
+    let name = json.get("DisplayName").and_then(|v| v.as_str()).unwrap_or_default();
+    if !name.to_ascii_lowercase().contains("cyberpunk 2077") {
+        return None;
+    }
+    json.get("InstallLocation").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(PathBuf::from)
 }
 
 const HEROIC_CONFIG_DIRS: &[&str] = &[".config/heroic", ".var/app/com.heroicgameslauncher.hgl/config/heroic"];
@@ -407,5 +442,20 @@ mod tests {
         assert_eq!(found[0].proton_prefix.as_deref(), Some(pfx_base.join("pfx").as_path()));
         let h = heroic_game(home.path(), &game).unwrap();
         assert_eq!(h.wine, Some(proton.join("files/bin/wine")));
+    }
+
+    #[test]
+    fn reads_epic_manifests() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, json: serde_json::Value| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, json.to_string()).unwrap();
+            p
+        };
+        let game = write("a.item", serde_json::json!({"DisplayName": "Cyberpunk 2077", "InstallLocation": "C:\\Games\\Cyberpunk 2077"}));
+        let other = write("b.item", serde_json::json!({"DisplayName": "Fortnite", "InstallLocation": "C:\\Games\\Fortnite"}));
+        assert_eq!(epic_install(&game), Some(PathBuf::from("C:\\Games\\Cyberpunk 2077")));
+        assert_eq!(epic_install(&other), None);
+        assert_eq!(epic_install(&dir.path().join("missing.item")), None);
     }
 }

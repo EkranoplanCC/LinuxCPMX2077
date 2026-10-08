@@ -1,6 +1,7 @@
 //! Storing the Nexus API key in the desktop keyring (Secret Service: GNOME
-//! Keyring, KWallet, KeePassXC). There is deliberately no plaintext fallback:
-//! without a keyring the user is told to install one.
+//! Keyring, KWallet, KeePassXC; Credential Manager on Windows). There is
+//! deliberately no plaintext fallback: without a keyring the user is told to
+//! install one.
 
 use crate::{APP_NAME, Error, Result};
 
@@ -22,10 +23,12 @@ pub fn store_api_key(key: &str) -> Result<Backend> {
         return Err(Error::Secret("empty API key".into()));
     }
     entry()?.set_password(key).map_err(|e| {
-        Error::Secret(format!(
-            "could not save to the system keyring ({e}). Install and unlock a Secret Service \
-             provider such as GNOME Keyring, KWallet or KeePassXC."
-        ))
+        let hint = if cfg!(windows) {
+            "Windows Credential Manager refused it."
+        } else {
+            "Install and unlock a Secret Service provider such as GNOME Keyring, KWallet or KeePassXC."
+        };
+        Error::Secret(format!("could not save to the system keyring ({e}). {hint}"))
     })?;
     Ok(Backend::Keyring)
 }

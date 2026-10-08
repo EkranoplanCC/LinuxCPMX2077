@@ -4,7 +4,8 @@ CPMX2077 is a Linux-native mod manager for Cyberpunk 2077 running under Proton (
 Heroic (GOG), shipped as an AppImage.
 
 Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases),
-make it executable (`chmod +x`) and run it.
+make it executable (`chmod +x`) and run it. A Windows installer
+(`CPMX2077_<version>_x64-setup.exe`) is built too; see [Windows](#windows-preview).
 
 ![screenshot](docs/screenshot.png)
 
@@ -146,6 +147,30 @@ make it executable (`chmod +x`) and run it.
   requests remain so downloads and checksum checks still work. Lists and mod
   pages are cached for a few minutes.
 
+### Windows (preview)
+
+Linux is the main target; the Windows build is an early preview working
+towards full support. Run `CPMX2077_<version>_x64-setup.exe` from Releases.
+It installs for your user only (no admin rights) and isn't code-signed yet,
+so SmartScreen asks once: More info, Run anyway. What differs from Linux:
+
+- **Finding the game**: Steam via the registry and its library folders, GOG
+  Galaxy via the registry, and the Epic Games launcher's install manifests.
+  Picking the folder by hand works as on Linux.
+- **No Linux setup panel**: the game runs natively, so there's no prefix,
+  runtime or DLL override to fix. Install the Visual C++ runtime yourself if
+  CET or RED4ext ask for it.
+- **API key** is kept in Windows Credential Manager.
+- **`nxm://` links**: installing doesn't take them over from Vortex or Mod
+  Organizer. “Handle nxm:// links” in Settings points them at CPMX2077 (a
+  per-user registry entry).
+- **Crash reports** are read from `%LOCALAPPDATA%\REDEngine\ReportQueue`.
+- **`.rar` archives** use the `tar.exe` that ships with Windows 10 and 11.
+- The library lives in `%APPDATA%\cp2077-modmanager\`.
+
+Not yet tested on a real Windows machine: CI builds and lints the Windows
+code, but the unit tests run on Linux only.
+
 ### Nexus SSO slug
 
 Nexus only allows browser sign-in for applications it has registered, and
@@ -184,11 +209,15 @@ cargo test --workspace
 cd src-tauri && cargo tauri build --bundles appimage
 ```
 
+On Windows (with the WebView2 runtime, which Windows 10 and 11 include), run
+`cargo tauri build --bundles nsis` in `src-tauri`; the installer lands in
+`target/release/bundle/nsis/`.
+
 The AppImage lands in `target/release/bundle/appimage/`. CI builds it on every
 push (see `.github/workflows/build.yml`). Pushing a version tag that matches
 the version in `src-tauri/tauri.conf.json` (e.g. `v0.1.0`), or running the
-workflow from the Actions tab with "release" ticked, publishes that build as a
-release with a SHA256SUMS file.
+workflow from the Actions tab with "release" ticked, publishes the AppImage
+and the Windows installer as a release with a SHA256SUMS file.
 
 ## Layout
 

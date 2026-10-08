@@ -240,11 +240,13 @@ fn extract_7z(archive: &Path, dest: &Path, limits: Limits) -> Result<(Vec<String
 }
 
 /// RAR has no pure-Rust decoder, so use the system's `bsdtar` (libarchive) or
-/// `unrar`. Names are listed and validated first, then the tree is walked
-/// after extraction to make sure nothing escaped or became a link.
+/// `unrar` (Windows 10 and later ship bsdtar as `tar.exe`). Names are listed
+/// and validated first, then the tree is walked after extraction to make sure
+/// nothing escaped or became a link.
 fn extract_external(archive: &Path, dest: &Path, limits: Limits) -> Result<(Vec<String>, u64)> {
-    let (list_cmd, extract_cmd): (Vec<&str>, Vec<&str>) = if which("bsdtar") {
-        (vec!["bsdtar", "-tf"], vec!["bsdtar", "--no-same-owner", "--no-same-permissions", "-xf"])
+    let bsdtar = if cfg!(windows) { "tar" } else { "bsdtar" };
+    let (list_cmd, extract_cmd): (Vec<&str>, Vec<&str>) = if which(bsdtar) {
+        (vec![bsdtar, "-tf"], vec![bsdtar, "--no-same-owner", "--no-same-permissions", "-xf"])
     } else if which("unrar") {
         (vec!["unrar", "lb"], vec!["unrar", "x", "-o-", "-ol-", "-y"])
     } else {
@@ -267,7 +269,7 @@ fn extract_external(archive: &Path, dest: &Path, limits: Limits) -> Result<(Vec<
     }
     let mut cmd = Command::new(extract_cmd[0]);
     cmd.args(&extract_cmd[1..]).arg(archive);
-    if extract_cmd[0] == "bsdtar" {
+    if extract_cmd[0] == bsdtar {
         cmd.arg("-C").arg(dest);
     } else {
         // unrar takes the destination as a trailing argument ending in '/'.
@@ -305,8 +307,9 @@ pub fn validate_tree(dest: &Path, limits: Limits) -> Result<(Vec<String>, u64)> 
 }
 
 fn which(bin: &str) -> bool {
+    let file = if cfg!(windows) { format!("{bin}.exe") } else { bin.to_string() };
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(&file).is_file()))
         .unwrap_or(false)
 }
 

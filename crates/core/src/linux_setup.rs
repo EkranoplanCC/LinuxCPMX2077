@@ -123,10 +123,18 @@ fn which(name: &str) -> Option<PathBuf> {
         .split(':')
         .filter(|d| !d.is_empty() && appdir.as_deref().is_none_or(|a| !d.starts_with(a)))
         .map(|d| Path::new(d).join(name))
-        .find(|p| {
-            use std::os::unix::fs::PermissionsExt;
-            p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
+        .find(|p| is_executable(p))
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
 }
 
 /// Everything the checks and fixes work on.
@@ -566,7 +574,12 @@ fn steam_proton_wine(prefix: &Path) -> Option<PathBuf> {
     game::proton_wine(Path::new(dir))
 }
 
+/// On Windows the game runs natively: there's no prefix, no overrides and no
+/// case-sensitive filesystem, so there is nothing to check.
 pub fn checks(ctx: &Ctx) -> Vec<Check> {
+    if cfg!(windows) {
+        return Vec::new();
+    }
     let g = ctx.game;
     let needs = game::needs_overrides(g);
     let redmods = game::has_redmods(&g.path);
@@ -1121,6 +1134,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn vc_fix_backs_up_runs_winetricks_and_undo_restores() {
         let home = tempfile::tempdir().unwrap();
         let gdir = tempfile::tempdir().unwrap();

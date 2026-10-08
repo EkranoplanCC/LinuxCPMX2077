@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 dirs = "7.0.0"
 hex = "0.4.3"
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "windows-native"] }
 log = "0.4.34"
 md-5 = "0.11.0"
 pelite = "0.10.0"
@@ -24,3 +24,6 @@ url = "2.5.8"
 uuid = { version = "1.27.0", features = ["v4"] }
 walkdir = "2.5.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56.0"
