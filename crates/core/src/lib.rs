@@ -10,6 +10,7 @@ pub mod dependencies;
 pub mod desktop;
 pub mod downloads;
 pub mod error;
+pub mod file_tree;
 pub mod fomod;
 pub mod game;
 pub mod game_versions;
