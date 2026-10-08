@@ -530,7 +530,7 @@ async fn analyze_game(app: AppHandle, game_id: i64) -> Result<cp2077mm_core::ana
 
 /// Run `f` with the setup context for one game: its fresh install details,
 /// what's running, and the folder fix records live in.
-fn with_setup<T>(app: &AppHandle, game_id: i64, f: impl FnOnce(&linux_setup::Ctx) -> Result<T>) -> Result<T> {
+pub(crate) fn with_setup<T>(app: &AppHandle, game_id: i64, f: impl FnOnce(&linux_setup::Ctx) -> Result<T>) -> Result<T> {
     let row = app.state::<AppState>().db.lock().unwrap().game(game_id)?;
     let home = home()?;
     let path = PathBuf::from(&row.path);
@@ -1589,6 +1589,7 @@ fn main() {
             ultraplus_cmd::ultraplus_refresh,
             reshade_cmd::reshade_status,
             reshade_cmd::reshade_latest,
+            reshade_cmd::reshade_launch,
             reshade_cmd::reshade_install,
             reshade_cmd::reshade_install_file,
         ])

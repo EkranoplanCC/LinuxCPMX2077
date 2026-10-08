@@ -95,10 +95,20 @@ it), the left and right arrow keys also resize it.
     protontricks, or winetricks with the game's own Proton).
   - *Steam launch options* → **Set launch options** writes
     `WINEDLLOVERRIDES="winmm,version=n,b" %command%` (plus `-modded` when
-    REDmod mods are installed). Only works while Steam is closed. **Copy**
-    copies the option to paste yourself.
+    REDmod mods are installed). With ReShade in the game, its DLL and
+    `d3dcompiler_47` join the list:
+    `WINEDLLOVERRIDES="winmm,version,dxgi,d3dcompiler_47=n,b" %command%`.
+    Other variables and overrides already in your launch options are kept.
+    Only works while Steam is closed. **Copy** copies the whole line to paste
+    yourself.
+  - *Shader compiler for ReShade* (only with ReShade installed) →
+    **Install d3dcompiler_47** installs Microsoft's shader compiler into the
+    prefix with protontricks or winetricks (winetricks takes the DLL from
+    Mozilla's Firefox installer). Wine's own `d3dcompiler_47` fails to
+    compile many ReShade effects.
   - *DLL overrides* (Heroic) → **Set overrides** sets `winmm` and `version`
-    to native-then-builtin in the prefix.
+    (and ReShade's DLL and `d3dcompiler_47` with ReShade installed) to
+    native-then-builtin in the prefix.
   - *Folder names* → **Merge folders** joins mod folders that exist under two
     spellings.
 - **Frameworks**: CET, RED4ext, redscript, ArchiveXL, TweakXL, Codeware and
@@ -219,6 +229,19 @@ installed*. Click the heading to open or fold the card.
 - **Uninstall** removes the DLL, the `ReShade.ini` the app wrote (with any
   changes ReShade made to it) and ReShade's log. Presets you made
   (`ReShadePreset.ini` and others) stay in `bin/x64`.
+
+On Linux the card also shows what ReShade needs from Proton:
+
+- **Launch options** (Steam) or **DLL overrides** (Heroic): *set* when Wine
+  loads ReShade's DLL from the game folder first. *not set* shows the line to
+  use, with **Copy**; **Set launch options** in the Game panel writes it for
+  you while Steam is closed. Without it, ReShade may not load.
+- **Shader compiler**: *d3dcompiler_47 native*, or *Wine builtin* with a
+  pointer to **Install d3dcompiler_47** in the Game panel.
+
+Right after ReShade is installed, the app offers both fixes in one dialog,
+like it does after installing CET or RED4ext. On Windows none of this is
+needed and the rows don't show.
 
 In game, the Home key opens ReShade's overlay.
 
@@ -650,6 +673,11 @@ API key is in Windows Credential Manager.
 Use **Install vcrun2022** in the Game panel, or run
 `protontricks 1091500 vcrun2022` yourself, then check the Steam launch
 options are set (Steam must be closed while the app sets them).
+
+**ReShade doesn't show up in game.** On Linux, check the ReShade card's
+**Launch options** row says *set*; Steam must be closed while the app writes
+them. If the overlay opens but effects fail to compile, use **Install
+d3dcompiler_47** in the Game panel.
 
 **Set launch options says Steam is running.** Steam overwrites its settings
 while it runs. Quit Steam completely and click the button again.

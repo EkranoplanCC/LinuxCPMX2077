@@ -104,17 +104,15 @@ async function refreshGame() {
   await loadSetup(true);
 }
 
-const LAUNCH_OPTION = 'WINEDLLOVERRIDES="winmm,version=n,b" %command%';
-
-function copyLaunchOption() {
+function copyLaunchOption(line) {
   return el("button", {
     title: "Paste it in Steam: Cyberpunk 2077 › Properties › General › Launch options",
     onclick: async () => {
       try {
-        await navigator.clipboard.writeText(LAUNCH_OPTION);
+        await navigator.clipboard.writeText(line);
         toast("Copied. In Steam, open Cyberpunk 2077 › Properties › Launch options and paste it.");
       } catch {
-        toast(`Copy this into Steam's launch options for Cyberpunk 2077:\n${LAUNCH_OPTION}`, true);
+        toast(`Copy this into Steam's launch options for Cyberpunk 2077:\n${line}`, true);
       }
     },
   }, "Copy");
@@ -150,7 +148,7 @@ function setupItem(c) {
   const ok = c.state === "ok";
   const buttons = [];
   if (c.fix) buttons.push(el("button", { class: "primary", title: c.fix.blocked || "", onclick: (e) => runSetup(e.target, c, c.fix, "setup_fix") }, c.fix.label));
-  if (c.id === "launch-options" && !ok) buttons.push(copyLaunchOption());
+  if (c.copy) buttons.push(copyLaunchOption(c.copy));
   if (c.undo) buttons.push(el("button", { onclick: (e) => runSetup(e.target, c, c.undo, "setup_undo") }, c.undo.label));
   return el("li", { class: ok ? "ok" : "" },
     el("b", {}, ok ? `✓ ${c.title}` : c.title), " ",
@@ -165,6 +163,7 @@ async function runSetup(button, c, action, command) {
   if (!go) return;
   await busy(button, async () => {
     if (c.id === "vc-runtime" && command === "setup_fix") toast("Installing the Visual C++ runtime. This can take a few minutes…");
+    if (c.id === "d3dcompiler" && command === "setup_fix") toast("Installing d3dcompiler_47. This can take a few minutes…");
     toast(await invoke(command, { gameId: currentGame.id, id: c.id }));
   });
   await loadSetup();
@@ -198,6 +197,7 @@ async function offerSetup(list) {
   if (!(await dialog.ask(ask, { title: "Linux setup", kind: "warning" }))) return;
   for (const c of ready) {
     if (c.id === "vc-runtime") toast("Installing the Visual C++ runtime. This can take a few minutes…");
+    if (c.id === "d3dcompiler") toast("Installing d3dcompiler_47. This can take a few minutes…");
     try { toast(await invoke("setup_fix", { gameId: currentGame.id, id: c.id })); }
     catch (e) { toast(String(e), true); }
   }

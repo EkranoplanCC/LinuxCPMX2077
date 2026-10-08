@@ -92,6 +92,7 @@ each with a button that fixes it and, once fixed, an **Undo** button:
 |---|---|
 | **Visual C++ runtime** (*Install vcrun2022*) | Installs `vcrun2022` into the game's prefix with protontricks (or winetricks with the game's own Proton). CET and RED4ext do not start without it. This can take a few minutes. |
 | **Steam launch options** (*Set launch options*) | Sets `WINEDLLOVERRIDES="winmm,version=n,b" %command%` (plus `-modded` if you use REDmod mods). **Close Steam first**: Steam overwrites the setting while it runs. |
+| **Shader compiler for ReShade** (*Install d3dcompiler_47*) | Only listed once ReShade is installed. Installs Microsoft's shader compiler into the prefix, which many ReShade effects need to compile. |
 | **DLL overrides**, Heroic only (*Set overrides*) | Sets the same `winmm` and `version` overrides in the Heroic prefix. |
 | **Folder names** (*Merge folders*) | Merges mod folders that exist under two spellings, such as `Mods` and `mods`. |
 
@@ -165,5 +166,7 @@ sidebar. **Pop out** moves it to its own window.
   recommendations** card in **Installed mods** shows what its authors
   recommend with it and what conflicts with it.
 - Want ReShade? Open the **ReShade** card in **Installed mods** and click
-  **Install ReShade**. See [ReShade](user-guide.md#reshade) in the user guide.
+  **Install ReShade**. On Linux, accept the launch options and
+  d3dcompiler_47 fixes the app offers afterwards (close Steam first). See
+  [ReShade](user-guide.md#reshade) in the user guide.
 - Read the [user guide](user-guide.md) for everything else.
