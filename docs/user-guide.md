@@ -469,27 +469,42 @@ Every archive you downloaded, grouped by mod with each version under it.
   the read-only MCP server, with **Copy**.
 - **Nexus browser sign-in**: the application slug Nexus issues for browser
   sign-in.
-- **Nexus browsing**: show adult content, debug mode, **Open debug
-  terminal** and **Clear saved pages**. Ticking *Debug mode* adds the API
-  request list to Get mods, opens the [debug terminal](#debug-terminal) and
-  adds a **Debug terminal** button under the tabs in the sidebar. Pages and
+- **Nexus browsing**: show adult content, debug mode, *Debug terminal
+  opens* (**In the sidebar**, the default, or **In its own window**), **Open
+  debug terminal** and **Clear saved pages**. Ticking *Debug mode* adds the
+  API request list to Get mods, opens the [debug terminal](#debug-terminal)
+  and adds a **Debug terminal** button under the tabs in the sidebar. Pages and
   searches are saved for a week; lists count as fresh for 5 minutes and mod
   pages for 10.
 - **Nexus account**: **Forget API key** removes it from the keyring.
 
 ### Debug terminal
 
-A terminal-style window that shows, live and oldest first, every Nexus API
-request and everything the app does on your machine. Open it with **Open
-debug terminal** in Settings or in Get mods' *API requests* list, or with
-**Debug terminal** in the sidebar while debug mode is on. It works the same
-on Linux and Windows and needs no terminal program.
+A terminal that shows, live and oldest first, every Nexus API request and
+everything the app does on your machine. It works the same on Linux and
+Windows and needs no terminal program.
+
+By default it sits at the foot of the main window's sidebar, under the
+**Debug terminal** button. That button shows or hides it, and **Open debug
+terminal** in Settings or in Get mods' *API requests* list shows it too.
+Drag its bottom-right corner to make it taller.
+
+- **Pop out** (in the docked terminal) moves it to a window of its own.
+- **Dock** (in that window) closes the window and puts it back in the
+  sidebar.
+- **Hide** (in the docked terminal) tucks it away; the app remembers this
+  until you show it again.
+- To always open it as a window, set *Debug terminal opens* in Settings to
+  **In its own window**.
+
+Docked, it is a compact version: the filter checkboxes are behind
+**Filters**, and each line's text goes under its time and tag.
 
 It looks like the computer terminals in Cyberpunk 2077: a black screen
 with glowing yellow-green text and scanlines, next to a light panel with the
 CPMX2077 emblem. **STATUS** at the top reads *ONLINE* while lines stream in
-and *PAUSED* after **Pause**. The light panel is hidden when the window is
-narrow.
+and *PAUSED* after **Pause**. The light panel is shown only in the
+separate window, when it's wide enough.
 
 Each line has a time, a tag and what happened, with the file or folder in
 brighter text. `VERIFY` and `INFO` results sit on a highlighted bar, and

@@ -1353,6 +1353,7 @@ function setDebugMode(on) {
   $("#nexus-debug-mode").checked = on;
   $("#nexus-debug").classList.toggle("hidden", !on);
   $("#debug-terminal-side").classList.toggle("hidden", !on);
+  if (!on) showDock(false);
   clearInterval(debugTimer);
   debugTimer = null;
   if (on) {
@@ -1364,20 +1365,72 @@ function setDebugMode(on) {
   }
 }
 
+// ---- debug terminal: docked in the sidebar (default) or its own window ---
+let debugPlace = loadPref("debugPlace", "dock") === "window" ? "window" : "dock";
+let dockOpen = false;
+
+function showDock(on) {
+  dockOpen = on;
+  const box = $("#debug-dock");
+  box.classList.toggle("hidden", !on);
+  $("#sidebar").classList.toggle("has-dock", on);
+  $("#debug-terminal-side").classList.toggle("on", on);
+  // A fresh frame reads the whole log again; a hidden one isn't kept polling.
+  if (on && !box.querySelector("iframe")) box.append(el("iframe", { src: "debug.html?docked", title: "Debug terminal", allow: "clipboard-write" }));
+  if (!on) box.replaceChildren();
+}
+
+async function popOutDebugTerminal() {
+  try {
+    await invoke("open_debug_terminal");
+    showDock(false);
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+function openDebugTerminal() {
+  if (debugPlace === "window") popOutDebugTerminal();
+  else {
+    showDock(true);
+    savePref("debugDockHidden", false);
+  }
+}
+
+// Called by the docked terminal's Pop out and Hide buttons.
+window.cpmxDebugTerminal = {
+  popOut: popOutDebugTerminal,
+  hide: () => {
+    showDock(false);
+    savePref("debugDockHidden", true);
+  },
+};
+listen("debug-dock", () => {
+  showDock(true);
+  savePref("debugDockHidden", false);
+});
+
 $("#nexus-debug-mode").addEventListener("change", (e) => {
   setDebugMode(e.target.checked);
   if (e.target.checked) openDebugTerminal();
 });
-function openDebugTerminal() {
-  invoke("open_debug_terminal").catch((e) => toast(String(e), true));
-}
+$("#debug-place").value = debugPlace;
+$("#debug-place").addEventListener("change", (e) => {
+  debugPlace = e.target.value;
+  savePref("debugPlace", debugPlace);
+});
 for (const b of document.querySelectorAll("button.debug-open")) b.addEventListener("click", openDebugTerminal);
+$("#debug-terminal-side").addEventListener("click", () => {
+  if (debugPlace === "dock" && dockOpen) window.cpmxDebugTerminal.hide();
+  else openDebugTerminal();
+});
 $("#nexus-debug-clear").addEventListener("click", (e) => busy(e.target, async () => {
   await invoke("nexus_clear_requests");
   debugRequests = [];
   renderDebug();
 }));
 setDebugMode(debugMode);
+if (debugMode && debugPlace === "dock" && loadPref("debugDockHidden", false) !== true) showDock(true);
 
 async function refreshCacheInfo() {
   const c = await invoke("nexus_cache_info");

@@ -30,7 +30,8 @@
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
     </nav>
-    <button id="debug-terminal-side" class="debug-open hidden" title="Nexus API requests and file operations, live">Debug terminal</button>
+    <button id="debug-terminal-side" class="hidden" title="Show or hide the debug terminal: Nexus API requests and file operations, live">Debug terminal</button>
+    <div id="debug-dock" class="hidden"></div>
   </aside>
   <div id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-controls="sidebar" tabindex="0"
        title="Drag to resize the menu. Double-click to reset."></div>
@@ -461,8 +462,16 @@
         <label class="check"><input type="checkbox" id="show-adult"> Show mods marked as adult content</label>
         <label class="check"><input type="checkbox" id="nexus-debug-mode"> Debug mode: show every Nexus API request in Get Mods and open the debug terminal</label>
         <div class="row">
+          <label>Debug terminal opens
+            <select id="debug-place" class="inline">
+              <option value="dock">In the sidebar</option>
+              <option value="window">In its own window</option>
+            </select>
+          </label>
           <button id="settings-debug-terminal" class="debug-open">Open debug terminal</button>
-          <span class="muted small">A terminal-style window that shows Nexus API requests and everything the app does on your machine: downloads, checksum checks, extractions, files copied, moved, backed up or deleted, and Linux setup fixes. Your API key is never shown.</span>
+        </div>
+        <div class="row">
+          <span class="muted small">A terminal that shows Nexus API requests and everything the app does on your machine: downloads, checksum checks, extractions, files copied, moved, backed up or deleted, and Linux setup fixes. In the sidebar it has Pop out to move it to its own window; the window has Dock to bring it back. Your API key is never shown.</span>
         </div>
         <p class="muted">Pages and searches you open are saved for a week, so they show at once (and still open when Nexus can't be reached).
            Lists count as fresh for 5 minutes and mod pages for 10; use Refresh to ask Nexus sooner.</p>

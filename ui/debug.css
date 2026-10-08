@@ -108,3 +108,24 @@ button.on { background: var(--text); color: #000; text-shadow: none; }
   color: var(--dim); text-transform: uppercase; letter-spacing: .5px;
 }
 .empty { color: var(--dim); padding: 12px 0; text-transform: uppercase; }
+
+/* Which buttons show where. */
+.docked .window-only, .windowed .docked-only { display: none; }
+#groups { display: contents; }
+
+/* ---- Docked in the main window's sidebar: narrow and short ---------------- */
+.docked body { font-size: 11px; }
+.docked #panel, .docked #device > div:not(:nth-child(2)) { display: none; }
+.docked #top { min-height: 0; display: block; }
+.docked #title { font-size: 14px; padding: 6px 8px 4px; border-bottom-width: 3px; }
+.docked #device { padding: 4px 8px; }
+.docked #bar { gap: 4px 6px; padding: 5px 8px; }
+.docked #groups { display: none; }
+.docked.filters-open #groups { display: flex; flex-wrap: wrap; gap: 3px 8px; width: 100%; order: 1; }
+.docked #filter { width: 100%; order: 2; }
+.docked .spacer { display: none; }
+.docked button { padding: 1px 6px; letter-spacing: .5px; }
+.docked #out { padding: 4px 8px 8px; }
+.docked .line { grid-template-columns: auto 1fr; gap: 0 8px; padding: 2px 0; border-bottom: 1px solid rgba(210, 223, 69, .08); }
+.docked .line > :nth-child(3) { grid-column: 1 / -1; }
+.docked #status { padding: 3px 8px; }
