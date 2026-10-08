@@ -1,0 +1,361 @@
+# CPMX2077 user guide
+
+A reference for how CPMX2077 works and what each part of the window does.
+New here? Start with [Getting started](getting-started.md).
+
+- [How it works](#how-it-works)
+- [Game panel](#game-panel)
+- [Installed mods](#installed-mods)
+- [Modpacks](#modpacks)
+- [Diagnostics](#diagnostics)
+- [Get mods](#get-mods)
+- [Downloads](#downloads)
+- [Settings](#settings)
+- [Download safety](#download-safety)
+- [Letting Claude look at your mods (MCP)](#letting-claude-look-at-your-mods-mcp)
+- [Where things are stored](#where-things-are-stored)
+- [Troubleshooting](#troubleshooting)
+
+## How it works
+
+CPMX2077 installs mods straight into the game folder, the way the mods'
+authors describe, and remembers every file it put there.
+
+1. **Get an archive**: from Nexus Mods, from a GitHub release, or a `.zip`,
+   `.7z` or `.rar` you already have. Downloads are verified before anything
+   is unpacked (see [Download safety](#download-safety)) and kept in the
+   download folder, one folder per mod.
+2. **Work out the layout**: the archive is unpacked into a staging folder
+   and the app decides where each file goes:
+   - a **FOMOD installer** runs as a wizard where you pick options;
+   - files already laid out like the game folder (`bin/`, `archive/`,
+     `r6/`, `red4ext/`, `engine/`, `mods/`) go where they say, even inside
+     an extra wrapper folder;
+   - a CET mod folder (with `init.lua`) goes to
+     `bin/x64/plugins/cyber_engine_tweaks/mods/`;
+   - a REDmod folder (`info.json` plus `archives/`, `scripts/`, …) goes to
+     `mods/`;
+   - loose `.archive`, `.xl`, `.reds` and tweak files go to their usual
+     folders, loose `.ini` files to `engine/config/platform/pc/`, and ReShade
+     presets to `bin/x64/`;
+   - an archive holding alternative packs (for example several presets)
+     asks which one you want in a **Versions** step;
+   - readmes and screenshots are skipped, and downloads that are not game
+     mods (only documents, a script, or a standalone program such as a save
+     editor) are refused with a message saying why.
+3. **Deploy**: each file is written with a safe temp-file-and-rename. If a
+   file belongs to another mod, the install stops unless you tick **Allow
+   overwriting other mods**. Original game files that get replaced are backed
+   up first.
+4. **Record**: the library database stores the mod, its source, version,
+   the game build it was installed on, the archive's checksums and every
+   installed file with its SHA-256. A staged copy of the mod is kept so it
+   can be switched off and on again without downloading.
+5. **Index**: every enabled mod is scanned for what it touches (game
+   resources in `.archive` files, redscript methods, TweakXL records,
+   ArchiveXL patches, CET hooks, RED4ext plugins). This index drives the
+   compatibility check, the graph and the dependency list.
+
+Uninstalling reverses step 3: the mod's files are removed, a file another
+mod had installed underneath comes back, and backed-up game files are
+restored.
+
+Installing another version of a mod you have replaces it in place: the old
+files come out, the new ones go in, and a disabled mod stays disabled. It
+counts as the same mod when it comes from the same GitHub repository, or
+when it installs some of the same files and comes from the same Nexus page,
+has the same name apart from version numbers, or mostly overlaps. An
+optional file from the same Nexus page that shares no files with the main
+one is installed next to it instead.
+
+## Game panel
+
+The left-hand panel shows the install the rest of the app works on.
+
+- **Game drop-down**: every install found. Steam libraries (native, Flatpak
+  and Snap Steam) and Heroic's GOG installs are scanned. **Rescan** looks
+  again; **Add path…** adds a game folder by hand.
+- **Version, Steam build, Prefix**: read from the game's executable, Steam's
+  manifest and the Proton prefix location.
+- **Linux setup items**: what mods need from Proton/Wine, each with a fix
+  button and, after a fix, **Undo**. Every fix asks for confirmation first,
+  and the app offers fixes on its own after you install a mod that needs one.
+  - *Visual C++ runtime* → **Install vcrun2022** (protontricks, Flatpak
+    protontricks, or winetricks with the game's own Proton).
+  - *Steam launch options* → **Set launch options** writes
+    `WINEDLLOVERRIDES="winmm,version=n,b" %command%` (plus `-modded` when
+    REDmod mods are installed). Only works while Steam is closed. **Copy**
+    copies the option to paste yourself.
+  - *DLL overrides* (Heroic) → **Set overrides** sets `winmm` and `version`
+    to native-then-builtin in the prefix.
+  - *Folder names* → **Merge folders** joins mod folders that exist under two
+    spellings.
+- **Frameworks**: CET, RED4ext, redscript, ArchiveXL, TweakXL, Codeware and
+  REDmod, highlighted when present in the game folder.
+
+## Installed mods
+
+The list of mods CPMX2077 installed in the selected game.
+
+| Column / control | What it does |
+|---|---|
+| **On** switch | Turns a mod off without uninstalling it: its files leave the game, whatever they replaced comes back, and a checked copy is kept. Turning it on puts them back without a download. Files the mod changed after install (its own settings) are kept. Disabled mods are left out of compatibility and crash checks. |
+| **Name / Category / Version / Source** | Click a heading to sort. The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
+| **Installed on game** | The game version when the mod went in. *game updated since* means the game has been patched since, so check the mod still works. |
+| **Update to …** | Appears when a newer file is available. *Switch to stable …* appears when you run a pre-release and a stable release is out. |
+| **Verify** | Re-hashes the mod's files and reports missing, edited or overridden ones. |
+| **Uninstall** | Removes the mod and restores what it replaced. |
+
+Above the list:
+
+- **Allow overwriting other mods**: lets the next install replace files that
+  belong to another mod. Uninstalling the winner later restores the loser's
+  copy.
+- **Check for updates** asks Nexus and GitHub for newer files (also runs at
+  start-up). **Update all** queues every available update.
+- **Install from archive…** installs a `.zip`, `.7z` or `.rar` from disk.
+- **Game version ribbon**: one chip per game version the app has seen. Pick
+  one to list the mods installed on it. For an older version, a summary shows
+  what you had when the game updated and what changed since (updated, turned
+  off, removed, added).
+- **Category filter**: your own categories and Nexus categories.
+- **Show dependencies** lists what each mod needs, indented under it: its
+  Nexus page's requirements and the frameworks its files use (redscript for
+  `.reds`, ArchiveXL for `.xl`, …). Each is marked installed, turned off,
+  already in the game folder, or missing, with a button to get it (**Turn
+  on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
+  off-site requirements).
+
+## Modpacks
+
+Nexus collections, your own categories, and mod list import/export. Needs a
+connected Nexus account for collections.
+
+- **Search collections**: search Cyberpunk 2077 collections and sort by most
+  endorsed, most downloaded, best rated, recently updated or newest.
+- **Open a collection** to see each of its mods marked as installed, missing,
+  turned off, or a different file than the collection lists. Then:
+  - **Install required mods** queues the missing required ones;
+  - **Install all, with optional** also queues optional ones;
+  - a button replaces mods you have on another version with the file the
+    collection lists;
+  - **Follow** tracks the collection without installing anything;
+    **Open on nexusmods.com** opens its page.
+  Mods the collection lists from outside Nexus are named so you can get them
+  by hand. Collection load order and bundled settings files are not applied
+  yet.
+- **Collections you follow**: installing from a collection follows it.
+  **Check for updates** asks Nexus for new revisions; **See what changed**
+  shows what a revision adds, changes and drops, with one button to update.
+  **Stop following** leaves its mods installed.
+- **Your categories**: add categories with a name and color, rename or
+  delete them. Assign them in Installed mods. They stay with a mod through
+  updates.
+- **Export mod list…** saves your mods, categories and followed collections
+  to a JSON file. **Import mod list…** reads one, adds its categories and
+  offers to get the mods you don't have.
+
+## Diagnostics
+
+One place to see whether your setup is healthy. **Check again** reruns every
+check. The top of the tab summarises what needs attention: game setup
+problems, recent crash reports, mods named in log errors, and compatibility
+problems. **Show in graph** next to a finding lights up the mods involved.
+
+### Graph
+
+How your mods connect: mods, the frameworks they need, game classes, tweak
+records and resources they touch, and the base game. Clashes are drawn in
+red.
+
+- **Layout**: *Web* (force layout) or *Flowchart* (left to right).
+- **Hide harmless hooks** hides hooks that several mods share without
+  conflict.
+- Drag to pan, scroll or use the zoom bar (− / 100% / + / **Fit**), drag a
+  node to move it, click a node for its details. **Re-layout** starts over.
+
+### Compatibility
+
+Lists, by severity:
+
+- **Problems**: clashes where only one mod can win, such as two mods
+  replacing the same redscript method, or a framework a mod needs that isn't
+  installed.
+- **Overlaps to check**: resources or tweak values several mods change, with
+  which archive wins the load order.
+- **Shared hooks**: usually fine.
+
+**Show what's affected** lists the exact resources or records. Base-game
+resources are shown by hash. *What each mod changes* is a per-mod summary
+table. No AI is involved: this is a local index of the mods' files.
+
+### Crashes & logs
+
+Reads the crash reports in the Proton prefix (`REDEngine/ReportQueue`), the
+CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs, per-mod CET
+logs and Proton's `steam-1091500.log`. Errors and warnings are listed, and
+each is matched to the installed mod it mentions. **Logs found** lists every
+log with **View** (with **Copy all** and **Open folder**).
+
+## Get mods
+
+Browse and download mods. The switch at the top right picks the source:
+**Nexus Mods** or **GitHub**.
+
+### Nexus Mods
+
+- **Connect**: paste your API key (stored in the system keyring only), or
+  **Sign in with Nexus Mods** once Nexus has registered the app.
+- **Browse**: search by name, filter by category, sort by best match,
+  trending, endorsements, downloads or date. Quick lists: **Trending** (most
+  downloaded of the mods added in the last two weeks), **Latest added**,
+  **Latest updated**, **Most endorsed**, **Most downloaded**. Pick 10–80
+  mods per page and jump to any page.
+- **Mod page**: description, stats, requirements and tags, and files grouped
+  as on the website (old versions folded away). Mods you have are marked
+  installed. **Refresh** asks Nexus again instead of using the saved copy.
+- **Downloading a file**:
+  - *Premium*: **Download & install** downloads through the API and
+    installs.
+  - *Free*: **Get from Nexus** opens the file page in a Nexus window inside
+    the app. Click **Slow download** there; the app catches the `nxm://`
+    link, downloads, verifies and installs. *or use your browser* opens the
+    page in your normal browser instead (the app offers to become the
+    `nxm://` handler first).
+- **Have a link?**: paste a Nexus mod URL or ID, an `nxm://` link (including
+  collection links), or a GitHub repository link.
+- **Requests left** shows your Nexus API quota. Browsing pauses when fewer
+  than 25 requests remain so downloads still work, and nothing is sent once
+  Nexus says the quota is used up until it resets.
+- **API requests** (Settings → debug mode) lists every request with timing.
+  Your API key is never shown.
+- Adult-flagged mods are hidden unless you turn them on in Settings.
+
+### GitHub
+
+The core frameworks and many mods ship as GitHub releases.
+
+- With an empty search, the featured list shows CET, RED4ext, redscript,
+  ArchiveXL, TweakXL and Codeware. **Install missing frameworks** installs
+  every one the game lacks, each after what it needs.
+- Search by name, or paste `owner/repo` or a repository URL, to see its
+  releases and assets. **Install with what it needs** installs a framework
+  together with its dependencies.
+- Release lists are cached for 10 minutes (GitHub allows 60 requests an hour
+  without a token), so a brand-new release can take that long to show.
+
+### Download queue
+
+**Select several**, click mods, then **Download all**. GitHub and Premium
+downloads run straight through. For a free account one Nexus window steps
+through the file pages ("Mod 3 of 12"): click the download button on each
+page and the app installs that mod in the background while it moves on.
+The queue bar at the top shows progress, with **Show Nexus window**,
+**Skip this mod**, **Cancel** and **Show list**. Closing the Nexus window
+pauses the queue; **Resume** carries on. Skip and Cancel are also in the
+window's *Download queue* menu.
+
+## Downloads
+
+Every archive you downloaded, grouped by mod with each version under it.
+
+- Columns: version, the game version it was downloaded on, source, size and
+  how it was verified.
+- **Channel filter**: stable, beta and nightly; stable only; or beta and
+  nightly only. The channel comes from the version and file name and from
+  GitHub's pre-release flag.
+- **Install** or **Switch to this** installs that file, replacing the version
+  you have. **Delete** removes the file from disk.
+- **Open all folders** expands every mod.
+
+## Settings
+
+- **Download location**: where archives are kept, one folder per mod.
+  **Change…** offers to move existing downloads; **Use the default folder**
+  goes back; **Sort into mod folders** tidies loose files.
+- **Nexus downloads from your browser**: **Handle nxm:// links** makes
+  CPMX2077 the handler for "Mod Manager Download" links clicked in your
+  normal browser. It replaces any other app that handled them.
+- **Let Claude look at your mods**: the command to connect Claude Code to
+  the read-only MCP server, with **Copy**.
+- **Nexus browser sign-in**: the application slug Nexus issues for browser
+  sign-in.
+- **Nexus browsing**: show adult content, debug mode (API request list),
+  and **Clear saved pages**. Pages and searches are saved for a week; lists
+  count as fresh for 5 minutes and mod pages for 10.
+- **Nexus account**: **Forget API key** removes it from the keyring.
+
+## Download safety
+
+- Archive formats are identified by their content, never by extension.
+- Entries with `..`, absolute paths, drive letters, `:` or NUL are rejected;
+  symlinks are refused; every write is checked to land inside the target
+  folder.
+- Entry count and actual unpacked size are capped (zip-bomb defence). A
+  failed extraction is deleted.
+- Files are deployed with temp-file-and-rename and never written through a
+  symlink in the game folder.
+- Nexus downloads come only over HTTPS from Nexus' own hosts, must match the
+  advertised size, and their MD5 must be known to Nexus for that exact mod
+  and file, or the file is discarded.
+- GitHub downloads come only over HTTPS from GitHub's hosts and must match
+  the asset's published SHA-256. Older assets without a digest are marked
+  unverified.
+- The in-app Nexus window can't call any of the app's functions. It only
+  hands over `nxm://` links; other sites open in your browser.
+
+## Letting Claude look at your mods (MCP)
+
+Running the AppImage with `--mcp` starts a read-only
+[MCP](https://modelcontextprotocol.io) server that an agent such as Claude
+Code can use to help diagnose your setup:
+
+```sh
+claude mcp add cp2077-mods -- /path/to/CPMX2077_<version>_amd64.AppImage --mcp
+```
+
+Tools: `list_games`, `list_mods`, `get_mod`, `find_touches`,
+`compatibility_report`, `crash_analysis`, `list_logs`, `read_log`. The
+database is opened read-only, nothing can be changed, installed or run, and
+logs are only readable from a fixed list of known locations.
+
+## Where things are stored
+
+| What | Where |
+|---|---|
+| Library database | `~/.local/share/cp2077-modmanager/library.sqlite3` |
+| Downloads (default) | `~/.local/share/cp2077-modmanager/downloads/` |
+| Staged copies of mods | `~/.local/share/cp2077-modmanager/staging/` |
+| Backed-up game files | `~/.local/share/cp2077-modmanager/backups/` |
+| Linux setup records and backups | `~/.local/share/cp2077-modmanager/setup/<game>/` |
+| Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
+| Nexus API key | System keyring (Secret Service) only |
+
+## Troubleshooting
+
+**CET or RED4ext doesn't start.** Almost always the Visual C++ runtime.
+Use **Install vcrun2022** in the Game panel, or run
+`protontricks 1091500 vcrun2022` yourself, then check the Steam launch
+options are set (Steam must be closed while the app sets them).
+
+**Set launch options says Steam is running.** Steam overwrites its settings
+while it runs. Quit Steam completely and click the button again.
+
+**The game isn't found.** Use **Add path…** and pick the folder holding
+`bin/x64/Cyberpunk2077.exe`. Run the game once through Steam or Heroic first
+so its prefix exists.
+
+**An install says a file belongs to another mod.** Two mods ship the same
+file. Tick **Allow overwriting other mods** if you want the new one to win;
+uninstalling it later restores the other mod's copy.
+
+**"Get from Nexus" does nothing after clicking download.** Make sure you
+clicked the download in CPMX2077's own Nexus window, or that CPMX2077 handles
+`nxm://` links (Settings) if you used your browser.
+
+**The game crashes.** Open Diagnostics → *Crashes & logs*. Mods named in
+errors are listed; turn them off with the **On** switch to test, then
+**Check again**. The compatibility list may also name a clash.
+
+**Browsing stopped working.** Check *Requests left* on the Get mods tab;
+Nexus limits API requests per hour and per day. Saved pages still open.

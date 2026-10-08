@@ -6,6 +6,11 @@ Heroic (GOG), shipped as an AppImage.
 Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases),
 make it executable (`chmod +x`) and run it.
 
+- **New here?** Follow [Getting started](docs/getting-started.md): install,
+  connect Nexus, set up the frameworks and Proton, and install your first mod.
+- **Reference:** the [user guide](docs/user-guide.md) explains how the app
+  works and what every tab and button does, plus troubleshooting.
+
 ![screenshot](docs/screenshot.png)
 
 ## What it does
