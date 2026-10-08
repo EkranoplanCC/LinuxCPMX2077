@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::activity::{self, Kind};
 use crate::desktop::user_command;
 use crate::game::{self, GameInstall, Store};
 use crate::install::{KNOWN_ROOTS, resolve_ci};
@@ -346,6 +347,7 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
         let _ = std::fs::set_permissions(&tmp, m.permissions());
     }
     std::fs::rename(&tmp, path)?;
+    activity::record_path(Kind::Setup, "Rewrote", path);
     Ok(())
 }
 
@@ -449,6 +451,7 @@ fn merge_dups(game_dir: &Path, dups: &[CaseDup]) -> Result<(Moves, Vec<String>)>
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::rename(&f, &dst)?;
+                activity::record_path(Kind::Move, format!("Moved {} to", f.display()), &dst);
                 moves.push((from, dst.strip_prefix(game_dir).unwrap_or(&dst).to_string_lossy().to_string()));
             }
             remove_empty_dirs(&other_abs);
@@ -845,6 +848,7 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
                     if is_vc_file(&name) && e.file_type().is_ok_and(|t| t.is_file()) {
                         std::fs::create_dir_all(backup.join(dir))?;
                         std::fs::copy(e.path(), backup.join(dir).join(&name))?;
+                        activity::record_path(Kind::Backup, "Saved a copy of", &e.path());
                         names.push(name);
                     }
                 }
@@ -854,6 +858,7 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
         for reg in ["user.reg", "system.reg"] {
             if prefix.join(reg).is_file() {
                 std::fs::copy(prefix.join(reg), backup.join(reg))?;
+                activity::record_path(Kind::Backup, "Saved a copy of", &prefix.join(reg));
             }
         }
         save_record(ctx, FIX_VC, &rec)?;
@@ -884,7 +889,14 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
     };
     let log_path = ctx.state_dir.join("vc-runtime.log");
     let log = std::fs::File::create(&log_path)?;
+    let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    activity::record_path(
+        Kind::Setup,
+        format!("Running {} {} (output in vc-runtime.log)", cmd.get_program().to_string_lossy(), args.join(" ")),
+        &prefix,
+    );
     let status = cmd.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).status()?;
+    activity::record(Kind::Setup, format!("vcrun2022 installer finished: {status}"));
     let vc = vc_state(&prefix);
     if vc.ok() {
         let v = match vc {
@@ -923,16 +935,19 @@ pub fn undo(ctx: &Ctx, id: &str) -> Result<String> {
                         let name = e.file_name().to_string_lossy().to_string();
                         if is_vc_file(&name) && !names.contains(&name) {
                             std::fs::remove_file(e.path())?;
+                            activity::record_path(Kind::Delete, "Removed", &e.path());
                         }
                     }
                 }
                 for name in names {
                     std::fs::copy(backup.join(dir).join(name), prefix.join(dir).join(name))?;
+                    activity::record_path(Kind::Restore, "Put back", &prefix.join(dir).join(name));
                 }
             }
             for reg in ["user.reg", "system.reg"] {
                 if backup.join(reg).is_file() {
                     std::fs::copy(backup.join(reg), prefix.join(reg))?;
+                    activity::record_path(Kind::Restore, "Put back", &prefix.join(reg));
                 }
             }
             let _ = std::fs::remove_dir_all(&backup);
@@ -966,6 +981,7 @@ pub fn undo(ctx: &Ctx, id: &str) -> Result<String> {
                     std::fs::create_dir_all(p)?;
                 }
                 std::fs::rename(&src, &dst)?;
+                activity::record_path(Kind::Move, format!("Moved {} back to", src.display()), &dst);
             }
             if skipped > 0 {
                 format!("Files moved back; {skipped} had changed since and were left where they are.")

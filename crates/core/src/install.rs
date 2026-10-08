@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::activity::{self, Kind};
 use crate::archive::{self, Limits};
 use crate::db::{Db, GameRow, ModFile, NewMod, STATUS_DISABLED, STATUS_ENABLED};
 use crate::fomod;
@@ -480,6 +481,7 @@ impl Installer<'_> {
     /// Hash and extract an archive, and read its FOMOD installer if it has one.
     pub fn prepare(&self, game: &GameRow, archive_path: &Path) -> Result<Prepared> {
         let (sha256, md5) = hash::file_digests(archive_path)?;
+        activity::record_path(Kind::Verify, format!("Hashed archive: SHA-256 {sha256}"), archive_path);
         std::fs::create_dir_all(&self.staging_root)?;
         let dir = tempfile::Builder::new().prefix("incoming-").tempdir_in(&self.staging_root)?.keep();
         let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -603,6 +605,11 @@ impl Installer<'_> {
         }
         std::fs::rename(p.dir.join("files"), &stage_dir)?;
         let _ = std::fs::remove_dir_all(&p.dir);
+        activity::record_path(
+            Kind::Move,
+            format!("Kept the unpacked files of {} for enable/disable and uninstall", meta.name),
+            &stage_dir,
+        );
 
         match self.deploy(game, &game_dir, mod_id, &stage_dir, &plan) {
             Ok(backed_up) => {
@@ -611,6 +618,10 @@ impl Installer<'_> {
                 if let Err(e) = crate::analysis::index_mod(self.db, &self.staging_root, mod_id) {
                     log::warn!("indexing mod {mod_id} failed: {e}");
                 }
+                activity::record(
+                    Kind::Info,
+                    format!("Installed {} ({} layout): {} files, {} game files backed up", meta.name, plan.layout, plan.files.len(), backed_up.len()),
+                );
                 Ok(InstallReport {
                 mod_id,
                 name: meta.name,
@@ -624,6 +635,7 @@ impl Installer<'_> {
             }
             Err(e) => {
                 // Roll back whatever was deployed.
+                activity::record(Kind::Error, format!("Installing {} failed, rolling back: {e}", meta.name));
                 let _ = self.uninstall(mod_id);
                 Err(e)
             }
@@ -748,12 +760,14 @@ impl Installer<'_> {
                     let cur_sha = hash::sha256_file(&dst)?;
                     let backup = self.backups_root.join(game.id.to_string()).join(&f.target);
                     atomic_copy(&dst, &backup)?;
+                    activity::record_path(Kind::Backup, format!("Saved the original {} to", f.target), &backup);
                     self.db.add_backup(game.id, &f.target, &backup.to_string_lossy(), &cur_sha)?;
                     backed_up.push(f.target.clone());
                 }
             }
             atomic_copy(&src, &dst)?;
             let size = std::fs::metadata(&src)?.len() as i64;
+            activity::record_path(Kind::Copy, format!("Copied {} ({})", f.staged, activity::size(size as u64)), &dst);
             self.db.add_mod_file(&ModFile {
                 mod_id,
                 rel_path: f.target.clone(),
@@ -784,21 +798,25 @@ impl Installer<'_> {
                 // itself (configs); either way not ours to delete.
                 let other = self.db.owners_of(game.id, &f.rel_path, mod_id)?.iter().any(|o| o.sha256 == cur);
                 if !other {
+                    activity::record_path(Kind::Info, "Left in place: changed after install", &dst);
                     kept.push((f.rel_path.clone(), cur));
                 }
                 continue;
             }
             std::fs::remove_file(&dst)?;
+            activity::record_path(Kind::Delete, "Removed", &dst);
             if let Some(next) = self.db.owners_of(game.id, &f.rel_path, mod_id)?.into_iter().next() {
                 let src = self.staging_root.join(next.mod_id.to_string()).join(&next.staged_path);
                 if src.is_file() {
                     atomic_copy(&src, &dst)?;
+                    activity::record_path(Kind::Restore, format!("Put back the copy from mod #{}", next.mod_id), &dst);
                     continue;
                 }
             }
             if let Some((backup, _)) = self.db.take_backup(game.id, &f.rel_path)? {
                 atomic_copy(Path::new(&backup), &dst)?;
                 let _ = std::fs::remove_file(&backup);
+                activity::record_path(Kind::Restore, "Put back the original game file", &dst);
             } else {
                 remove_empty_parents(&dst, &game_dir);
             }
@@ -816,8 +834,10 @@ impl Installer<'_> {
         self.db.delete_mod(mod_id)?;
         let stage = self.staging_root.join(mod_id.to_string());
         if stage.exists() {
-            std::fs::remove_dir_all(stage)?;
+            std::fs::remove_dir_all(&stage)?;
+            activity::record_path(Kind::Delete, "Deleted the stored copy", &stage);
         }
+        activity::record(Kind::Info, format!("Uninstalled {}", m.name));
         Ok(())
     }
 
@@ -835,6 +855,7 @@ impl Installer<'_> {
         match self.undeploy(&game, mod_id) {
             Ok(kept) => {
                 self.db.set_kept_files(mod_id, &kept)?;
+                activity::record(Kind::Info, format!("Disabled {} ({} files left in place)", m.name, kept.len()));
                 Ok(kept.into_iter().map(|(p, _)| p).collect())
             }
             Err(e) => {
@@ -885,6 +906,7 @@ impl Installer<'_> {
             Ok(backed_up) => {
                 self.db.set_mod_status(mod_id, STATUS_ENABLED)?;
                 self.db.set_kept_files(mod_id, &[])?;
+                activity::record(Kind::Info, format!("Enabled {} ({} files)", m.name, plan.files.len()));
                 Ok(EnableReport {
                     files_deployed: plan.files.len(),
                     kept_in_place,
@@ -1079,6 +1101,16 @@ mod tests {
         // Case-insensitive merge into the existing engine/config dir.
         assert_eq!(std::fs::read(game_dir.join("engine/config/base.ini")).unwrap(), b"mod-a-ini");
         assert!(!game_dir.join("Engine").exists());
+        // The debug terminal saw the extraction, the backup and both copies.
+        let mine: Vec<_> = activity::since(0)
+            .into_iter()
+            .filter(|e| e.path.as_deref().is_some_and(|p| p.starts_with(&*f.root.to_string_lossy())))
+            .map(|e| e.kind)
+            .collect();
+        for kind in [Kind::Verify, Kind::Extract, Kind::Backup, Kind::Copy, Kind::Move] {
+            assert!(mine.contains(&kind), "{kind:?} missing from {mine:?}");
+        }
+        assert_eq!(mine.iter().filter(|k| **k == Kind::Copy).count(), 2);
 
         let b = f.root.join("b.zip");
         zip_with(&b, &[("archive/pc/mod/shared.archive", b"from-b")]);

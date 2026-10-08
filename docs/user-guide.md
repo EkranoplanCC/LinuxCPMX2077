@@ -1,7 +1,8 @@
 # CPMX2077 user guide
 
 A reference for how CPMX2077 works and what each part of the window does.
-New here? Start with [Getting started](getting-started.md).
+New here? Start with [Getting started](getting-started.md). Screenshots
+show sample data, with file locations blurred.
 
 - [How it works](#how-it-works)
 - [Game panel](#game-panel)
@@ -95,14 +96,17 @@ The left-hand panel shows the install the rest of the app works on.
 
 ## Installed mods
 
+![The Installed mods tab with the game panel on the left](images/installed-mods.png)
+
 The list of mods CPMX2077 installed in the selected game.
 
 | Column / control | What it does |
 |---|---|
 | **On** switch | Turns a mod off without uninstalling it: its files leave the game, whatever they replaced comes back, and a checked copy is kept. Turning it on puts them back without a download. Files the mod changed after install (its own settings) are kept. Disabled mods are left out of compatibility and crash checks. |
-| **Name / Tags & category / Version / Source** | Click a heading to sort (*Tags & category* sorts by a mod's first tag, then its Nexus category). A mod's tags show as chips: **+ Tag** (or **+** once it has one) adds one of your tags (see [Modpacks](#modpacks)), **×** on a chip takes it off. A mod can have any number of tags. The Nexus category is shown under them. |
+| **Name / Tags & category / Mod version / Source** | Click a heading to sort (*Tags & category* sorts by a mod's first tag, then its Nexus category). **Mod version** is the mod's own version (the game version is under **Installed on game**). A mod's tags show as chips: **+ Tag** (or **+** once it has one) adds one of your tags (see [Modpacks](#modpacks)), **×** on a chip takes it off. A mod can have any number of tags. The Nexus category is shown under them. |
 | **Installed on game** | The game version when the mod went in. *game updated since* means the game has been patched since, so check the mod still works. |
 | **Update to …** | Appears when a newer file is available. *Switch to stable …* appears when you run a pre-release and a stable release is out. |
+| **Mod page** | Opens the mod's page in **Get mods** (description, files, requirements), for mods from Nexus or GitHub. From there **Open on nexusmods.com** opens the website. Not shown for mods installed from an archive on disk. |
 | **Verify** | Re-hashes the mod's files and reports missing, edited or overridden ones. |
 | **Uninstall** | Removes the mod and restores what it replaced. |
 
@@ -125,7 +129,11 @@ Above the list:
   `.reds`, ArchiveXL for `.xl`, …). Each is marked installed, turned off,
   already in the game folder, or missing, with a button to get it (**Turn
   on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
-  off-site requirements).
+  off-site requirements). The requirements come from each mod's Nexus page,
+  asked again once a day, so a requirement you have never installed still
+  shows up as missing. The line next to the checkbox counts what is missing
+  for your turned-on mods, and **Get missing (N)** queues all of it at once:
+  core frameworks from GitHub, everything else from Nexus.
 
 ## Modpacks
 
@@ -164,6 +172,8 @@ connected Nexus account for collections.
 
 ## Netrunner
 
+![The top of the Netrunner tab: crashes and errors, compatibility, and the file map](images/netrunner.png)
+
 One place to see whether your setup is healthy (called Diagnostics in
 earlier versions). **Check again** reruns every check. The top of the
 tab summarises what needs attention: game setup problems, where the last
@@ -175,6 +185,8 @@ title (**Files**, **Graph**, **Compatibility**, **Crashes & logs**) jump to
 each section.
 
 ### File map
+
+![The file map showing the archive/pc/mod folder and which mod each file came from](images/file-map.png)
 
 Every file your mods put into the game, laid out like the game folder, in
 the style of a registry editor. Folders are on the left: click one to open
@@ -205,6 +217,8 @@ matches. The map only shows files CPMX2077 installed, not the game's own
 files or mods installed by hand.
 
 ### Graph
+
+![The graph in the Flowchart (left to right) layout](images/graph.png)
 
 How your mods connect: mods, the frameworks they need, game classes, tweak
 records and resources they touch, and the base game. Clashes are drawn in
@@ -242,6 +256,8 @@ resources are shown by hash. *What each mod changes* is a per-mod summary
 table. No AI is involved: this is a local index of the mods' files.
 
 ### Crashes & logs
+
+![Crashes & logs with the startup timeline and Start here on the step that failed](images/crashes.png)
 
 Reads the crash reports in the Proton prefix (`REDEngine/ReportQueue`), the
 CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs, per-mod CET
@@ -295,9 +311,25 @@ Browse and download mods. The switch at the top right picks the source:
   downloaded of the mods added in the last two weeks), **Latest added**,
   **Latest updated**, **Most endorsed**, **Most downloaded**. Pick 10–80
   mods per page and jump to any page.
+- **Mods by an author**: click the author's name after "by" on a mod card or
+  a mod page to list every Cyberpunk 2077 mod that member uploaded. The top
+  of the list shows their name, how many mods they have, their unique
+  downloads, when they joined and Nexus' *recognised author* mark, with a
+  **Sort** menu and **Back to all mods**. Searching or clicking a quick list
+  also leaves the author's list.
+- **Download from the card**: the **⬇** button on a mod's picture lists up
+  to two of its main files, newest first (the primary file first when the
+  author marked one; mods without main files show their optional files).
+  Files you already have say *already downloaded*. Click one to download and
+  install it the same way as on the mod page, or **All files…** to open the
+  mod page.
 - **Mod page**: description, stats, requirements and tags, and files grouped
   as on the website (old versions folded away). Mods you have are marked
-  installed. **Refresh** asks Nexus again instead of using the saved copy.
+  installed. Each Nexus requirement has a **You have** column (installed,
+  turned off, in the game folder, or missing) with a button to get or turn
+  on what you lack, and a line saying how many you're missing; **Get
+  missing** queues them all. This works before you install the mod, so you
+  can see what it will need. **Refresh** asks Nexus again instead of using the saved copy.
 - **Downloading a file**:
   - *Premium*: **Download & install** downloads through the API and
     installs.
@@ -306,16 +338,31 @@ Browse and download mods. The switch at the top right picks the source:
     link, downloads, verifies and installs. *or use your browser* opens the
     page in your normal browser instead (the app offers to become the
     `nxm://` handler first).
+  - You stay on **Get mods** while it downloads: a progress bar shows at the
+    top of the page, and on the mod's card when you started from the card.
+    The Downloads tab has the same bar.
+- **No duplicate downloads**: a file that is already in your downloads (same
+  Nexus or GitHub file, still on disk and complete) is not downloaded again.
+  The app installs the copy you have and says so. Files in your downloads
+  are marked *downloaded* on the mod page, and the download queue skips the
+  Nexus window for them. Clicking the same file twice while it downloads
+  shows "this file is already downloading". If a download turns out to be
+  byte-for-byte the same as a file you already have, the new copy is
+  deleted and the entry points at the old one. To fetch a file again,
+  **Delete** it in Downloads first.
 - **Have a link?**: paste a Nexus mod URL or ID, an `nxm://` link (including
   collection links), or a GitHub repository link.
 - **Requests left** shows your Nexus API quota. Browsing pauses when fewer
   than 25 requests remain so downloads still work, and nothing is sent once
   Nexus says the quota is used up until it resets.
 - **API requests** (Settings → debug mode) lists every request with timing.
-  Your API key is never shown.
+  Your API key is never shown. **Open debug terminal** there opens the
+  [debug terminal](#debug-terminal).
 - Adult-flagged mods are hidden unless you turn them on in Settings.
 
 ### GitHub
+
+![Get mods switched to GitHub, showing the featured frameworks](images/get-mods-github.png)
 
 The core frameworks and many mods ship as GitHub releases.
 
@@ -350,6 +397,8 @@ Every archive you downloaded, grouped by mod with each version under it.
   GitHub's pre-release flag.
 - **Install** or **Switch to this** installs that file, replacing the version
   you have. **Delete** removes the file from disk.
+- Each file is kept once: downloading the same file again uses this copy
+  (see *No duplicate downloads* under Get mods).
 - **Open all folders** expands every mod.
 
 ## Settings
@@ -364,10 +413,58 @@ Every archive you downloaded, grouped by mod with each version under it.
   the read-only MCP server, with **Copy**.
 - **Nexus browser sign-in**: the application slug Nexus issues for browser
   sign-in.
-- **Nexus browsing**: show adult content, debug mode (API request list),
-  and **Clear saved pages**. Pages and searches are saved for a week; lists
-  count as fresh for 5 minutes and mod pages for 10.
+- **Nexus browsing**: show adult content, debug mode, **Open debug
+  terminal** and **Clear saved pages**. Ticking *Debug mode* adds the API
+  request list to Get mods, opens the [debug terminal](#debug-terminal) and
+  adds a **Debug terminal** button under the tabs in the sidebar. Pages and
+  searches are saved for a week; lists count as fresh for 5 minutes and mod
+  pages for 10.
 - **Nexus account**: **Forget API key** removes it from the keyring.
+
+### Debug terminal
+
+A terminal-style window that shows, live and oldest first, every Nexus API
+request and everything the app does on your machine. Open it with **Open
+debug terminal** in Settings or in Get mods' *API requests* list, or with
+**Debug terminal** in the sidebar while debug mode is on. It works the same
+on Linux and Windows and needs no terminal program.
+
+It looks like the computer terminals in Cyberpunk 2077: a black screen
+with glowing yellow-green text and scanlines. **STATUS** at the top reads
+*ONLINE* while lines stream in and *PAUSED* after **Pause**.
+
+Each line has a time, a tag and what happened, with the file or folder in
+brighter text (errors in red):
+
+| Tag | What it means |
+| --- | --- |
+| `NEXUS` | A Nexus API request: endpoint, status, time taken, requests left, or *(cached)* / *(saved copy)* / *(held back)* when it wasn't sent |
+| `API` | A GitHub API request, with status and requests left |
+| `DOWNLOAD` | A file being fetched (host shown without its signed link), and its size when done |
+| `VERIFY` | The download's MD5/SHA-256 checked against Nexus or GitHub, or an archive hashed before install |
+| `EXTRACT` | An archive being unpacked into staging, and how many files came out |
+| `COPY` | A mod file written into the game folder |
+| `BACKUP` | An original game file (or a Proton prefix file) saved before it is replaced |
+| `RESTORE` | A file put back: the original game file, or another mod's copy |
+| `MOVE` | A file moved: a finished download, sorting downloads into folders, a Linux setup fix moving files |
+| `DELETE` | A file or folder removed: uninstalled mod files, a deleted download, a stored copy |
+| `SETUP` | Linux setup fixes and undos (including the protontricks command run), settings files rewritten, mod list exports |
+| `INFO` | Summaries: mod installed, enabled, disabled or uninstalled |
+| `ERROR` | Something failed or a download was discarded (always shown) |
+
+- The checkboxes **API**, **Downloads**, **Extractions**, **File changes**
+  and **Setup & summaries** hide or show those lines; **Filter text…**
+  shows only lines containing what you type.
+- **Follow** keeps the newest line in view. **Pause** stops new lines
+  (**Resume** picks up everything that happened meanwhile).
+- **Copy** copies the shown lines; **Save…** writes them to a `.log` file
+  to attach to a bug report.
+- **Clear** empties the terminal and the API request list.
+
+The app keeps the most recent 5000 operations in memory while it runs, so
+the terminal also shows what happened before you opened it. Nothing is
+written to disk unless you click **Save…**. Your API key and the signed
+part of download links are never shown.
 
 ## Download safety
 
@@ -456,6 +553,11 @@ step marked **Start here** under *Last start, step by step*, then *Known
 problems*. Mods named in errors from the last session are listed; turn them
 off with the **On** switch to test, start the game again, then **Check
 again**. The compatibility list may also name a clash.
+
+**Something went wrong and you want to see exactly what happened.** Tick
+*Debug mode* in Settings and use the [debug terminal](#debug-terminal): it
+lists each request, download, checksum check, extraction and file the app
+touched. **Save…** gives you a log to attach to a bug report.
 
 **Browsing stopped working.** Check *Requests left* on the Get mods tab;
 Nexus limits API requests per hour and per day. Saved pages still open.

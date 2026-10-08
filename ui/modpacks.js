@@ -19,7 +19,43 @@ async function loadModExtras(refreshDeps = false) {
   if (currentGame?.id !== gameId) return;
   modTags = tags;
   depsByMod = deps ? new Map(deps.mods.map((d) => [d.mod_id, d])) : null;
-  $("#deps-note").textContent = deps?.note || "";
+  const enabled = deps ? deps.mods.filter((d) => mods.some((m) => m.id === d.mod_id && m.status === "installed")) : [];
+  const missing = missingDeps(enabled);
+  const missingNames = new Set(enabled.flatMap((d) => d.deps.filter((x) => x.state === "missing").map((x) => x.name)));
+  const needing = enabled.filter((d) => d.deps.some((x) => x.state === "missing")).length;
+  $("#deps-note").textContent = [
+    deps && (needing
+      ? `${missingNames.size} missing requirement${missingNames.size === 1 ? "" : "s"} for ${needing} mod${needing === 1 ? "" : "s"}`
+      : "Nothing missing"),
+    deps?.note,
+  ].filter(Boolean).join(" · ");
+  const btn = $("#deps-get-missing");
+  btn.classList.toggle("hidden", !missing.length);
+  btn.textContent = `Get missing (${missing.length})`;
+  btn.onclick = (e) => busy(e.target, () => getMissingDeps(missing));
+}
+
+// Missing requirements of enabled mods that CPMX2077 can fetch, once each.
+function missingDeps(list) {
+  const seen = new Set();
+  const out = [];
+  for (const d of list.flatMap((x) => x.deps)) {
+    if (d.state !== "missing") continue;
+    const key = d.framework && d.framework !== "redmod" ? `fw:${d.framework}` : d.nexus_mod_id ? `nexus:${d.nexus_mod_id}` : null;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out;
+}
+
+// Queue missing requirements: core frameworks from GitHub (with what they
+// need), everything else from Nexus.
+async function getMissingDeps(deps) {
+  const frameworks = [...new Set(deps.filter((d) => d.framework && d.framework !== "redmod").map((d) => d.framework))];
+  const nexus = deps.filter((d) => !d.framework && d.nexus_mod_id);
+  if (frameworks.length) await installFrameworks(frameworks);
+  if (nexus.length) enqueue(nexus.map((d) => ({ kind: "nexus", name: d.name, modId: d.nexus_mod_id })));
 }
 
 $("#show-deps").addEventListener("change", (e) => busy(e.target, async () => {
@@ -27,6 +63,7 @@ $("#show-deps").addEventListener("change", (e) => busy(e.target, async () => {
   savePref("showDeps", showDeps);
   if (showDeps) $("#deps-note").textContent = "Looking up what your mods need…";
   else $("#deps-note").textContent = "";
+  if (!showDeps) $("#deps-get-missing").classList.add("hidden");
   await loadModExtras();
   renderMods();
 }));
@@ -69,10 +106,12 @@ function dependencyRows(m) {
   return rows;
 }
 
-function dependencyAction(dep) {
+// `after` runs once a switched-off mod is turned back on (default: reload
+// the mod list).
+function dependencyAction(dep, after = loadMods) {
   const target = dep.installed_id && mods.find((x) => x.id === dep.installed_id);
   if (dep.state === "disabled" && target) {
-    return el("button", { onclick: (e) => busy(e.target, () => setEnabled(target, true)).finally(loadMods) }, "Turn on");
+    return el("button", { onclick: (e) => busy(e.target, () => setEnabled(target, true)).finally(after) }, "Turn on");
   }
   if (dep.state !== "missing") return null;
   if (dep.framework && dep.framework !== "redmod") {
