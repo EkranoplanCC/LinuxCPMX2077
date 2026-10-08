@@ -574,7 +574,7 @@ function renderProblems(analysis, crash) {
       items.push(el("div", { class: "card finding " + (errs.length ? "error" : "warning") },
         el("h3", {}, "Compatibility"),
         el("ul", {},
-          errs.length ? el("li", {}, `${errs.length} problem${errs.length === 1 ? "" : "s"}, such as a missing framework or two mods replacing the same thing`) : null,
+          errs.length ? el("li", {}, `${errs.length} problem${errs.length === 1 ? "" : "s"}, such as a missing framework or two mods replacing the same resource or method`) : null,
           warns.length ? el("li", {}, `${warns.length} overlap${warns.length === 1 ? "" : "s"} to check`) : null),
         el("div", { class: "row" },
           el("button", { class: "link", onclick: () => $("#diag-compat").scrollIntoView({ behavior: "smooth" }) }, "See the list"),
@@ -586,7 +586,7 @@ function renderProblems(analysis, crash) {
 }
 
 function renderCompat(r) {
-  const sev = { error: "Problems", warning: "Overlaps to check", info: "Shared hooks (usually fine)" };
+  const sev = { error: "Problems", warning: "Overlaps to check", info: "Shared hooks (chained, all run)" };
   const groups = ["error", "warning", "info"].map((s) => {
     const items = r.findings.filter((f) => f.severity === s);
     if (!items.length) return null;
@@ -658,7 +658,7 @@ function renderCrash(r) {
   $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length || s?.crashed ? "error" : "ok") },
     s ? el("p", {}, "Last game session: started ", el("b", {}, fmtTime(s.started_unix)), ", last log written ", el("b", {}, fmtTime(s.last_write_unix)),
       s.crashed ? el("span", {}, ", and the game ", el("b", {}, "crashed"), ".") : ".")
-      : el("p", { class: "muted" }, "Couldn't tell game sessions apart from the logs, so all errors are shown together."),
+      : el("p", { class: "muted" }, "No launch log with a start time found, so the last session can't be separated: errors from all sessions are listed together."),
     r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found."),
     r.suspects.length
       ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]), " ",
@@ -672,7 +672,7 @@ function renderCrash(r) {
   const label = s ? "from the last session" : "";
   const older = earlier.length ? el("details", { class: "card finding info" },
     el("summary", {}, `Errors and warnings from earlier sessions (${earlier.length})`),
-    el("p", { class: "muted" }, "These were written before the last time the game started. They may already be fixed."),
+    el("p", { class: "muted" }, "Written before the last game start. Not reproduced in the last session, so they may already be resolved."),
     issueList(earlier)) : null;
   $("#crash-issues").replaceChildren(...[group(`Errors ${label}`.trim(), errors, "error"), group(`Warnings ${label}`.trim(), warnings, "warning"), older].filter(Boolean));
   $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},

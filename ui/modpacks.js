@@ -61,7 +61,7 @@ async function getMissingDeps(deps) {
 $("#show-deps").addEventListener("change", (e) => busy(e.target, async () => {
   showDeps = e.target.checked;
   savePref("showDeps", showDeps);
-  if (showDeps) $("#deps-note").textContent = "Looking up what your mods need…";
+  if (showDeps) $("#deps-note").textContent = "Reading Nexus requirements and scanning mod files for framework use…";
   else $("#deps-note").textContent = "";
   if (!showDeps) $("#deps-get-missing").classList.add("hidden");
   await loadModExtras();
@@ -73,7 +73,7 @@ const DEP_STATE = {
   disabled: ["bad", "turned off"],
   present: ["ok", "in the game folder"],
   missing: ["bad", "missing"],
-  unknown: ["", "check yourself"],
+  unknown: ["", "not verified"],
 };
 
 // Rows shown indented under an installed mod: who needs it, then what it needs.
@@ -101,7 +101,9 @@ function dependencyRows(m) {
       el("td", { class: "actions" }, dependencyAction(dep))));
   }
   if (!d.deps.length && !d.required_by.length) {
-    rows.push(el("tr", { class: `dep${off}` }, el("td", {}), el("td", { colspan: 7, class: "muted small" }, "↳ Needs nothing else that CPMX2077 knows of")));
+    rows.push(el("tr", { class: `dep${off}` }, el("td", {}), el("td", { colspan: 7, class: "muted small" }, m.nexus_mod_id
+      ? "↳ No requirements listed on its Nexus page; no framework use found in its files"
+      : "↳ No Nexus page to read requirements from; no framework use found in its files")));
   }
   return rows;
 }
@@ -253,7 +255,7 @@ function renderImport(r) {
       el("button", { onclick: (e) => busy(e.target, async () => enqueue(other.map((m) => ({
         kind: "source", name: m.name, source: m.source, ref: m.source_ref,
       })))) }, `Get them (${other.length})`)) : null,
-    byHand.length ? el("p", { class: "muted" }, `These were installed by hand, so get them yourself: ${names(byHand)}`) : null,
+    byHand.length ? el("p", { class: "muted" }, `No download source recorded (installed from a local archive), so get these yourself: ${names(byHand)}`) : null,
     ...r.collections.map((c) => el("div", { class: "row" },
       el("span", {}, `The list follows the collection ${c.name || c.slug}${c.revision ? ` (revision ${c.revision})` : ""}.`),
       el("button", { onclick: (e) => busy(e.target, () => showCollection(c.slug, c.revision ?? null)) }, "Open it")))));
@@ -496,7 +498,7 @@ function renderCollection(v) {
       }) }, `Turn on the ${plural(disabled.length, "mod")} you turned off`) : null),
     nexusUser.is_premium ? null : el("p", { class: "muted" },
       "Free account: the Nexus window opens each mod's file in turn. Click “Slow download” once per mod and the queue does the rest."),
-    c.external.length ? el("div", { class: "card notice" }, "Not on Nexus, get these by hand: ", c.external.join(", ")) : null,
+    c.external.length ? el("div", { class: "card notice" }, "Hosted outside Nexus, download these yourself: ", c.external.join(", ")) : null,
     el("p", { class: "muted" }, "Collections can also change load order and settings; only the mods themselves are installed here."),
     el("h3", {}, `Required (${required.length})`), ...required.map(row),
     optional.length ? el("details", {}, el("summary", {}, `Optional (${optional.length})`), ...optional.map(row)) : null));

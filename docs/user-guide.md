@@ -130,7 +130,11 @@ Above the list:
   on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
   off-site requirements). The requirements come from each mod's Nexus page,
   asked again once a day, so a requirement you have never installed still
-  shows up as missing. The line next to the checkbox counts what is missing
+  shows up as missing. A requirement hosted outside Nexus whose presence
+  can't be checked is marked **not verified**. A mod with nothing found in
+  either source shows "No requirements listed on its Nexus page; no
+  framework use found in its files" (or "No Nexus page to read requirements
+  from" for mods not installed from Nexus). The line next to the checkbox counts what is missing
   for your turned-on mods, and **Get missing (N)** queues all of it at once:
   core frameworks from GitHub, everything else from Nexus.
 
@@ -232,7 +236,9 @@ Lists, by severity:
   installed.
 - **Overlaps to check**: resources or tweak values several mods change, with
   which archive wins the load order.
-- **Shared hooks**: usually fine.
+- **Shared hooks (chained, all run)**: several mods hook the same function.
+  Hooks are chained, so every one runs; they only clash if they change the
+  same return value.
 
 **Show what's affected** lists the exact resources or records. Base-game
 resources are shown by hash. *What each mod changes* is a per-mod summary
@@ -274,7 +280,9 @@ logs and Proton's `steam-1091500.log`.
   do**. Script errors keep the line that says what went wrong. Harmless
   messages the wiki says to ignore (such as "Failed to create record") are
   left out. Older errors are folded under **Errors and warnings from earlier
-  sessions**, since they may already be fixed.
+  sessions**: they were not reproduced in the last session, so they may
+  already be resolved. If no launch log with a start time is found, errors
+  from all sessions are listed together.
 
 **Logs found** lists every log with **View** (with **Copy all** and **Open
 folder**). It includes RED4ext's dated logs, ArchiveXL's and TweakXL's dated

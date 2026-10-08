@@ -808,7 +808,7 @@ pub fn analyze(mods: &[ModIndex], base: &BTreeSet<u64>, installed_frameworks: &B
                 key: key.clone(),
                 affected: per_mod(owners),
                 mod_ids: ids,
-                message: format!("{} {} hook {key}; hooks chain, so this is usually fine.", list(owners), all(owners)),
+                message: format!("{} {} hook {key}; hooks are chained, so all of them run; no clash unless they change the same return value.", list(owners), all(owners)),
             }),
             Kind::Red4extPlugin => findings.push(Finding {
                 severity: Severity::Error,

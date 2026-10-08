@@ -257,7 +257,7 @@ fn not_a_game_mod(files: &[String]) -> String {
     if !files.is_empty() && files.iter().all(|f| DOCS.contains(&lower_ext(f).as_str())) {
         return "this download only has documents or pictures (instructions, previews), no game files".into();
     }
-    "could not tell where this mod's files go (no archive/, bin/, r6/, red4ext/ folders or .archive files)".into()
+    "unrecognised archive layout: no archive/, bin/, r6/ or red4ext/ folder and no .archive file, so the install location can't be determined".into()
 }
 
 /// Where the game loads extra engine settings (`user.ini` and friends).
@@ -350,7 +350,7 @@ pub fn variant_choice(files: &[String]) -> Option<fomod::Installer> {
             name: "Versions".into(),
             groups: vec![fomod::Group {
                 name: format!(
-                    "This download has {} versions of the same thing ({shared}). Untick the ones you don't want: several at once can clash.",
+                    "This download has {} alternative versions of one file, matching {shared}. Untick the ones you don't want: the game loads every ticked one, and they conflict.",
                     groups.len()
                 ),
                 kind: fomod::GroupKind::SelectAtLeastOne,
@@ -1034,7 +1034,7 @@ mod tests {
         assert!(e(&["readme.md", "shot.png"]).contains("only has documents"));
         assert!(e(&["Tool/CP2077SaveEditor.exe", "Tool/kraken.dll", "Tool/config.json"]).contains("standalone program (CP2077SaveEditor.exe)"));
         assert!(e(&["Saves Backup.bat"]).contains("a script (Saves Backup.bat)"));
-        assert!(e(&["data.bin"]).contains("could not tell"));
+        assert!(e(&["data.bin"]).contains("unrecognised archive layout"));
     }
 
     struct Fixture {
