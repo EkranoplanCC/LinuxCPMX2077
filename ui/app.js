@@ -286,6 +286,21 @@ function renderMods() {
   $("#mods-body").replaceChildren(...shown.flatMap((m) => [modRow(m), ...dependencyRows(m)]));
 }
 
+// The mod's page in Get mods (Nexus or another source); none for manual installs.
+function modPageButton(m) {
+  const nexus = m.source === "nexus" && m.nexus_mod_id;
+  if (!nexus && !(m.source_ref && sourceInfos.some((s) => s.id === m.source))) return null;
+  return el("button", {
+    title: "Open this mod's page in Get mods: description, files and requirements",
+    onclick: (e) => busy(e.target, async () => {
+      await selectSource(nexus ? "nexus" : m.source, false);
+      showTab("nexus");
+      if (nexus) await showMod(m.nexus_mod_id);
+      else await showSourceDetails(m.source, m.source_ref);
+    }),
+  }, "Mod page");
+}
+
 function modRow(m) {
   const stale = m.game_build_id && currentGame.install.build_id && m.game_build_id !== currentGame.install.build_id;
   const on = m.status === "installed";
@@ -309,6 +324,7 @@ function modRow(m) {
         title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
         onclick: (e) => busy(e.target, () => applyUpdate(up)),
       }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
+      modPageButton(m), " ",
       on ? el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify") : null, " ",
       el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall")),
   );
@@ -907,9 +923,16 @@ $("#nxm-prompt-no").addEventListener("click", () => {
 
 // Free accounts: the file's Nexus page in a CPMX2077 window, which catches
 // the nxm:// link itself.
+// A file already in the downloads is installed from there instead. Returns
+// whether the Nexus window was opened.
 async function getFromNexus(modId, fileId) {
+  if (fileId && (await invoke("find_download", { key: { kind: "nexus", mod_id: modId, file_id: fileId } }))) {
+    await download(modId, fileId);
+    return false;
+  }
   await invoke("nexus_open_in_app", { modId, fileId });
   toast("Sign in to Nexus in the new window if it asks, then click “Slow download”. CPMX2077 downloads and installs the file by itself.");
+  return true;
 }
 
 // The fallback: the user's normal browser, which needs the nxm:// handler.
@@ -942,7 +965,7 @@ $("#nexus-go").addEventListener("click", (e) => busy(e.target, async () => {
 const PER_PAGE_CHOICES = [10, 20, 40, 80];
 const MAX_OFFSET = 100000;
 let perPage = PER_PAGE_CHOICES.includes(loadPref("nexusPerPage", 20)) ? loadPref("nexusPerPage", 20) : 20;
-let browse = null; // { text, sort, offset, category }
+let browse = null; // { text, sort, offset, category, uploaderId, uploaderName }
 let browseReq = 0;
 
 function startList() {
@@ -1031,20 +1054,24 @@ async function runBrowse(next, refresh = false) {
   browse = next;
   const req = ++browseReq;
   document.querySelectorAll("#nexus-browse .chips button").forEach((b) =>
-    b.classList.toggle("active", !next.text && b.dataset.sort === next.sort));
+    b.classList.toggle("active", !next.text && !next.uploaderId && b.dataset.sort === next.sort));
+  if (!next.uploaderId) $("#author-head").classList.add("hidden");
   $("#nexus-result").classList.add("hidden");
   $("#nexus-list").classList.remove("hidden");
   $("#nexus-list-title").textContent = "Loading…";
   $("#nexus-fresh").textContent = "";
   try {
     const category = categoriesById.get(next.category);
-    const [page, installed] = await Promise.all([
+    const [page, installed, author] = await Promise.all([
       invoke("nexus_search", { query: {
-        text: next.text, sort: next.sort, offset: next.offset, count: perPage, category: category?.name ?? null, refresh,
+        text: next.text, sort: next.sort, offset: next.offset, count: perPage, category: category?.name ?? null,
+        uploader_id: next.uploaderId ?? null, refresh,
       } }),
       installedNexusIds(),
+      next.uploaderId ? invoke("nexus_author", { memberId: next.uploaderId }).catch(() => null) : null,
     ]);
     if (req !== browseReq) return;
+    if (next.uploaderId) renderAuthorHead(author, next.uploaderName, page.total);
     renderPage(page, installed);
   } catch (e) {
     if (req === browseReq) $("#nexus-list-title").textContent = "";
@@ -1061,7 +1088,8 @@ function lastOffset(total) {
 }
 
 function renderPage(page, installed) {
-  let title = browse.text ? `Results for “${browse.text}”` : SORT_TITLES[browse.sort];
+  let title = browse.uploaderId ? `Mods by ${browse.uploaderName || "this author"}, ${SORT_TITLES[browse.sort].toLowerCase()} first`
+    : browse.text ? `Results for “${browse.text}”` : SORT_TITLES[browse.sort];
   const category = categoriesById.get(browse.category);
   if (category) title += ` in ${category.name}`;
   if (page.total !== null && page.total !== undefined) title += ` · ${page.total.toLocaleString()} mods`;
@@ -1094,12 +1122,19 @@ function goToPage(n) {
 
 function modCard(m, isInstalled) {
   const seed = { kind: "nexus", name: m.name, modId: m.mod_id };
-  return el("button", { class: cardClass(seed), title: m.name,
-    onclick: (e) => selectMode ? toggleSelected(seed, e.currentTarget) : busy(null, () => showMod(m.mod_id)) },
-    nexusImage(m.picture_url, "thumb"),
+  const card = el("div", { class: cardClass(seed), title: m.name, role: "button", tabindex: "0",
+    onclick: () => selectMode ? toggleSelected(seed, card) : busy(null, () => showMod(m.mod_id)),
+    onkeydown: (e) => {
+      if (e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); card.click(); }
+    } },
+    el("div", { class: "thumb-wrap" },
+      nexusImage(m.picture_url, "thumb"),
+      el("button", { class: "quick-dl", title: "Download: pick one of the mod's main files", "aria-label": "Download options",
+        onclick: (e) => { e.stopPropagation(); busy(e.currentTarget, () => toggleQuickMenu(m, card)); } }, "⬇")),
     el("div", { class: "mod-card-body" },
       el("div", { class: "mod-card-title" }, m.name),
-      el("div", { class: "muted small" }, `by ${m.author || "unknown"}${m.version ? ` · v${m.version}` : ""}`),
+      el("div", { class: "muted small" }, "by ", authorLink(m.author || m.uploader, m.uploader_id, m.uploader),
+        m.version ? ` · v${m.version}` : ""),
       el("div", { class: "summary" }, m.summary || ""),
       el("div", { class: "stats" },
         el("span", { title: "Endorsements" }, `♥ ${fmtCount(m.endorsements)}`),
@@ -1108,6 +1143,114 @@ function modCard(m, isInstalled) {
         categoriesById.has(m.category_id) ? el("span", { class: "badge" }, categoriesById.get(m.category_id).name) : null,
         isInstalled ? el("span", { class: "badge ok" }, "installed") : null,
         m.adult ? el("span", { class: "badge bad" }, "adult") : null)));
+  // A download from this card that is still running when the page is drawn again.
+  for (const [key, bar] of cardBars) if (key.startsWith(`${m.mod_id}:`)) card.querySelector(".thumb-wrap").append(bar);
+  return card;
+}
+
+// "by <author>": opens every mod the uploader has on Nexus.
+function authorLink(label, memberId, uploader) {
+  if (!memberId) return label || "unknown";
+  const name = uploader || label;
+  return el("button", { class: "link author", title: `All mods by ${name}`, onclick: (e) => {
+    e.stopPropagation();
+    busy(null, () => showAuthor(memberId, name));
+  } }, label || name);
+}
+
+function showAuthor(memberId, name) {
+  $("#nexus-search").value = "";
+  const sort = ["relevance", "trending"].includes(browse?.sort) || !browse ? "downloads" : browse.sort;
+  return runBrowse({ text: "", sort, offset: 0, category: null, uploaderId: memberId, uploaderName: name });
+}
+
+function renderAuthorHead(a, name, total) {
+  const head = $("#author-head");
+  const facts = [
+    total !== null && total !== undefined ? `${total.toLocaleString()} Cyberpunk 2077 mod${total === 1 ? "" : "s"}` : null,
+    a?.mod_count ? `${a.mod_count.toLocaleString()} on all of Nexus` : null,
+    a?.unique_downloads ? `${fmtCount(a.unique_downloads)} unique downloads` : null,
+    a?.joined ? `joined ${fmtDate(a.joined)}` : null,
+  ].filter(Boolean).join(" · ");
+  head.replaceChildren(
+    el("h3", {}, `Mods by ${a?.name || name || "this author"}`),
+    a?.recognized ? el("span", { class: "badge ok", title: "Nexus' Recognised author mark" }, "recognised author") : null,
+    el("span", { class: "muted small" }, facts),
+    el("span", { class: "spacer" }),
+    el("label", { class: "muted small" }, "Sort ",
+      el("select", { class: "inline", onchange: (e) => busy(null, () => runBrowse({ ...browse, sort: e.target.value, offset: 0 })) },
+        ...[["downloads", "Most downloaded"], ["endorsements", "Most endorsed"], ["updated", "Latest updated"], ["created", "Latest added"]]
+          .map(([v, l]) => el("option", { value: v, selected: browse.sort === v ? "" : null }, l)))),
+    el("button", { onclick: (e) => busy(e.target, () => runBrowse(startList())) }, "Back to all mods"));
+  head.classList.remove("hidden");
+}
+
+// ---- downloading straight from Get mods -----------------------------------
+// Downloads started on this page stay on it: a bar on the mod's card and one
+// at the top of the page show how far they've got.
+const cardBars = new Map(); // "modId:fileId" -> the bar on that mod's card
+const fromCard = new Set(); // "modId:fileId" opened in the Nexus window from a card
+
+// Every Nexus file in the downloads that is still on disk, as "modId:fileId".
+async function downloadedNexusFiles() {
+  const groups = await invoke("list_download_groups").catch(() => []);
+  return new Set(groups.flatMap((g) => g.entries)
+    .filter((e) => e.on_disk && e.nexus_mod_id && e.nexus_file_id).map((e) => `${e.nexus_mod_id}:${e.nexus_file_id}`));
+}
+
+async function toggleQuickMenu(m, card) {
+  const wrap = card.querySelector(".thumb-wrap");
+  const open = wrap.querySelector(".quick-menu");
+  if (open) return open.remove();
+  document.querySelectorAll(".quick-menu").forEach((x) => x.remove());
+  const [files, have] = await Promise.all([invoke("nexus_quick_files", { modId: m.mod_id }), downloadedNexusFiles()]);
+  refreshQuota().catch(() => {});
+  refreshDebug().catch(() => {});
+  const label = nexusUser?.is_premium ? "Download & install" : "Get from Nexus";
+  const menu = el("div", { class: "quick-menu", onclick: (e) => e.stopPropagation(), onkeydown: (e) => e.stopPropagation() },
+    ...files.map((f) => el("button", { title: `${label}: ${f.file_name}`, onclick: (e) => {
+      menu.remove();
+      busy(null, () => quickDownload(m, f, card));
+    } },
+      el("b", {}, f.name || f.file_name),
+      el("span", { class: "muted small" }, [f.version && `v${f.version}`, f.size_in_bytes && fmtSize(f.size_in_bytes),
+        fmtDate(f.uploaded_timestamp), have.has(`${m.mod_id}:${f.file_id}`) ? "already downloaded" : null].filter(Boolean).join(" · ")))),
+    files.length ? null : el("p", { class: "muted small" }, "No main files. Open the mod to pick one."),
+    el("button", { class: "link small", onclick: () => { menu.remove(); busy(null, () => showMod(m.mod_id)); } }, "All files…"));
+  wrap.append(menu);
+}
+
+async function quickDownload(m, f, card) {
+  if (!currentGame) throw "Select a game first";
+  const key = `${m.mod_id}:${f.file_id}`;
+  if (cardBars.has(key)) throw `${f.name || f.file_name} is already downloading`;
+  const bar = el("div", { class: "card-progress", onclick: (e) => e.stopPropagation() }, el("div", { class: "progress-bar" }), el("span", { class: "progress-text" }, "Starting…"));
+  card.querySelector(".thumb-wrap").append(bar);
+  cardBars.set(key, bar);
+  if (nexusUser?.is_premium) return download(m.mod_id, f.file_id);
+  bar.querySelector(".progress-text").textContent = "Waiting for “Slow download” in the Nexus window";
+  fromCard.add(key);
+  let opened = false;
+  try {
+    opened = await getFromNexus(m.mod_id, f.file_id);
+  } finally {
+    if (!opened) {
+      fromCard.delete(key);
+      endCardBar(key);
+    }
+  }
+}
+
+// The Nexus window closed without a download: drop the waiting bars.
+listen("nexus-window-closed", () => {
+  for (const key of fromCard) endCardBar(key);
+  fromCard.clear();
+});
+document.addEventListener("click", () => document.querySelectorAll(".quick-menu").forEach((x) => x.remove()));
+
+function endCardBar(key) {
+  cardBars.get(key)?.remove();
+  cardBars.delete(key);
 }
 
 function selectedCategory() {
@@ -1208,6 +1351,7 @@ function setDebugMode(on) {
   savePref("nexusDebug", on);
   $("#nexus-debug-mode").checked = on;
   $("#nexus-debug").classList.toggle("hidden", !on);
+  $("#debug-terminal-side").classList.toggle("hidden", !on);
   clearInterval(debugTimer);
   debugTimer = null;
   if (on) {
@@ -1219,7 +1363,14 @@ function setDebugMode(on) {
   }
 }
 
-$("#nexus-debug-mode").addEventListener("change", (e) => setDebugMode(e.target.checked));
+$("#nexus-debug-mode").addEventListener("change", (e) => {
+  setDebugMode(e.target.checked);
+  if (e.target.checked) openDebugTerminal();
+});
+function openDebugTerminal() {
+  invoke("open_debug_terminal").catch((e) => toast(String(e), true));
+}
+for (const b of document.querySelectorAll("button.debug-open")) b.addEventListener("click", openDebugTerminal);
 $("#nexus-debug-clear").addEventListener("click", (e) => busy(e.target, async () => {
   await invoke("nexus_clear_requests");
   debugRequests = [];
@@ -1311,28 +1462,63 @@ function docImage(n) {
   } }, `🖼 Picture on ${n.host}: open in browser`);
 }
 
+// The mod page's requirements, each marked with whether the user has it
+// (filled in once the installed mods are checked) and how to get it.
 function requirementsSection(modId, r) {
   if (!r) return null;
   const total = r.nexus.length + r.external.length + r.dlc.length;
-  const reqRow = (q, nexus) => el("tr", {},
-    el("td", {}, nexus && q.mod_id
-      ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); busy(null, () => showMod(q.mod_id)); } }, q.name)
-      : q.url ? docLink(q.url, [q.name]) : q.name),
-    el("td", { class: "muted" }, q.notes || ""));
-  return el("details", { class: "requirements", open: total ? "" : null },
+  const statusCells = new Map(); // nexus mod id -> [status td, action td]
+  const reqRow = (q, nexus) => {
+    const cells = [el("td", { class: "req-state" }), el("td", { class: "actions" })];
+    if (nexus && q.mod_id) statusCells.set(q.mod_id, cells);
+    return el("tr", {},
+      el("td", {}, nexus && q.mod_id
+        ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); busy(null, () => showMod(q.mod_id)); } }, q.name)
+        : q.url ? docLink(q.url, [q.name]) : q.name),
+      el("td", { class: "muted" }, q.notes || ""),
+      ...(nexus ? cells : []));
+  };
+  const dlcLine = el("p", {}, "DLC: ", r.dlc.join(", "));
+  const getMissing = el("button", { class: "hidden" }, "Get missing");
+  const summary = el("p", { class: "muted small req-summary" });
+  const section = el("details", { class: "requirements", open: total ? "" : null },
     el("summary", {}, total ? `Requirements (${total})` : "Requirements: none listed"),
-    r.dlc.length ? el("p", {}, "DLC: ", r.dlc.join(", ")) : null,
+    r.dlc.length ? dlcLine : null,
+    r.nexus.length ? el("div", { class: "row" }, summary, getMissing) : null,
     r.nexus.length ? el("table", { class: "req-table" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Nexus requirements"), el("th", {}, "Notes"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Nexus requirements"), el("th", {}, "Notes"), el("th", {}, "You have"), el("th", {}))),
       el("tbody", {}, ...r.nexus.map((q) => reqRow(q, true)))) : null,
     r.external.length ? el("table", { class: "req-table" },
       el("thead", {}, el("tr", {}, el("th", {}, "Off-site requirements"), el("th", {}, "Notes"))),
       el("tbody", {}, ...r.external.map((q) => reqRow(q, false)))) : null,
     r.required_by ? el("p", { class: "muted" }, `${r.required_by.toLocaleString()} mods list this one as a requirement.`) : null);
+  if (currentGame && (statusCells.size || r.dlc.length)) {
+    invoke("requirement_states", { gameId: currentGame.id, nexusIds: [...statusCells.keys()] }).then((st) => {
+      const deps = st.mods.map((s) => ({ ...s, name: r.nexus.find((q) => q.mod_id === s.nexus_mod_id)?.name || `Mod ${s.nexus_mod_id}` }));
+      for (const d of deps) {
+        const [cls, label] = DEP_STATE[d.state] || DEP_STATE.unknown;
+        const [state, action] = statusCells.get(d.nexus_mod_id);
+        state.replaceChildren(el("span", { class: `badge ${cls}` }, label));
+        action.replaceChildren(dependencyAction(d, () => loadMods().then(() => showMod(modId))) || "");
+      }
+      const missing = deps.filter((d) => d.state === "missing");
+      summary.textContent = missing.length
+        ? `You're missing ${missing.length} of ${deps.length}.` : deps.length ? "You have all of them." : "";
+      if (missing.length > 1) {
+        getMissing.classList.remove("hidden");
+        getMissing.onclick = (e) => busy(e.target, () => getMissingDeps(missing));
+      }
+      if (r.dlc.some((n) => /phantom liberty/i.test(n))) {
+        dlcLine.append(" ", el("span", { class: `badge ${st.phantom_liberty ? "ok" : "bad"}` },
+          st.phantom_liberty ? "in the game folder" : "missing"));
+      }
+    }).catch((e) => { summary.textContent = `Couldn't check your installed mods: ${e}`; });
+  }
+  return section;
 }
 
 async function showMod(modId, highlightFile, refresh = false) {
-  const [d, installed] = await Promise.all([invoke("nexus_mod_details", { modId, refresh }), installedNexusIds()]);
+  const [d, installed, have] = await Promise.all([invoke("nexus_mod_details", { modId, refresh }), installedNexusIds(), downloadedNexusFiles()]);
   refreshQuota().catch(() => {});
   refreshDebug().catch(() => {});
   const { info, files } = d;
@@ -1341,7 +1527,7 @@ async function showMod(modId, highlightFile, refresh = false) {
     const fs = sorted.filter((f) => (f.category_name || "MISCELLANEOUS") === cat
       || (cat === "MISCELLANEOUS" && !FILE_GROUPS.some(([c]) => c === f.category_name) && f.category_name !== "ARCHIVED" && f.category_name !== "DELETED"));
     if (!fs.length) return null;
-    const body = fs.map((f) => fileRow(modId, f, highlightFile));
+    const body = fs.map((f) => fileRow(modId, f, highlightFile, have.has(`${modId}:${f.file_id}`)));
     return cat === "OLD_VERSION"
       ? el("details", {}, el("summary", {}, `${label} (${fs.length})`), ...body)
       : el("div", {}, el("h3", {}, label), ...body);
@@ -1388,8 +1574,8 @@ async function showMod(modId, highlightFile, refresh = false) {
       nexusImage(info.picture_url, "hero"),
       el("div", {},
         el("h2", {}, info.name || `Mod ${modId}`),
-        el("p", { class: "muted" }, `by ${info.author || info.uploaded_by || "unknown"}`
-          + (info.uploaded_by && info.uploaded_by !== info.author ? ` · uploaded by ${info.uploaded_by}` : "")),
+        el("p", { class: "muted" }, "by ", authorLink(info.author || info.uploaded_by, info.user?.member_id, info.user?.name || info.uploaded_by),
+          info.uploaded_by && info.uploaded_by !== info.author ? ` · uploaded by ${info.uploaded_by}` : ""),
         el("div", { class: "row" },
           categoriesById.has(info.category_id) ? el("span", { class: "badge" }, categoriesById.get(info.category_id).name) : null,
           installed.has(modId) ? el("span", { class: "badge ok" }, "installed") : null,
@@ -1407,12 +1593,13 @@ async function showMod(modId, highlightFile, refresh = false) {
   $("main").scrollTop = 0;
 }
 
-function fileRow(modId, f, highlightFile) {
+function fileRow(modId, f, highlightFile, downloaded = false) {
   return el("div", { class: "file" },
     el("div", {},
       el("b", {}, f.name || f.file_name), " ",
       f.is_primary ? el("span", { class: "badge ok" }, "primary") : null, " ",
-      f.file_id === highlightFile ? el("span", { class: "badge ok" }, "from link") : null,
+      f.file_id === highlightFile ? el("span", { class: "badge ok" }, "from link") : null, " ",
+      downloaded ? el("span", { class: "badge", title: "This file is in your downloads, so it isn't downloaded again" }, "downloaded") : null,
       el("div", { class: "muted mono" }, `${f.file_name} · ${fmtSize(f.size_in_bytes)} · v${f.version || "?"} · ${fmtDate(f.uploaded_timestamp)}`)),
     el("div", { class: "actions" },
       nexusUser?.is_premium
@@ -1425,17 +1612,18 @@ function fileRow(modId, f, highlightFile) {
 
 async function download(modId, fileId, key = null, expires = null, replaces = null) {
   if (!currentGame) throw "Select a game first";
-  showTab("downloads");
   try {
     const r = await invoke("nexus_download", {
       modId, fileId, key, expires, installTo: currentGame.id, overwrite: $("#overwrite").checked, replaces,
     });
-    const note = r.download.verified ? null : "Nexus' checksum lookup was unreachable, so the file is unverified.";
+    const note = [r.already_had ? ALREADY_HAD : null,
+      r.download.verified ? null : "Nexus' checksum lookup was unreachable, so the file is unverified."].filter(Boolean).join("\n") || null;
     if (r.install) await handleOutcome(r.install, note);
-    else if (note) toast(note, true);
+    else if (note) toast(note, !r.already_had);
     if (replaces && updatesByMod.delete(replaces)) updatesChanged();
   } finally {
-    $("#progress").classList.add("hidden");
+    endCardBar(`${modId}:${fileId}`);
+    hideProgress();
     loadDownloads().catch(() => {});
     loadMods().catch(() => {});
   }
@@ -1450,6 +1638,8 @@ async function handleNxm(url) {
   if (link.expires && link.expires * 1000 < Date.now()) throw "This download link has expired; click it on Nexus again";
   // The update for an installed mod replaces the old version.
   const replaces = [...updatesByMod.values()].find((u) => u.nexus_mod_id === link.mod_id && u.nexus_file_id === link.file_id)?.mod_id ?? null;
+  // Started from a mod's card: stay on the list, the card shows the progress.
+  if (fromCard.delete(`${link.mod_id}:${link.file_id}`)) return download(link.mod_id, link.file_id, link.key, link.expires, replaces);
   await selectSource("nexus", false);
   showTab("nexus");
   // The page is a nicety; the download must not depend on it.
@@ -1457,10 +1647,23 @@ async function handleNxm(url) {
   await download(link.mod_id, link.file_id, link.key, link.expires, replaces);
 }
 
-function showProgress(done, total, label = "Downloading") {
-  $("#progress").classList.remove("hidden");
-  $("#progress-bar").style.width = total ? `${(100 * done) / total}%` : "0";
-  $("#progress-text").textContent = `${label} ${fmtSize(done)}${total ? " of " + fmtSize(total) : ""}`;
+const ALREADY_HAD = "Already in your downloads, so the copy you have was used instead of downloading it again.";
+
+// The bars at the top of Downloads and Get mods (and on a mod's card).
+function showProgress(done, total, label = "Downloading", cardKey = null) {
+  const text = `${label} ${fmtSize(done)}${total ? " of " + fmtSize(total) : ""}`;
+  const bars = [$("#progress"), $("#nexus-progress"), cardKey && cardBars.get(cardKey)].filter(Boolean);
+  for (const p of bars) {
+    p.classList.remove("hidden");
+    p.querySelector(".progress-bar").style.width = total ? `${(100 * done) / total}%` : "0";
+    p.querySelector(".progress-text").textContent = p.classList.contains("card-progress")
+      ? `${total ? Math.round((100 * done) / total) + "% · " : ""}${fmtSize(done)}${total ? " of " + fmtSize(total) : ""}` : text;
+  }
+}
+
+function hideProgress() {
+  $("#progress").classList.add("hidden");
+  $("#nexus-progress").classList.add("hidden");
 }
 
 listen("nxm-link", (e) => busy(null, async () => {
@@ -1470,7 +1673,7 @@ listen("nxm-link", (e) => busy(null, async () => {
 }));
 listen("download-progress", (e) => {
   const { mod_id, file_id, done, total } = e.payload;
-  showProgress(done, total);
+  showProgress(done, total, "Downloading", `${mod_id}:${file_id}`);
   queueProgress((q) => q.kind === "nexus" && q.modId === mod_id && q.fileId === file_id, done, total);
 });
 listen("source-progress", (e) => {
@@ -1684,17 +1887,17 @@ function sourceFileRow(info, l, f, replacing) {
 
 async function sourceDownload(source, id, f, replaces = null, install = true) {
   if (install && !currentGame) throw "Select a game first";
-  showTab("downloads");
   try {
     const r = await invoke("source_download", {
       source, id, fileId: f.id, installTo: install ? currentGame.id : null, overwrite: $("#overwrite").checked, replaces,
     });
-    const note = r.download.verified ? null : `${r.download.check}, so the file is unverified.`;
+    const note = [r.already_had ? ALREADY_HAD : null, r.download.verified ? null : `${r.download.check}, so the file is unverified.`]
+      .filter(Boolean).join("\n") || null;
     if (r.install) await handleOutcome(r.install, note);
-    else toast([`Downloaded ${r.download.file_name}`, note].filter(Boolean).join("\n"));
+    else toast([r.already_had ? null : `Downloaded ${r.download.file_name}`, note].filter(Boolean).join("\n"));
     if (replaces && updatesByMod.delete(replaces)) updatesChanged();
   } finally {
-    $("#progress").classList.add("hidden");
+    hideProgress();
     loadDownloads().catch(() => {});
     loadMods().catch(() => {});
   }
@@ -1832,6 +2035,10 @@ async function startItem(it) {
     return scheduleDownload(it);
   }
   if (it.kind === "nexus" && !nexusUser) return finishItem(it, "failed", "connect your Nexus account first");
+  // Already downloaded: no need to click for it again.
+  const have = it.fileId && await invoke("find_download", { key: { kind: "nexus", mod_id: it.modId, file_id: it.fileId } }).catch(() => null);
+  if (it.state === "cancelled") return;
+  if (have) return scheduleDownload(it);
   it.state = "ready-click";
   advanceClick();
 }
@@ -1897,11 +2104,12 @@ async function runDownload(it) {
         installTo: null, overwrite: false, replaces: null })
       : await invoke("source_download", { source: it.source, id: it.ref, fileId: it.file.id, installTo: null, overwrite: false, replaces: null });
     it.downloadId = r.download_id;
+    if (r.already_had) it.note = "already downloaded";
     if (!r.download.verified) it.note = it.kind === "nexus" ? "unverified: Nexus checksum lookup failed" : r.download.check;
   } catch (e) {
     return finishItem(it, "failed", String(e));
   } finally {
-    $("#progress").classList.add("hidden");
+    hideProgress();
     loadDownloads().catch(() => {});
   }
   if (it.kind === "source" && !it.file.installable) return finishItem(it, "downloaded", it.note);

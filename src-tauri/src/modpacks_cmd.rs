@@ -185,6 +185,7 @@ pub async fn export_modlist(app: AppHandle, game_id: i64, path: String) -> Resul
             path.set_extension("json");
         }
         std::fs::write(&path, serde_json::to_vec_pretty(&list)?)?;
+        cp2077mm_core::activity::record_path(cp2077mm_core::activity::Kind::Setup, "Exported the mod list to", &path);
         Ok(list.mods.len())
     })
     .await
@@ -258,4 +259,24 @@ pub async fn mod_dependencies(app: AppHandle, game_id: i64, refresh: bool) -> Re
         Ok(DependencyView { mods: dependencies::resolve(&mods, &cached, &detected, &has), note })
     })
     .await
+}
+
+/// Whether the user has each Nexus mod a mod page lists as a requirement.
+#[tauri::command]
+pub async fn requirement_states(app: AppHandle, game_id: i64, nexus_ids: Vec<i64>) -> Result<RequirementStates> {
+    blocking(move || {
+        let (mods, game_dir) = with_db(&app, |db| Ok((db.mods(game_id)?, PathBuf::from(db.game(game_id)?.path))))?;
+        let has = dependencies::game_has(&game_dir);
+        Ok(RequirementStates {
+            mods: dependencies::requirement_states(&mods, &has, &nexus_ids),
+            phantom_liberty: has.phantom_liberty,
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct RequirementStates {
+    mods: Vec<dependencies::RequirementState>,
+    phantom_liberty: bool,
 }

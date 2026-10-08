@@ -29,6 +29,7 @@
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
     </nav>
+    <button id="debug-terminal-side" class="debug-open hidden" title="Nexus API requests and file operations, live">Debug terminal</button>
   </aside>
 
   <main>
@@ -65,6 +66,7 @@
         <label class="check small" title="List what each mod needs under it: from its Nexus page and from the frameworks its files use">
           <input type="checkbox" id="show-deps"> Show dependencies</label>
         <span id="deps-note" class="muted small"></span>
+        <button id="deps-get-missing" class="hidden" title="Queue every missing requirement: core frameworks from GitHub, the rest from Nexus">Get missing</button>
         <span id="updates-note" class="muted small"></span>
       </div>
       <table>
@@ -72,7 +74,7 @@
           <th title="Turn a mod off without uninstalling it">On</th>
           <th class="sortable" data-sort="name">Name</th>
           <th class="sortable" data-sort="category">Category</th>
-          <th class="sortable" data-sort="version">Version</th>
+          <th class="sortable" data-sort="version">Mod version</th>
           <th class="sortable" data-sort="source">Source</th>
           <th>Files</th><th>Installed on game</th><th></th>
         </tr></thead>
@@ -251,6 +253,7 @@
           <button data-source="nexus" class="active" role="tab">Nexus Mods</button>
         </div>
       </header>
+      <div id="nexus-progress" class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <div id="source-nexus">
       <div id="nxm-prompt" class="card finding info hidden">
         <p>Downloads you start on nexusmods.com in your normal browser don't reach CPMX2077 yet. Downloads from CPMX2077's own Nexus window work either way.</p>
@@ -313,11 +316,13 @@
           <div class="row">
             <span class="muted small">Every request to Nexus, newest first. Bars show how long each took. Your API key is never shown.</span>
             <span class="spacer"></span>
+            <button id="nexus-debug-terminal" class="small debug-open">Open debug terminal</button>
             <button id="nexus-debug-clear" class="small">Clear</button>
           </div>
           <div id="nexus-debug-list" class="req-list"></div>
         </details>
         <div id="nexus-list">
+          <div id="author-head" class="card row hidden"></div>
           <div class="row list-head">
             <p id="nexus-list-title" class="muted"></p>
             <span id="nexus-fresh" class="muted small"></span>
@@ -394,7 +399,7 @@
       </header>
       <p class="muted small">Saved in <span id="downloads-where" class="mono"></span>, one folder per mod.
         <button class="link inline" data-goto="settings">Change</button></p>
-      <div id="progress" class="hidden"><div id="progress-bar"></div><span id="progress-text"></span></div>
+      <div id="progress" class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <table class="tree">
         <thead><tr><th>Mod</th><th>Version</th><th>Game version</th><th>Source</th><th>Size</th><th>Verified</th><th></th></tr></thead>
         <tbody id="downloads-body"></tbody>
@@ -440,7 +445,11 @@
       <div class="card">
         <h3>Nexus browsing</h3>
         <label class="check"><input type="checkbox" id="show-adult"> Show mods marked as adult content</label>
-        <label class="check"><input type="checkbox" id="nexus-debug-mode"> Debug mode: show every Nexus API request in Get Mods</label>
+        <label class="check"><input type="checkbox" id="nexus-debug-mode"> Debug mode: show every Nexus API request in Get Mods and open the debug terminal</label>
+        <div class="row">
+          <button id="settings-debug-terminal" class="debug-open">Open debug terminal</button>
+          <span class="muted small">A terminal-style window that shows Nexus API requests and everything the app does on your machine: downloads, checksum checks, extractions, files copied, moved, backed up or deleted, and Linux setup fixes. Your API key is never shown.</span>
+        </div>
         <p class="muted">Pages and searches you open are saved for a week, so they show at once (and still open when Nexus can't be reached).
            Lists count as fresh for 5 minutes and mod pages for 10; use Refresh to ask Nexus sooner.</p>
         <div class="row">

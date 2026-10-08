@@ -168,16 +168,33 @@ pub fn extract(archive: &Path, dest: &Path, limits: Limits) -> Result<Extracted>
     if std::fs::read_dir(dest)?.next().is_some() {
         return Err(Error::Other(format!("extraction directory {} is not empty", dest.display())));
     }
+    crate::activity::record_path(
+        crate::activity::Kind::Extract,
+        format!("Extracting {} ({format:?}) to", archive.display()),
+        dest,
+    );
     let result = match format {
         Format::Zip => extract_zip(archive, dest, limits),
         Format::SevenZ => extract_7z(archive, dest, limits),
         Format::Rar => extract_external(archive, dest, limits),
     };
     match result {
-        Ok((files, total_bytes)) => Ok(Extracted { format, files, total_bytes }),
+        Ok((files, total_bytes)) => {
+            crate::activity::record_path(
+                crate::activity::Kind::Extract,
+                format!("Extracted {} files ({})", files.len(), crate::activity::size(total_bytes)),
+                dest,
+            );
+            Ok(Extracted { format, files, total_bytes })
+        }
         Err(e) => {
             // Never leave half-extracted, possibly hostile content behind.
             let _ = std::fs::remove_dir_all(dest);
+            crate::activity::record_path(
+                crate::activity::Kind::Error,
+                format!("Extraction stopped, partial files deleted: {e}"),
+                dest,
+            );
             Err(e)
         }
     }

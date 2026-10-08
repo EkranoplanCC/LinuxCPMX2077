@@ -17,9 +17,9 @@ use cp2077mm_core::nexus_browse::{self, Category, Collection, ModDetails, NexusR
 use cp2077mm_core::nexus_cache::RequestRecord;
 use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery};
 use cp2077mm_core::linux_setup::{self, Check};
-use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, Location, MoveReport};
+use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, FileKey, Location, MoveReport};
 use cp2077mm_core::game_versions::{self, Loadout, VersionEntry};
-use cp2077mm_core::{Error, Result, desktop, file_tree, paths, secrets, sso, updates};
+use cp2077mm_core::{Error, Result, activity, desktop, file_tree, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -32,6 +32,8 @@ struct AppState {
     /// Archives extracted and waiting for the user's FOMOD choices.
     pending: Mutex<HashMap<String, PendingInstall>>,
     sso_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Files downloading right now (no second copy of one at the same time).
+    in_flight: dl_store::InFlight,
 }
 
 #[derive(Serialize)]
@@ -67,6 +69,8 @@ struct DownloadResult {
     /// The row in the Downloads tab, for installing it later.
     download_id: i64,
     install: Option<InstallOutcome>,
+    /// The file was already in the downloads, so nothing was fetched.
+    already_had: bool,
 }
 
 struct PendingInstall {
@@ -82,6 +86,7 @@ struct SourceDownloadResult {
     download: sources::Downloaded,
     download_id: i64,
     install: Option<InstallOutcome>,
+    already_had: bool,
 }
 
 /// Where the download queue is, for the Nexus window's title and menu.
@@ -288,7 +293,8 @@ async fn delete_download(app: AppHandle, download_id: i64) -> Result<()> {
         let d = db.download(download_id)?;
         match std::fs::remove_file(&d.path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
+            Err(_) => activity::record(activity::Kind::Info, format!("Forgot download {} (file was already gone)", d.path)),
+            Ok(()) => activity::record_path(activity::Kind::Delete, "Deleted download", std::path::Path::new(&d.path)),
         }
         // Every entry for this file (it may have been downloaded twice).
         db.delete_downloads_at(&d.path)?;
@@ -333,22 +339,49 @@ async fn install_download(app: AppHandle, download_id: i64, game_id: i64, overwr
             let db = state.db.lock().unwrap();
             db.download(download_id)?
         };
-        let source = if d.source.is_empty() { "nexus".to_string() } else { d.source.clone() };
-        let meta = NewMod {
-            name: d.mod_name.clone().unwrap_or_default(),
-            version: d.version.clone(),
-            source: if source == "nexus" && d.nexus_mod_id.is_none() { "manual".into() } else { source },
-            nexus_mod_id: d.nexus_mod_id,
-            nexus_file_id: d.nexus_file_id,
-            archive_name: d.file_name.clone(),
-            source_ref: d.source_ref.clone(),
-            source_file: d.source_file.clone(),
-            category: d.category.clone(),
-            ..Default::default()
-        };
-        begin_install(&app, game_id, &PathBuf::from(&d.path), meta, overwrite, replaces)
+        begin_install(&app, game_id, &PathBuf::from(&d.path), download_meta(&d), overwrite, replaces)
     })
     .await
+}
+
+/// What an install from a saved download records about the mod.
+fn download_meta(d: &DownloadRow) -> NewMod {
+    let source = if d.source.is_empty() { "nexus".to_string() } else { d.source.clone() };
+    NewMod {
+        name: d.mod_name.clone().unwrap_or_else(|| d.file_name.clone()),
+        version: d.version.clone(),
+        source: if source == "nexus" && d.nexus_mod_id.is_none() { "manual".into() } else { source },
+        nexus_mod_id: d.nexus_mod_id,
+        nexus_file_id: d.nexus_file_id,
+        archive_name: d.file_name.clone(),
+        source_ref: d.source_ref.clone(),
+        source_file: d.source_file.clone(),
+        category: d.category.clone(),
+        ..Default::default()
+    }
+}
+
+/// The intact download of `key` already in the downloads, if there is one.
+fn existing_download(app: &AppHandle, key: &FileKey) -> Result<Option<DownloadRow>> {
+    let rows = app.state::<AppState>().db.lock().unwrap().downloads()?;
+    Ok(dl_store::existing(&rows, key).cloned())
+}
+
+/// The file `key` came in as a byte-for-byte copy of one already in the
+/// downloads: keep the old file and point the new entry at it. Returns the
+/// path the entry should use.
+fn keep_one_copy(app: &AppHandle, sha256: &str, new_path: &std::path::Path) -> Result<Option<PathBuf>> {
+    let rows = app.state::<AppState>().db.lock().unwrap().downloads()?;
+    let Some(old) = dl_store::same_content(&rows, sha256, new_path) else { return Ok(None) };
+    std::fs::remove_file(new_path)?;
+    Ok(Some(PathBuf::from(&old.path)))
+}
+
+/// Find a download already in the list by its file id, for "already
+/// downloaded" marks and for installing it without fetching it again.
+#[tauri::command]
+async fn find_download(app: AppHandle, key: FileKey) -> Result<Option<DownloadRow>> {
+    blocking(move || existing_download(&app, &key)).await
 }
 
 /// Extract an archive; install right away unless it has a FOMOD installer.
@@ -522,12 +555,32 @@ async fn setup_checks(app: AppHandle, game_id: i64) -> Result<Vec<Check>> {
 
 #[tauri::command]
 async fn setup_fix(app: AppHandle, game_id: i64, id: String) -> Result<String> {
-    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::apply(ctx, &id))).await
+    blocking(move || {
+        activity::record(activity::Kind::Setup, format!("Applying Linux setup fix {id}"));
+        let out = with_setup(&app, game_id, |ctx| linux_setup::apply(ctx, &id));
+        log_outcome(&out);
+        out
+    })
+    .await
+}
+
+/// The result of a setup fix or undo, for the debug terminal.
+fn log_outcome(out: &Result<String>) {
+    match out {
+        Ok(msg) => activity::record(activity::Kind::Setup, msg.clone()),
+        Err(e) => activity::record(activity::Kind::Error, e.to_string()),
+    }
 }
 
 #[tauri::command]
 async fn setup_undo(app: AppHandle, game_id: i64, id: String) -> Result<String> {
-    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::undo(ctx, &id))).await
+    blocking(move || {
+        activity::record(activity::Kind::Setup, format!("Undoing Linux setup fix {id}"));
+        let out = with_setup(&app, game_id, |ctx| linux_setup::undo(ctx, &id));
+        log_outcome(&out);
+        out
+    })
+    .await
 }
 
 /// The end of one log from the Crashes & logs list, by its display name.
@@ -737,6 +790,18 @@ async fn nexus_search(app: AppHandle, query: Search) -> Result<Page> {
     blocking(move || nexus_client()?.search(&query, show_adult(&app))).await
 }
 
+/// A Nexus member's name and stats, for the top of their mod list.
+#[tauri::command]
+async fn nexus_author(member_id: i64) -> Result<nexus_browse::Author> {
+    blocking(move || nexus_client()?.author(member_id)).await
+}
+
+/// Up to two files to download straight from a mod's card.
+#[tauri::command]
+async fn nexus_quick_files(mod_id: i64) -> Result<Vec<nexus::FileInfo>> {
+    blocking(move || nexus_client()?.quick_files(mod_id, 2)).await
+}
+
 #[tauri::command]
 async fn nexus_mod_details(mod_id: i64, refresh: Option<bool>) -> Result<ModDetails> {
     blocking(move || nexus_client()?.mod_details(mod_id, refresh.unwrap_or(false))).await
@@ -751,6 +816,54 @@ fn nexus_requests(after: Option<u64>) -> Vec<RequestRecord> {
 #[tauri::command]
 fn nexus_clear_requests() {
     NEXUS.clear_request_log();
+}
+
+/// What the app did on this machine after the entry with id `after`, for
+/// the debug terminal.
+#[tauri::command]
+fn activity_log(after: Option<u64>) -> Vec<activity::Entry> {
+    activity::since(after.unwrap_or(0))
+}
+
+#[tauri::command]
+fn activity_clear() {
+    activity::clear();
+    NEXUS.clear_request_log();
+}
+
+/// Save the debug terminal's text to `path`.
+#[tauri::command]
+async fn save_debug_log(path: String, text: String) -> Result<()> {
+    blocking(move || {
+        let mut path = PathBuf::from(path);
+        if path.extension().is_none() {
+            path.set_extension("log");
+        }
+        std::fs::write(&path, text)?;
+        Ok(())
+    })
+    .await
+}
+
+const DEBUG_WINDOW: &str = "debug";
+
+/// Open the debug terminal: a window of its own that streams Nexus API
+/// requests and file operations as they happen.
+#[tauri::command]
+fn open_debug_terminal(app: AppHandle) -> Result<()> {
+    if let Some(w) = app.get_webview_window(DEBUG_WINDOW) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
+        .title("CPMX2077 debug terminal")
+        .inner_size(1000.0, 620.0)
+        .min_inner_size(520.0, 300.0)
+        .build()
+        .map_err(|e| Error::Other(format!("could not open the debug terminal: {e}")))?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -996,6 +1109,25 @@ fn run_download(
     overwrite: bool,
     replaces: Option<i64>,
 ) -> Result<DownloadResult> {
+    let file_key = FileKey::Nexus { mod_id, file_id };
+    let state = app.state::<AppState>();
+    let _busy = state.in_flight.begin(file_key.clone())?;
+    if let Some(d) = existing_download(app, &file_key)? {
+        let install = match install_to {
+            Some(game_id) => Some(begin_install(app, game_id, &PathBuf::from(&d.path), download_meta(&d), overwrite, replaces)?),
+            None => None,
+        };
+        let download = nexus::Downloaded {
+            path: PathBuf::from(&d.path),
+            file_name: d.file_name.clone(),
+            sha256: d.sha256.clone(),
+            md5: d.md5.clone(),
+            size: d.size as u64,
+            verified: d.verified,
+            virus_scan_url: None,
+        };
+        return Ok(DownloadResult { download, download_id: d.id, install, already_had: true });
+    }
     let c = nexus_client()?;
     // For the Downloads tab and the mod's folder. Best effort: the download
     // doesn't depend on them.
@@ -1003,9 +1135,16 @@ fn run_download(
     let file = c.file_info(mod_id, file_id).ok();
     let name = info.as_ref().and_then(|i| i.name.clone());
     let dest = download_dir(app, &DownloadRow { nexus_mod_id: Some(mod_id), mod_name: name.clone(), ..Default::default() })?;
-    let dl = c.download(mod_id, file_id, key.as_deref(), expires, &dest, |done, total| {
+    let mut dl = c.download(mod_id, file_id, key.as_deref(), expires, &dest, |done, total| {
         let _ = app.emit("download-progress", Progress { mod_id, file_id, done, total });
     })?;
+    let already_had = match keep_one_copy(app, &dl.sha256, &dl.path)? {
+        Some(old) => {
+            dl.path = old;
+            true
+        }
+        None => false,
+    };
     let category = info.as_ref().and_then(|i| i.category_id).and_then(|id| {
         c.categories().ok()?.into_iter().find(|cat| cat.category_id == id).map(|cat| cat.name)
     });
@@ -1014,9 +1153,12 @@ fn run_download(
         &[version.as_deref(), file.as_ref().and_then(|f| f.name.as_deref()), Some(dl.file_name.as_str())],
         false,
     );
-    let state = app.state::<AppState>();
     let download_id = {
         let db = state.db.lock().unwrap();
+        if !already_had {
+            // An older entry for the file this download just replaced.
+            db.delete_downloads_at(&dl.path.to_string_lossy())?;
+        }
         db.insert_download(&DownloadRow {
             nexus_mod_id: Some(mod_id),
             nexus_file_id: Some(file_id),
@@ -1052,7 +1194,7 @@ fn run_download(
         }
         None => None,
     };
-    Ok(DownloadResult { download: dl, download_id, install })
+    Ok(DownloadResult { download: dl, download_id, install, already_had })
 }
 
 #[derive(Serialize, Clone)]
@@ -1146,6 +1288,25 @@ async fn source_download(
     replaces: Option<i64>,
 ) -> Result<SourceDownloadResult> {
     blocking(move || {
+        let file_key = FileKey::Source { source: source.clone(), id: id.clone(), file: file_id.clone() };
+        let state = app.state::<AppState>();
+        let _busy = state.in_flight.begin(file_key.clone())?;
+        if let Some(d) = existing_download(&app, &file_key)? {
+            let install = match install_to {
+                Some(game_id) => Some(begin_install(&app, game_id, &PathBuf::from(&d.path), download_meta(&d), overwrite.unwrap_or(false), replaces)?),
+                None => None,
+            };
+            let download = sources::Downloaded {
+                path: PathBuf::from(&d.path),
+                file_name: d.file_name.clone(),
+                sha256: d.sha256.clone(),
+                md5: d.md5.clone(),
+                size: d.size as u64,
+                verified: d.verified,
+                check: d.checked.clone().unwrap_or_default(),
+            };
+            return Ok(SourceDownloadResult { download, download_id: d.id, install, already_had: true });
+        }
         let src = SOURCES.get(&source)?;
         let details = src.details(&id)?;
         let file = details
@@ -1164,12 +1325,21 @@ async fn source_download(
             &app,
             &DownloadRow { source: source.clone(), source_ref: Some(id.clone()), mod_name: Some(details.listing.name.clone()), ..Default::default() },
         )?;
-        let dl = src.download(&id, &file_id, &dest, &mut progress)?;
+        let mut dl = src.download(&id, &file_id, &dest, &mut progress)?;
+        let already_had = match keep_one_copy(&app, &dl.sha256, &dl.path)? {
+            Some(old) => {
+                dl.path = old;
+                true
+            }
+            None => false,
+        };
         let version = file.version.clone().or(details.listing.version.clone());
         let channel = dl_store::channel_of(&[version.as_deref(), Some(file.file_name.as_str())], file.prerelease);
         let download_id = {
-            let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
+            if !already_had {
+                db.delete_downloads_at(&dl.path.to_string_lossy())?;
+            }
             db.insert_download(&DownloadRow {
                 file_name: dl.file_name.clone(),
                 path: dl.path.to_string_lossy().into_owned(),
@@ -1205,7 +1375,7 @@ async fn source_download(
             }
             None => None,
         };
-        Ok(SourceDownloadResult { download: dl, download_id, install })
+        Ok(SourceDownloadResult { download: dl, download_id, install, already_had })
     })
     .await
 }
@@ -1284,7 +1454,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { db: Mutex::new(db), pending: Mutex::new(HashMap::new()), sso_cancel: Mutex::new(None) })
+        .manage(AppState { db: Mutex::new(db), pending: Mutex::new(HashMap::new()), sso_cancel: Mutex::new(None), in_flight: Default::default() })
         .setup(|app| {
             // Nexus pages and searches are kept on disk between runs.
             match paths::nexus_cache_dir() {
@@ -1351,8 +1521,14 @@ fn main() {
             nexus_search,
             nexus_categories,
             nexus_mod_details,
+            nexus_author,
+            nexus_quick_files,
             nexus_requests,
             nexus_clear_requests,
+            activity_log,
+            activity_clear,
+            save_debug_log,
+            open_debug_terminal,
             nexus_cache_info,
             nexus_clear_cache,
             open_web_link,
@@ -1365,6 +1541,7 @@ fn main() {
             nexus_window_close,
             open_url,
             parse_nxm,
+            find_download,
             nxm_status,
             register_nxm_handler,
             source_list,
@@ -1390,6 +1567,7 @@ fn main() {
             modpacks_cmd::export_modlist,
             modpacks_cmd::import_modlist,
             modpacks_cmd::mod_dependencies,
+            modpacks_cmd::requirement_states,
             ultraplus_cmd::ultraplus_report,
             ultraplus_cmd::ultraplus_refresh,
         ])
