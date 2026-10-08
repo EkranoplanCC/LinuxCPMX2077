@@ -8,12 +8,26 @@
 </head>
 <body>
   <div id="crt" aria-hidden="true"></div>
-  <h1 id="title">DEBUG_TERMINAL:</h1>
-  <div id="device">
-    <div class="dim">--TERMINAL--</div>
-    <div>STATUS: <span id="state">ONLINE</span></div>
-    <div>CATEGORY: CPMX2077 DEBUG LOG</div>
-  </div>
+  <section id="top">
+    <div id="panel" aria-hidden="true">
+      <div id="panel-bar">LINK ESTABLISHED</div>
+      <!-- The app's own emblem: a terminal prompt inside a ring. -->
+      <svg id="emblem" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" stroke-width="7"/>
+        <path d="M29 34 L47 50 L29 66" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="square"/>
+        <rect x="52" y="60" width="22" height="8" fill="currentColor"/>
+      </svg>
+      <div id="data"></div>
+    </div>
+    <div id="screen">
+      <h1 id="title">DEBUG_TERMINAL:</h1>
+      <div id="device">
+        <div class="dim">--TERMINAL--</div>
+        <div>STATUS: <span id="state" class="hl">ONLINE</span></div>
+        <div>CATEGORY: CPMX2077 DEBUG LOG</div>
+      </div>
+    </div>
+  </section>
   <header id="bar">
     <label><input type="checkbox" data-group="api" checked> API</label>
     <label><input type="checkbox" data-group="download" checked> Downloads</label>

@@ -413,11 +413,14 @@ debug terminal** in Settings or in Get mods' *API requests* list, or with
 on Linux and Windows and needs no terminal program.
 
 It looks like the computer terminals in Cyberpunk 2077: a black screen
-with glowing yellow-green text and scanlines. **STATUS** at the top reads
-*ONLINE* while lines stream in and *PAUSED* after **Pause**.
+with glowing yellow-green text and scanlines, next to a light panel with the
+CPMX2077 emblem. **STATUS** at the top reads *ONLINE* while lines stream in
+and *PAUSED* after **Pause**. The light panel is hidden when the window is
+narrow.
 
 Each line has a time, a tag and what happened, with the file or folder in
-brighter text (errors in red):
+brighter text. `VERIFY` and `INFO` results sit on a highlighted bar, and
+errors show in red:
 
 | Tag | What it means |
 | --- | --- |
