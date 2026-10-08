@@ -4,12 +4,13 @@
 use std::path::{Path, PathBuf};
 
 use cp2077mm_core::install::InstallReport;
+use cp2077mm_core::linux_setup::{self, ReShadeLaunch};
 use cp2077mm_core::reshade::{self, Status};
 use cp2077mm_core::{Result, paths};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{AppState, blocking, debug_override, with_installer};
+use super::{AppState, blocking, debug_override, with_installer, with_setup};
 
 #[derive(Serialize, Clone)]
 struct ReShadeProgress {
@@ -40,6 +41,13 @@ pub async fn reshade_status(app: AppHandle, game_id: i64) -> Result<Status> {
         reshade::status(&db, &game)
     })
     .await
+}
+
+/// What ReShade needs from Proton (launch options, shader compiler); `None`
+/// on Windows or while ReShade isn't in the game folder.
+#[tauri::command]
+pub async fn reshade_launch(app: AppHandle, game_id: i64) -> Result<Option<ReShadeLaunch>> {
+    blocking(move || with_setup(&app, game_id, |ctx| Ok(linux_setup::reshade_launch(ctx.game)))).await
 }
 
 /// The newest version on reshade.me.

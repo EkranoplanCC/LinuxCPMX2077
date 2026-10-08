@@ -1,7 +1,8 @@
 //! What the game needs on Linux before mods load, checked and fixed in
 //! place: the Visual C++ runtime in the Wine/Proton prefix, the `winmm` and
-//! `version` DLL overrides that let CET and RED4ext load, `-modded` for
-//! REDmod, and mod folders that exist twice with different capitalisation.
+//! `version` DLL overrides that let CET and RED4ext load, ReShade's DLL
+//! override and Microsoft's shader compiler, `-modded` for REDmod, and mod
+//! folders that exist twice with different capitalisation.
 //!
 //! Every fix is offered, never applied on its own: the user confirms it, a
 //! record of what changed is kept under the app's data dir, and Undo puts
@@ -33,6 +34,7 @@ const SYSTEM_DIRS: &[&str] = &["drive_c/windows/system32", "drive_c/windows/sysw
 const PROTONTRICKS_FLATPAK: &str = "com.github.Matoking.protontricks";
 
 pub const FIX_VC: &str = "vc-runtime";
+pub const FIX_D3DCOMPILER: &str = "d3dcompiler";
 pub const FIX_LAUNCH: &str = "launch-options";
 pub const FIX_OVERRIDES: &str = "dll-overrides";
 pub const FIX_CASE: &str = "case-folders";
@@ -62,6 +64,8 @@ pub struct Check {
     pub fix: Option<Action>,
     /// Present once a fix has been applied and can be taken back.
     pub undo: Option<Action>,
+    /// Text the user can copy and set by hand instead (launch options).
+    pub copy: Option<String>,
 }
 
 /// A way to install Windows components into a prefix.
@@ -259,9 +263,61 @@ pub fn write_overrides(reg: &str, set: &[(String, Option<String>)]) -> String {
 
 // ---- Steam launch options ----------------------------------------------------
 
-pub fn has_override(opts: &str) -> bool {
-    let lower = opts.to_ascii_lowercase();
-    lower.contains("winedlloverrides") && lower.contains("winmm") && lower.contains("version")
+/// DLLs Wine must load from the game folder before its own: `winmm` and
+/// `version` for CET and RED4ext, ReShade's DLL and `d3dcompiler_47` (the
+/// shader compiler ReShade calls) when ReShade is in the game.
+pub fn override_dlls(g: &GameInstall) -> Vec<&'static str> {
+    let mut v = Vec::new();
+    if game::needs_overrides(g) {
+        v.extend(["winmm", "version"]);
+    }
+    v.extend(reshade_dlls(&g.path));
+    v
+}
+
+/// ReShade's override entries, or none when ReShade isn't in the game.
+pub fn reshade_dlls(game_dir: &Path) -> Vec<&'static str> {
+    match crate::reshade::installed_dll(game_dir) {
+        Some(dll) => vec![dll.trim_end_matches(".dll"), "d3dcompiler_47"],
+        None => Vec::new(),
+    }
+}
+
+/// `winmm,version=n,b`: native first, then Wine's builtin.
+pub fn override_value(dlls: &[&str]) -> String {
+    format!("{}=n,b", dlls.join(","))
+}
+
+/// The WINEDLLOVERRIDES value in launch options, with the byte range of the
+/// whole `WINEDLLOVERRIDES=…` assignment.
+fn find_overrides(s: &str) -> Option<(String, usize, usize)> {
+    let key = "WINEDLLOVERRIDES=";
+    let i = s.to_ascii_uppercase().find(key)?;
+    let vstart = i + key.len();
+    Some(if s[vstart..].starts_with('"') {
+        let close = s[vstart + 1..].find('"').map(|j| vstart + 1 + j).unwrap_or(s.len());
+        (s[vstart + 1..close].to_string(), i, (close + 1).min(s.len()))
+    } else {
+        let end = s[vstart..].find(char::is_whitespace).map(|j| vstart + j).unwrap_or(s.len());
+        (s[vstart..end].to_string(), i, end)
+    })
+}
+
+fn dll_key(d: &str) -> String {
+    d.trim().trim_end_matches(".dll").to_ascii_lowercase()
+}
+
+/// Whether the launch options load every one of `dlls` native first.
+pub fn has_overrides(opts: &str, dlls: &[&str]) -> bool {
+    let Some((value, ..)) = find_overrides(opts) else { return dlls.is_empty() };
+    let mut modes = HashMap::new();
+    for entry in value.split(';') {
+        let (names, mode) = entry.split_once('=').unwrap_or((entry, ""));
+        for n in names.split(',') {
+            modes.insert(dll_key(n), mode.trim().to_ascii_lowercase());
+        }
+    }
+    dlls.iter().all(|d| modes.get(&dll_key(d)).is_some_and(|m| m.starts_with('n')))
 }
 
 pub fn has_modded(opts: &str) -> bool {
@@ -270,27 +326,20 @@ pub fn has_modded(opts: &str) -> bool {
 
 /// The user's launch options with what mods need added, keeping everything
 /// else (other variables, other DLL overrides, game arguments).
-pub fn merge_launch_options(existing: &str, need_override: bool, need_modded: bool) -> String {
+pub fn merge_launch_options(existing: &str, dlls: &[&str], need_modded: bool) -> String {
     let mut s = existing.trim().to_string();
-    if need_override && !has_override(&s) {
-        let key = "WINEDLLOVERRIDES=";
-        if let Some(i) = s.to_ascii_uppercase().find(key) {
-            let vstart = i + key.len();
-            let (old, vend) = if s[vstart..].starts_with('"') {
-                let close = s[vstart + 1..].find('"').map(|j| vstart + 1 + j).unwrap_or(s.len());
-                (s[vstart + 1..close].to_string(), (close + 1).min(s.len()))
-            } else {
-                let end = s[vstart..].find(char::is_whitespace).map(|j| vstart + j).unwrap_or(s.len());
-                (s[vstart..end].to_string(), end)
-            };
-            let mut parts = vec![OVERRIDE_VALUE.to_string()];
+    if !has_overrides(&s, dlls) {
+        let ours = override_value(dlls);
+        if let Some((old, i, vend)) = find_overrides(&s) {
+            let wanted: Vec<String> = dlls.iter().map(|d| dll_key(d)).collect();
+            let mut parts = vec![ours];
             for entry in old.split(';').filter(|e| !e.is_empty()) {
-                let (dlls, mode) = entry.split_once('=').unwrap_or((entry, ""));
-                let kept: Vec<&str> = dlls
+                let (names, mode) = entry.split_once('=').unwrap_or((entry, ""));
+                let kept: Vec<&str> = names
                     .split(',')
                     .filter(|d| {
-                        let d = d.trim().trim_end_matches(".dll").to_ascii_lowercase();
-                        !d.is_empty() && d != "winmm" && d != "version"
+                        let d = dll_key(d);
+                        !d.is_empty() && !wanted.contains(&d)
                     })
                     .collect();
                 if !kept.is_empty() {
@@ -299,10 +348,10 @@ pub fn merge_launch_options(existing: &str, need_override: bool, need_modded: bo
             }
             s = format!("{}WINEDLLOVERRIDES=\"{}\"{}", &s[..i], parts.join(";"), &s[vend..]);
         } else if s.contains("%command%") {
-            s = format!("WINEDLLOVERRIDES=\"{OVERRIDE_VALUE}\" {s}");
+            s = format!("WINEDLLOVERRIDES=\"{ours}\" {s}");
         } else {
             // Bare options are game arguments; they go after %command%.
-            s = format!("WINEDLLOVERRIDES=\"{OVERRIDE_VALUE}\" %command% {s}");
+            s = format!("WINEDLLOVERRIDES=\"{ours}\" %command% {s}").trim().to_string();
         }
     }
     if need_modded && !has_modded(&s) {
@@ -585,9 +634,17 @@ pub fn checks(ctx: &Ctx) -> Vec<Check> {
     }
     let g = ctx.game;
     let needs = game::needs_overrides(g);
+    let reshade = reshade_dlls(&g.path);
+    let dlls = override_dlls(g);
     let redmods = game::has_redmods(&g.path);
     let running = ctx.probe.game_running.then_some(CLOSE_GAME);
     let mut out = Vec::new();
+    // Who needs the overrides, for the explanations.
+    let for_whom = match (needs, !reshade.is_empty()) {
+        (true, true) => "CET, RED4ext and ReShade",
+        (true, false) => "CET and RED4ext",
+        _ => "ReShade",
+    };
 
     // Visual C++ runtime.
     let vc_record = load_record(ctx, FIX_VC).is_some();
@@ -600,6 +657,7 @@ pub fn checks(ctx: &Ctx) -> Vec<Check> {
                 detail: "Proton hasn't created this game's prefix yet. Start the game once from Steam, quit, then rescan.".into(),
                 fix: None,
                 undo: None,
+                copy: None,
             }),
             None => {}
             Some(prefix) => {
@@ -641,21 +699,60 @@ pub fn checks(ctx: &Ctx) -> Vec<Check> {
                     detail,
                     fix,
                     undo: undo_action(ctx, FIX_VC, "the prefix's runtime files and registry", running),
+                    copy: None,
                 });
             }
         }
     }
 
+    // The shader compiler ReShade calls.
+    if let Some(prefix) = &g.proton_prefix
+        && (!reshade.is_empty() || load_record(ctx, FIX_D3DCOMPILER).is_some())
+    {
+        let ok = compiler_ok(prefix);
+        let fix = (!ok).then(|| {
+            let (blocked, how) = match vc_installer(ctx) {
+                Ok((Tricks::Winetricks(_), _)) => (running.map(String::from), "winetricks"),
+                Ok(_) => (running.map(String::from), "protontricks"),
+                Err(e) => (Some(running.map(String::from).unwrap_or(e)), "protontricks"),
+            };
+            Action {
+                label: "Install d3dcompiler_47".into(),
+                confirm: format!(
+                    "Install Microsoft's shader compiler (d3dcompiler_47) into the game's prefix with {how}?\n\n\
+                     winetricks takes the DLL from Mozilla's Firefox installer. The compiler files and prefix registry \
+                     are backed up first, and Undo puts them back."
+                ),
+                blocked,
+            }
+        });
+        out.push(Check {
+            id: FIX_D3DCOMPILER.into(),
+            title: "Shader compiler for ReShade".into(),
+            state: if ok { State::Ok } else { State::Problem },
+            detail: if ok {
+                "Microsoft's d3dcompiler_47.dll is in the prefix.".into()
+            } else {
+                "The prefix has only Wine's d3dcompiler_47.dll. Many ReShade effects fail to compile with it \
+                 (compile errors in ReShade's overlay)."
+                    .into()
+            },
+            fix,
+            undo: undo_action(ctx, FIX_D3DCOMPILER, "the prefix's compiler files and registry", running),
+            copy: None,
+        });
+    }
+
     // DLL overrides and -modded.
     if g.store == Store::Steam {
         let rec = load_record(ctx, FIX_LAUNCH).is_some();
-        if needs || redmods || rec {
+        if !dlls.is_empty() || redmods || rec {
             let cur = g.launch_options.clone().unwrap_or_default();
-            let want = merge_launch_options(&cur, needs, redmods);
+            let want = merge_launch_options(&cur, &dlls, redmods);
             let ok = want == cur.trim();
             let mut missing = Vec::new();
-            if needs && !has_override(&cur) {
-                missing.push(format!("WINEDLLOVERRIDES=\"{OVERRIDE_VALUE}\" so CET and RED4ext load"));
+            if !has_overrides(&cur, &dlls) {
+                missing.push(format!("WINEDLLOVERRIDES=\"{}\" so {for_whom} load", override_value(&dlls)));
             }
             if redmods && !has_modded(&cur) {
                 missing.push("-modded so REDmod mods load".into());
@@ -684,35 +781,39 @@ pub fn checks(ctx: &Ctx) -> Vec<Check> {
                     )
                 },
                 undo: undo_action(ctx, FIX_LAUNCH, "the previous launch options", steam_block),
+                copy: (!ok).then_some(want),
             });
         }
     } else if let Some(prefix) = &g.proton_prefix {
         let rec = load_record(ctx, FIX_OVERRIDES).is_some();
-        if needs || rec {
+        if !dlls.is_empty() || rec {
             let reg = std::fs::read_to_string(prefix.join("user.reg")).unwrap_or_default();
             let o = read_overrides(&reg);
-            let ok = ["winmm", "version"].iter().all(|d| o.get(*d).is_some_and(|v| v.starts_with('n')));
+            let ok = dlls.iter().all(|d| o.get(*d).is_some_and(|v| v.starts_with('n')));
+            let names = dlls.join(", ");
             out.push(Check {
                 id: FIX_OVERRIDES.into(),
                 title: "DLL overrides".into(),
                 state: if ok { State::Ok } else { State::Problem },
                 detail: if ok {
-                    "winmm and version load the mod frameworks' DLLs first.".into()
+                    format!("{names}: native DLLs load first.")
                 } else {
-                    "CET and RED4ext need Wine to load their winmm.dll and version.dll before its own.".into()
+                    format!("{for_whom} need Wine to load these DLLs native first: {names}.")
                 },
                 fix: if ok {
                     None
                 } else {
                     action(
                         "Set overrides",
-                        "Set winmm and version to “native, then builtin” in the game's Wine prefix? This works for any launcher, \
-                         so no launch options are needed. Undo puts the old settings back."
-                            .into(),
+                        format!(
+                            "Set {names} to “native, then builtin” in the game's Wine prefix? This works for any launcher, \
+                             so no launch options are needed. Undo puts the old settings back."
+                        ),
                         running,
                     )
                 },
                 undo: undo_action(ctx, FIX_OVERRIDES, "the previous DLL overrides", running),
+                copy: None,
             });
         }
     }
@@ -743,9 +844,46 @@ pub fn checks(ctx: &Ctx) -> Vec<Check> {
                 blocked: running.map(String::from),
             }),
             undo: undo_action(ctx, FIX_CASE, "the moved files", running),
+            copy: None,
         });
     }
     out
+}
+
+/// What ReShade needs from Proton, for the ReShade card.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReShadeLaunch {
+    /// Steam: the whole launch options line to use. Other launchers: the
+    /// environment variable to set.
+    pub line: String,
+    pub steam: bool,
+    /// ReShade's DLL overrides are set (launch options, or the prefix's
+    /// registry for other launchers).
+    pub ok: bool,
+    /// Microsoft's shader compiler is in the prefix; `None` without a prefix.
+    pub compiler: Option<bool>,
+}
+
+/// `None` on Windows and when no ReShade DLL is in the game folder.
+pub fn reshade_launch(g: &GameInstall) -> Option<ReShadeLaunch> {
+    if cfg!(windows) {
+        return None;
+    }
+    let ours = reshade_dlls(&g.path);
+    if ours.is_empty() {
+        return None;
+    }
+    let dlls = override_dlls(g);
+    let compiler = g.proton_prefix.as_deref().map(compiler_ok);
+    Some(if g.store == Store::Steam {
+        let cur = g.launch_options.clone().unwrap_or_default();
+        ReShadeLaunch { line: merge_launch_options(&cur, &dlls, game::has_redmods(&g.path)), steam: true, ok: has_overrides(&cur, &ours), compiler }
+    } else {
+        let reg = g.proton_prefix.as_ref().and_then(|p| std::fs::read_to_string(p.join("user.reg")).ok()).unwrap_or_default();
+        let o = read_overrides(&reg);
+        let ok = ours.iter().all(|d| o.get(*d).is_some_and(|v| v.starts_with('n')));
+        ReShadeLaunch { line: format!("WINEDLLOVERRIDES=\"{}\"", override_value(&dlls)), steam: false, ok, compiler }
+    })
 }
 
 // ---- Applying and undoing ------------------------------------------------------
@@ -764,9 +902,9 @@ pub fn apply(ctx: &Ctx, id: &str) -> Result<String> {
     }
     let g = ctx.game;
     match id {
-        FIX_VC => apply_vc(ctx),
+        FIX_VC | FIX_D3DCOMPILER => apply_tricks(ctx, id),
         FIX_LAUNCH => {
-            let needs = game::needs_overrides(g);
+            let dlls = override_dlls(g);
             let redmods = game::has_redmods(&g.path);
             let mut rec = load_record(ctx, FIX_LAUNCH).unwrap_or_default();
             let first = rec.launch.is_empty();
@@ -774,7 +912,7 @@ pub fn apply(ctx: &Ctx, id: &str) -> Result<String> {
             for cfg in localconfigs(ctx.home) {
                 let src = std::fs::read_to_string(&cfg)?;
                 let before = launch_in(&src);
-                let want = merge_launch_options(before.as_deref().unwrap_or(""), needs, redmods);
+                let want = merge_launch_options(before.as_deref().unwrap_or(""), &dlls, redmods);
                 if before.as_deref() == Some(want.as_str()) {
                     continue;
                 }
@@ -796,15 +934,18 @@ pub fn apply(ctx: &Ctx, id: &str) -> Result<String> {
             let reg = std::fs::read_to_string(&reg_path).unwrap_or_default();
             let before = read_overrides(&reg);
             let mut rec = load_record(ctx, FIX_OVERRIDES).unwrap_or_default();
-            if rec.overrides.is_empty() {
-                rec.overrides = ["winmm", "version"].iter().map(|d| (d.to_string(), before.get(*d).cloned())).collect();
+            let dlls = override_dlls(g);
+            // Keep each DLL's setting from before it was first changed.
+            for d in &dlls {
+                if !rec.overrides.iter().any(|(k, _)| k == d) {
+                    rec.overrides.push((d.to_string(), before.get(*d).cloned()));
+                }
             }
-            let set: Vec<(String, Option<String>)> =
-                ["winmm", "version"].iter().map(|d| (d.to_string(), Some("native,builtin".to_string()))).collect();
+            let set: Vec<(String, Option<String>)> = dlls.iter().map(|d| (d.to_string(), Some("native,builtin".to_string()))).collect();
             write_atomic(&reg_path, &write_overrides(&reg, &set))?;
             rec.applied_at = now();
             save_record(ctx, FIX_OVERRIDES, &rec)?;
-            Ok("winmm and version now load native first.".into())
+            Ok(format!("{} now load native first.", dlls.join(", ")))
         }
         FIX_CASE => {
             let dups = case_duplicates(&g.path);
@@ -823,21 +964,37 @@ pub fn apply(ctx: &Ctx, id: &str) -> Result<String> {
     }
 }
 
-fn vc_backup_dir(ctx: &Ctx) -> PathBuf {
-    ctx.state_dir.join(FIX_VC)
+/// Microsoft's d3dcompiler_47 (not Wine's) is in the prefix.
+pub fn compiler_ok(prefix: &Path) -> bool {
+    let dll = prefix.join("drive_c/windows/system32/d3dcompiler_47.dll");
+    dll.is_file() && !is_wine_builtin(&dll)
 }
 
-fn is_vc_file(name: &str) -> bool {
+/// The winetricks verb a prefix fix runs.
+fn tricks_verb(id: &str) -> &'static str {
+    if id == FIX_D3DCOMPILER { "d3dcompiler_47" } else { "vcrun2022" }
+}
+
+fn tricks_backup_dir(ctx: &Ctx, id: &str) -> PathBuf {
+    ctx.state_dir.join(id)
+}
+
+/// A DLL the fix `id` may write into the prefix (backed up first).
+fn is_component_file(name: &str, id: &str) -> bool {
+    let stems: &[&str] = if id == FIX_D3DCOMPILER { &["d3dcompiler_47"] } else { VC_FILE_STEMS };
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".dll") && VC_FILE_STEMS.iter().any(|s| lower.starts_with(s))
+    lower.ends_with(".dll") && stems.iter().any(|s| lower.starts_with(s))
 }
 
-fn apply_vc(ctx: &Ctx) -> Result<String> {
+/// Install a Windows component into the prefix with protontricks or
+/// winetricks: the Visual C++ runtime or the shader compiler.
+fn apply_tricks(ctx: &Ctx, id: &str) -> Result<String> {
     let prefix = ctx.game.proton_prefix.clone().ok_or_else(|| Error::Other("no prefix".into()))?;
     let (tricks, wine) = vc_installer(ctx).map_err(Error::Other)?;
+    let verb = tricks_verb(id);
     // Back up once: a second run keeps the copy from before the first.
-    if load_record(ctx, FIX_VC).is_none() {
-        let backup = vc_backup_dir(ctx);
+    if load_record(ctx, id).is_none() {
+        let backup = tricks_backup_dir(ctx, id);
         let _ = std::fs::remove_dir_all(&backup);
         let mut rec = Record { applied_at: now(), ..Default::default() };
         for dir in SYSTEM_DIRS {
@@ -845,7 +1002,7 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
             if let Ok(rd) = std::fs::read_dir(prefix.join(dir)) {
                 for e in rd.flatten() {
                     let name = e.file_name().to_string_lossy().to_string();
-                    if is_vc_file(&name) && e.file_type().is_ok_and(|t| t.is_file()) {
+                    if is_component_file(&name, id) && e.file_type().is_ok_and(|t| t.is_file()) {
                         std::fs::create_dir_all(backup.join(dir))?;
                         std::fs::copy(e.path(), backup.join(dir).join(&name))?;
                         activity::record_path(Kind::Backup, "Saved a copy of", &e.path());
@@ -855,29 +1012,30 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
             }
             rec.vc_files.push((dir.to_string(), names));
         }
+        std::fs::create_dir_all(&backup)?;
         for reg in ["user.reg", "system.reg"] {
             if prefix.join(reg).is_file() {
                 std::fs::copy(prefix.join(reg), backup.join(reg))?;
                 activity::record_path(Kind::Backup, "Saved a copy of", &prefix.join(reg));
             }
         }
-        save_record(ctx, FIX_VC, &rec)?;
+        save_record(ctx, id, &rec)?;
     }
 
     let mut cmd = match &tricks {
         Tricks::Protontricks(p) => {
             let mut c = user_command(&p.to_string_lossy());
-            c.args([STEAM_APP_ID, "-q", "--force", "vcrun2022"]);
+            c.args([STEAM_APP_ID, "-q", "--force", verb]);
             c
         }
         Tricks::ProtontricksFlatpak => {
             let mut c = user_command("flatpak");
-            c.args(["run", PROTONTRICKS_FLATPAK, STEAM_APP_ID, "-q", "--force", "vcrun2022"]);
+            c.args(["run", PROTONTRICKS_FLATPAK, STEAM_APP_ID, "-q", "--force", verb]);
             c
         }
         Tricks::Winetricks(w) => {
             let mut c = user_command(&w.to_string_lossy());
-            c.env("WINEPREFIX", &prefix).args(["-q", "--force", "vcrun2022"]);
+            c.env("WINEPREFIX", &prefix).args(["-q", "--force", verb]);
             if let Some(wine) = &wine {
                 c.env("WINE", wine);
                 if let Some(server) = wine.parent().map(|d| d.join("wineserver")).filter(|p| p.is_file()) {
@@ -887,18 +1045,23 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
             c
         }
     };
-    let log_path = ctx.state_dir.join("vc-runtime.log");
+    let log_name = format!("{id}.log");
+    let log_path = ctx.state_dir.join(&log_name);
+    std::fs::create_dir_all(&ctx.state_dir)?;
     let log = std::fs::File::create(&log_path)?;
     let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
     activity::record_path(
         Kind::Setup,
-        format!("Running {} {} (output in vc-runtime.log)", cmd.get_program().to_string_lossy(), args.join(" ")),
+        format!("Running {} {} (output in {log_name})", cmd.get_program().to_string_lossy(), args.join(" ")),
         &prefix,
     );
     let status = cmd.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log).status()?;
-    activity::record(Kind::Setup, format!("vcrun2022 installer finished: {status}"));
+    activity::record(Kind::Setup, format!("{verb} installer finished: {status}"));
+    if id == FIX_D3DCOMPILER && compiler_ok(&prefix) {
+        return Ok("Microsoft's d3dcompiler_47 installed. ReShade uses it from the next game start.".into());
+    }
     let vc = vc_state(&prefix);
-    if vc.ok() {
+    if id == FIX_VC && vc.ok() {
         let v = match vc {
             Vc::Native { version, .. } => format!(" {}.{}", version.0, version.1),
             _ => String::new(),
@@ -908,8 +1071,8 @@ fn apply_vc(ctx: &Ctx) -> Result<String> {
     let log = std::fs::read_to_string(&log_path).unwrap_or_default();
     let tail: Vec<&str> = log.lines().rev().take(8).collect();
     Err(Error::Other(format!(
-        "vcrun2022 didn't install ({}). Undo restores the prefix. Last output:\n{}\nFull log: {}",
-        if status.success() { "the runtime is still not in place" } else { "the installer failed" },
+        "{verb} didn't install ({}). Undo restores the prefix. Last output:\n{}\nFull log: {}",
+        if status.success() { "the DLLs are still not in place" } else { "the installer failed" },
         tail.into_iter().rev().collect::<Vec<_>>().join("\n"),
         log_path.display()
     )))
@@ -926,14 +1089,14 @@ pub fn undo(ctx: &Ctx, id: &str) -> Result<String> {
     let rec = load_record(ctx, id).ok_or_else(|| Error::Other("nothing to undo".into()))?;
     let g = ctx.game;
     let msg = match id {
-        FIX_VC => {
+        FIX_VC | FIX_D3DCOMPILER => {
             let prefix = g.proton_prefix.clone().ok_or_else(|| Error::Other("no prefix".into()))?;
-            let backup = vc_backup_dir(ctx);
+            let backup = tricks_backup_dir(ctx, id);
             for (dir, names) in &rec.vc_files {
                 if let Ok(rd) = std::fs::read_dir(prefix.join(dir)) {
                     for e in rd.flatten() {
                         let name = e.file_name().to_string_lossy().to_string();
-                        if is_vc_file(&name) && !names.contains(&name) {
+                        if is_component_file(&name, id) && !names.contains(&name) {
                             std::fs::remove_file(e.path())?;
                             activity::record_path(Kind::Delete, "Removed", &e.path());
                         }
@@ -951,7 +1114,11 @@ pub fn undo(ctx: &Ctx, id: &str) -> Result<String> {
                 }
             }
             let _ = std::fs::remove_dir_all(&backup);
-            "The prefix's Visual C++ runtime and registry are back to how they were.".to_string()
+            if id == FIX_VC {
+                "The prefix's Visual C++ runtime and registry are back to how they were.".to_string()
+            } else {
+                "The prefix's shader compiler and registry are back to how they were.".to_string()
+            }
         }
         FIX_LAUNCH => {
             for (cfg, before) in &rec.launch {
@@ -1021,23 +1188,70 @@ mod tests {
     }
 
     #[test]
+    fn reshade_needs_its_override_and_the_shader_compiler() {
+        let gdir = tempfile::tempdir().unwrap();
+        let pfx = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let g = install(gdir.path(), Store::Steam, Some(pfx.path().to_path_buf()), Some("WINEDLLOVERRIDES=\"winmm,version=n,b\" %command%"));
+        let ctx = Ctx { home: home.path(), game: &g, state_dir: state.path().to_path_buf(), probe: Probe::default() };
+        assert!(checks(&ctx).iter().all(|c| c.id != FIX_D3DCOMPILER), "no ReShade, no compiler check");
+        assert_eq!(checks(&ctx).iter().find(|c| c.id == FIX_LAUNCH).unwrap().state, State::Ok);
+
+        touch(&gdir.path().join("bin/x64/dxgi.dll"), crate::reshade::tests::STAND_IN);
+        assert_eq!(override_dlls(&g), ["winmm", "version", "dxgi", "d3dcompiler_47"]);
+        let all = checks(&ctx);
+        let launch = all.iter().find(|c| c.id == FIX_LAUNCH).unwrap();
+        assert_eq!(launch.state, State::Problem);
+        assert!(launch.detail.contains("winmm,version,dxgi,d3dcompiler_47=n,b") && launch.detail.contains("CET, RED4ext and ReShade"), "{}", launch.detail);
+        let dc = all.iter().find(|c| c.id == FIX_D3DCOMPILER).unwrap();
+        assert_eq!(dc.state, State::Problem);
+        assert_eq!(dc.fix.as_ref().unwrap().label, "Install d3dcompiler_47");
+
+        let mut builtin = vec![0u8; 0x80];
+        builtin[..2].copy_from_slice(b"MZ");
+        builtin[0x40..0x50].copy_from_slice(b"Wine builtin DLL");
+        let dll = pfx.path().join("drive_c/windows/system32/d3dcompiler_47.dll");
+        touch(&dll, &builtin);
+        assert!(!compiler_ok(pfx.path()));
+        touch(&dll, b"MZ microsoft's");
+        assert!(compiler_ok(pfx.path()));
+        assert_eq!(checks(&ctx).iter().find(|c| c.id == FIX_D3DCOMPILER).unwrap().state, State::Ok);
+    }
+
+    #[test]
     fn merges_launch_options() {
+        const FW: &[&str] = &["winmm", "version"];
         let o = OVERRIDE_VALUE;
-        assert_eq!(merge_launch_options("", true, false), format!("WINEDLLOVERRIDES=\"{o}\" %command%"));
-        assert_eq!(merge_launch_options("", true, true), format!("WINEDLLOVERRIDES=\"{o}\" %command% -modded"));
-        assert_eq!(merge_launch_options("-skipStartScreen", true, false), format!("WINEDLLOVERRIDES=\"{o}\" %command% -skipStartScreen"));
+        assert_eq!(override_value(FW), o);
+        assert_eq!(merge_launch_options("", FW, false), format!("WINEDLLOVERRIDES=\"{o}\" %command%"));
+        assert_eq!(merge_launch_options("", FW, true), format!("WINEDLLOVERRIDES=\"{o}\" %command% -modded"));
+        assert_eq!(merge_launch_options("-skipStartScreen", FW, false), format!("WINEDLLOVERRIDES=\"{o}\" %command% -skipStartScreen"));
         assert_eq!(
-            merge_launch_options("PROTON_LOG=1 %command% --launcher-skip", true, true),
+            merge_launch_options("PROTON_LOG=1 %command% --launcher-skip", FW, true),
             format!("WINEDLLOVERRIDES=\"{o}\" PROTON_LOG=1 %command% -modded --launcher-skip")
         );
         // An existing override list keeps its other DLLs.
         assert_eq!(
-            merge_launch_options("WINEDLLOVERRIDES=\"dxgi=n;winmm=b\" %command%", true, false),
+            merge_launch_options("WINEDLLOVERRIDES=\"dxgi=n;winmm=b\" %command%", FW, false),
             format!("WINEDLLOVERRIDES=\"{o};dxgi=n\" %command%")
         );
-        assert_eq!(merge_launch_options("WINEDLLOVERRIDES=d3d11=n %command%", true, false), format!("WINEDLLOVERRIDES=\"{o};d3d11=n\" %command%"));
+        assert_eq!(merge_launch_options("WINEDLLOVERRIDES=d3d11=n %command%", FW, false), format!("WINEDLLOVERRIDES=\"{o};d3d11=n\" %command%"));
         let done = format!("WINEDLLOVERRIDES=\"{o}\" %command% -modded");
-        assert_eq!(merge_launch_options(&done, true, true), done, "already right: unchanged");
+        assert_eq!(merge_launch_options(&done, FW, true), done, "already right: unchanged");
+
+        // ReShade adds its DLL and the shader compiler to the same list, and
+        // takes dxgi out of an entry that set it differently.
+        let all = &["winmm", "version", "dxgi", "d3dcompiler_47"];
+        assert_eq!(
+            merge_launch_options("WINEDLLOVERRIDES=\"dxgi=b;d3d11=n\" %command%", all, false),
+            "WINEDLLOVERRIDES=\"winmm,version,dxgi,d3dcompiler_47=n,b;d3d11=n\" %command%"
+        );
+        assert!(has_overrides("WINEDLLOVERRIDES=\"winmm,version=n,b;dxgi=n;d3dcompiler_47.dll=native\" %command%", all));
+        assert!(!has_overrides("WINEDLLOVERRIDES=\"winmm,version=n,b;dxgi=b\" %command%", &["dxgi"]));
+        assert!(!has_overrides("%command%", &["dxgi"]));
+        assert!(has_overrides("%command%", &[]));
+        assert_eq!(merge_launch_options("-skipStartScreen", &[], false), "-skipStartScreen", "nothing needed: unchanged");
     }
 
     #[test]

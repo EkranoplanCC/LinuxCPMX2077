@@ -18,10 +18,13 @@ async function loadReShade() {
   const box = $("#reshade");
   if (!currentGame) return box.classList.add("hidden");
   const gameId = currentGame.id;
-  const s = await invoke("reshade_status", { gameId });
+  const [s, launch] = await Promise.all([
+    invoke("reshade_status", { gameId }),
+    invoke("reshade_launch", { gameId }).catch(() => null),
+  ]);
   if (currentGame?.id !== gameId) return;
   box.classList.remove("hidden");
-  renderReShade(s);
+  renderReShade(s, launch);
 }
 
 async function reshadeInstall(args) {
@@ -48,7 +51,35 @@ function reshadeSummary(s) {
   return "not installed";
 }
 
-function renderReShade(s) {
+// Proton: ReShade's DLL override and the shader compiler (Linux only).
+function reshadeProton(launch) {
+  if (!launch) return null;
+  const rows = [];
+  if (launch.ok) {
+    rows.push(el("tr", {}, el("td", {}, launch.steam ? "Launch options" : "DLL overrides"),
+      el("td", {}, el("span", { class: "badge ok" }, "set"))));
+  } else {
+    rows.push(el("tr", {}, el("td", {}, launch.steam ? "Launch options" : "DLL overrides"),
+      el("td", {}, el("span", { class: "badge bad" }, "not set"), " ",
+        launch.steam ? "Steam launch options for Cyberpunk 2077 must load ReShade's DLL native first:"
+          : "Set this in the launcher's environment variables for the game, or use Set overrides in the Game panel:",
+        el("div", { class: "mono small" }, launch.line),
+        el("div", { class: "row" },
+          el("button", { onclick: async () => {
+            try { await navigator.clipboard.writeText(launch.line); toast(launch.steam ? "Copied. In Steam, open Cyberpunk 2077 › Properties › Launch options and paste it." : "Copied."); }
+            catch { toast(`Copy this:\n${launch.line}`, true); }
+          } }, "Copy"),
+          launch.steam ? el("span", { class: "muted small" }, "or Set launch options in the Game panel (Steam closed)") : null))));
+  }
+  if (launch.compiler !== null) {
+    rows.push(el("tr", {}, el("td", {}, "Shader compiler"),
+      el("td", {}, launch.compiler ? el("span", { class: "badge ok" }, "d3dcompiler_47 native")
+        : [el("span", { class: "badge bad" }, "Wine builtin"), " Install d3dcompiler_47 in the Game panel; many effects don't compile without it."])));
+  }
+  return el("table", { class: "req-table" }, el("tbody", {}, ...rows));
+}
+
+function renderReShade(s, launch) {
   const i = s.installed;
   const m = i ? mods.find((x) => x.id === i.mod_id) : null;
   const newer = i && reshadeLatest && compareVersions(reshadeLatest, i.version || "0") > 0;
@@ -74,6 +105,7 @@ function renderReShade(s) {
       el("tr", {}, el("td", {}, "Loaded as"), el("td", {}, `bin/x64/${i.dll || "?"}`, " ",
         el("span", { class: `badge ${i.enabled ? "ok" : "bad"}` }, i.enabled ? "enabled" : "disabled"))),
       el("tr", {}, el("td", {}, "Setup SHA-256"), el("td", { class: "mono small" }, i.setup_sha256)))) : null,
+    reshadeProton(launch),
     !i && s.unmanaged ? el("p", { class: "small" },
       `bin/x64/${s.unmanaged} is ReShade installed outside CPMX2077. Installing here backs it up, and Uninstall puts it back.`) : null,
     !i ? el("p", { class: "small" }, where) : null,

@@ -118,7 +118,9 @@ Screenshots show sample data, with file locations blurred.
 - **ReShade**: a card in Installed mods installs ReShade from reshade.me
   (or a setup file you downloaded), checks the DLL inside the setup before
   using it, loads it as `dxgi.dll` (or `d3d12.dll` when that name is taken),
-  checks for updates, and uninstalls it without leftovers. Presets stay.
+  checks for updates, and uninstalls it without leftovers. Presets stay. On
+  Linux it adds ReShade's DLL override to the launch options fix and offers
+  Microsoft's shader compiler (`d3dcompiler_47`) for the prefix.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed
