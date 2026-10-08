@@ -24,6 +24,17 @@ function el(tag, props = {}, ...children) {
   return e;
 }
 
+// Script errors go to the debug terminal's log, at most a few a second.
+let uiErrors = 0;
+window.reportUiError = (message) => {
+  if (uiErrors >= 20) return;
+  uiErrors++;
+  setTimeout(() => uiErrors--, 1000);
+  invoke("log_ui_error", { message: String(message) }).catch(() => {});
+};
+window.addEventListener("error", (e) => window.reportUiError(e.error?.stack || e.message));
+window.addEventListener("unhandledrejection", (e) => window.reportUiError(e.reason?.stack || e.reason));
+
 let toastTimer;
 function toast(msg, isError = false) {
   const t = $("#toast");

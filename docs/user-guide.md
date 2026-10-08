@@ -377,6 +377,10 @@ red.
   conflict.
 - Drag to pan, scroll or use the zoom bar (− / 100% / + / **Fit**), drag a
   node to move it, click a node for its details. **Re-layout** starts over.
+- Large libraries (several thousand nodes) stay responsive: far-off groups
+  of nodes are counted together while the web layout settles. If the graph
+  stops drawing, it says so in red and the error is listed in the
+  [debug terminal](#debug-terminal).
 
 ### Compatibility
 
@@ -612,7 +616,7 @@ errors show in red:
 | `DELETE` | A file or folder removed: uninstalled mod files, a deleted download, a stored copy |
 | `SETUP` | Linux setup fixes and undos (including the protontricks command run), settings files rewritten, mod list exports |
 | `INFO` | Summaries: mod installed, enabled, disabled or uninstalled |
-| `ERROR` | Something failed or a download was discarded (always shown) |
+| `ERROR` | Something failed or a download was discarded (always shown), including script errors in the app window ("Window error: …") |
 
 - The checkboxes **API**, **Downloads**, **Extractions**, **File changes**
   and **Setup & summaries** hide or show those lines; **Filter text…**
