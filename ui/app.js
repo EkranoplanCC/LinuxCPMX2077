@@ -64,7 +64,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${name}`));
   if (name === "downloads") busy(null, loadDownloads);
   if (name === "nexus") busy(null, () => selectSource(currentSource));
-  if (name === "diagnostics") busy(null, runDiagnostics);
+  if (name === "netrunner") busy(null, runDiagnostics);
   if (name === "modpacks") busy(null, loadModpacks);
   if (name === "settings") refreshCacheInfo().catch(() => {});
 }
@@ -457,13 +457,15 @@ $("#install-file").addEventListener("click", (e) => busy(e.target, async () => {
 // ---- compatibility ------------------------------------------------------
 const FRAMEWORK_NAMES = { cet: "CET", red4ext: "RED4ext", redscript: "redscript", archivexl: "ArchiveXL", tweakxl: "TweakXL", codeware: "Codeware", redmod: "REDmod" };
 
-// Overview and diagnosis in one tab: a summary of what needs attention, the
-// graph, the compatibility findings and the crash/log check. A finding or a
+// Overview and diagnosis in one tab (Netrunner): a summary of what needs
+// attention, the file map, the graph, the compatibility findings and the
+// crash/log check. A finding or a
 // crash suspect can be shown in the graph with the mods it names lit up.
 async function runDiagnostics() {
   if (!currentGame) return;
   $("#diag-problems").replaceChildren(el("p", { class: "muted" }, "Checking…"));
   window.graphPending();
+  window.loadFileTree();
   const [analysis, crash] = await Promise.allSettled([
     invoke("analyze_game", { gameId: currentGame.id }),
     invoke("crash_analysis", { gameId: currentGame.id }),
@@ -592,7 +594,7 @@ function renderCrash(r) {
   const errors = r.issues.filter((i) => i.level === "error");
   const warnings = r.issues.filter((i) => i.level === "warning");
   $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length ? "error" : "ok") },
-    r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found in the Proton prefix."),
+    r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found."),
     r.suspects.length
       ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]), " ",
         graphButton([...new Set(r.suspects.flatMap(([name]) => [...(ids.get(name) || [])]))], "Mods named in log errors"))

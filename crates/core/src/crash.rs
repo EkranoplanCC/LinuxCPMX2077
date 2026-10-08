@@ -104,13 +104,17 @@ fn file_info(name: String, path: PathBuf) -> Option<LogFile> {
     Some(LogFile { name, path, size: meta.len(), modified_unix })
 }
 
+/// Crash report folders: in every user of the Proton prefix, or in the
+/// user's own `%LOCALAPPDATA%` when the game runs on Windows.
 fn crash_report_dirs(game_dir: &Path) -> Vec<PathBuf> {
-    let Some(pfx) = proton_prefix(game_dir) else { return vec![] };
-    let users = pfx.join("drive_c/users");
+    let mut queues: Vec<PathBuf> = crate::winsys::crash_report_queue().into_iter().collect();
+    if let Some(pfx) = proton_prefix(game_dir)
+        && let Ok(rd) = std::fs::read_dir(pfx.join("drive_c/users"))
+    {
+        queues.extend(rd.flatten().map(|user| resolve_ci(&user.path(), "AppData/Local/REDEngine/ReportQueue")));
+    }
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(&users) else { return out };
-    for user in rd.flatten() {
-        let queue = resolve_ci(&user.path(), "AppData/Local/REDEngine/ReportQueue");
+    for queue in queues {
         if let Ok(reports) = std::fs::read_dir(&queue) {
             out.extend(reports.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
         }
@@ -175,7 +179,7 @@ pub fn known_logs(game_dir: &Path) -> Vec<LogFile> {
         }
     }
     // Proton's log lands in $HOME when PROTON_LOG=1.
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = dirs::home_dir().filter(|_| !cfg!(windows)) {
         push(&mut out, format!("steam-{STEAM_APP_ID}.log"), home.join(format!("steam-{STEAM_APP_ID}.log")));
     }
     out

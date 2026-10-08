@@ -7,7 +7,7 @@ New here? Start with [Getting started](getting-started.md).
 - [Game panel](#game-panel)
 - [Installed mods](#installed-mods)
 - [Modpacks](#modpacks)
-- [Diagnostics](#diagnostics)
+- [Netrunner](#netrunner)
 - [Get mods](#get-mods)
 - [Downloads](#downloads)
 - [Settings](#settings)
@@ -155,12 +155,45 @@ connected Nexus account for collections.
   to a JSON file. **Import mod list…** reads one, adds its categories and
   offers to get the mods you don't have.
 
-## Diagnostics
+## Netrunner
 
-One place to see whether your setup is healthy. **Check again** reruns every
-check. The top of the tab summarises what needs attention: game setup
-problems, recent crash reports, mods named in log errors, and compatibility
-problems. **Show in graph** next to a finding lights up the mods involved.
+One place to see whether your setup is healthy (called Diagnostics in
+earlier versions). **Check again** reruns every check. The top of the
+tab summarises what needs attention: game setup problems, recent crash
+reports, mods named in log errors, and compatibility problems. **Show in
+graph** next to a finding lights up the mods involved. The links under the
+title (**Files**, **Graph**, **Compatibility**, **Crashes & logs**) jump to
+each section.
+
+### File map
+
+Every file your mods put into the game, laid out like the game folder, in
+the style of a registry editor. Folders are on the left: click one to open
+it and see what's inside on the right, or use the arrow keys (up and down to
+move, right to open, left to close). The bar above shows where you are;
+click any part of it to go back up, and **Open folder** opens that folder in
+your file manager.
+
+Each file shows its name, **Installed at** (the folder it sits in inside the
+game folder; click it to open that folder, hover for the full path), the
+**Mod** it came from, its **Status** and its size:
+
+- **In use**: the file is in the game folder and this mod's copy is the one
+  the game loads.
+- **Overridden by …**: a newer mod installed the same file over this one.
+  Uninstalling or turning off the newer mod brings this copy back.
+- **Missing**: the mod is on, but the file is gone from the game folder
+  (deleted by hand or by another tool). **Verify** in Installed mods
+  checks it in detail; reinstalling the mod puts it back.
+- **Mod off**: the mod is switched off, so its files are kept outside the
+  game until you turn it on again.
+
+A red **!** next to a folder means something inside it is missing or
+overridden. **By folder** / **By mod** switches between the game's folder
+layout and one branch per mod (click a mod name in the list to jump to its
+branch). **Find a file or mod…** lists every file whose path or mod name
+matches. The map only shows files CPMX2077 installed, not the game's own
+files or mods installed by hand.
 
 ### Graph
 
@@ -331,6 +364,20 @@ logs are only readable from a fixed list of known locations.
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
 | Nexus API key | System keyring (Secret Service) only |
 
+On Windows the library folders are under `%APPDATA%\cp2077-modmanager\`,
+saved Nexus pages under `%LOCALAPPDATA%\cp2077-modmanager\nexus\`, and the
+API key is in Windows Credential Manager.
+
+### Windows differences (preview)
+
+- The Game panel has no Linux setup items; the game runs natively.
+- Crash reports are read from `%LOCALAPPDATA%\REDEngine\ReportQueue`.
+- **Handle nxm:// links** in Settings writes a per-user registry entry.
+  Installing CPMX2077 doesn't take the links over from Vortex or Mod
+  Organizer on its own.
+- `.rar` archives are unpacked with the `tar.exe` built into Windows 10
+  and 11.
+
 ## Troubleshooting
 
 **CET or RED4ext doesn't start.** Almost always the Visual C++ runtime.
@@ -353,7 +400,7 @@ uninstalling it later restores the other mod's copy.
 clicked the download in CPMX2077's own Nexus window, or that CPMX2077 handles
 `nxm://` links (Settings) if you used your browser.
 
-**The game crashes.** Open Diagnostics → *Crashes & logs*. Mods named in
+**The game crashes.** Open Netrunner → *Crashes & logs*. Mods named in
 errors are listed; turn them off with the **On** switch to test, then
 **Check again**. The compatibility list may also name a clash.
 

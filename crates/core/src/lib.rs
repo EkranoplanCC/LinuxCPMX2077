@@ -10,6 +10,7 @@ pub mod dependencies;
 pub mod desktop;
 pub mod downloads;
 pub mod error;
+pub mod file_tree;
 pub mod fomod;
 pub mod game;
 pub mod game_versions;
@@ -32,6 +33,7 @@ pub mod startup;
 mod testutil;
 pub mod updates;
 pub mod vdf;
+pub mod winsys;
 
 pub use error::{Error, Result};
 

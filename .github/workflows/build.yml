@@ -32,8 +32,6 @@ jobs:
     needs: test
     # Build on the oldest supported Ubuntu so the AppImage runs on older glibc.
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write # publish the release on version tags
     steps:
       - uses: actions/checkout@v4
       - name: System dependencies
@@ -45,22 +43,56 @@ jobs:
       - run: cargo install tauri-cli --version "^2" --locked
       - run: cargo tauri build --bundles appimage
         working-directory: src-tauri
-      - name: Name the AppImage and checksum it
+      - name: Name the AppImage
         working-directory: target/release/bundle/appimage
-        run: |
-          for f in *.AppImage; do [ "$f" = "${f// /-}" ] || mv "$f" "${f// /-}"; done
-          sha256sum *.AppImage > SHA256SUMS
+        run: for f in *.AppImage; do [ "$f" = "${f// /-}" ] || mv "$f" "${f// /-}"; done
       - uses: actions/upload-artifact@v4
         with:
           name: appimage
-          path: |
-            target/release/bundle/appimage/*.AppImage
-            target/release/bundle/appimage/SHA256SUMS
-      # Pushing a tag like v0.2.0, or running the workflow by hand with
-      # "release" ticked, publishes this build as a GitHub release (versions
-      # below 1.0 as pre-releases).
+          path: target/release/bundle/appimage/*.AppImage
+
+  # The Windows installer (NSIS). Windows-only code is linted here; the unit
+  # tests run on Linux only for now.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo install tauri-cli --version "^2" --locked
+      - run: cargo tauri build --bundles nsis
+        working-directory: src-tauri
+      - name: Name the installer
+        shell: bash
+        working-directory: target/release/bundle/nsis
+        run: for f in *.exe; do [ "$f" = "${f// /-}" ] || mv "$f" "${f// /-}"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/bundle/nsis/*-setup.exe
+
+  # Pushing a tag like v0.2.0, or running the workflow by hand with "release"
+  # ticked, publishes the AppImage and the Windows installer as a GitHub
+  # release (versions below 1.0 as pre-releases).
+  release:
+    needs: [appimage, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.AppImage *.exe > SHA256SUMS && cat SHA256SUMS
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -73,5 +105,5 @@ jobs:
           pre=""
           case "$tag" in v0.*) pre="--prerelease" ;; esac
           gh release create "$tag" $pre --target "$GITHUB_SHA" --title "$tag" --generate-notes \
-            --notes "Download the AppImage, make it executable (\`chmod +x\`) and run it. SHA256SUMS lists its checksum." \
-            target/release/bundle/appimage/*.AppImage target/release/bundle/appimage/SHA256SUMS
+            --notes "Linux: download the AppImage, make it executable (\`chmod +x\`) and run it. Windows (early preview): run the -setup.exe installer; it isn't code-signed yet, so SmartScreen asks once (More info, Run anyway). SHA256SUMS lists every file's checksum." \
+            dist/*.AppImage dist/*.exe dist/SHA256SUMS

@@ -27,6 +27,15 @@ For what every button does, see the [user guide](user-guide.md).
 The app keeps its library in `~/.local/share/cp2077-modmanager/`, so you can
 replace the AppImage with a newer one at any time without losing anything.
 
+**On Windows (preview)**: download `CPMX2077_<version>_x64-setup.exe` and run
+it. It installs for your user only, without admin rights. It isn't code-signed
+yet, so SmartScreen asks once: choose *More info*, then *Run anyway*. Steam,
+GOG Galaxy and Epic installs are found automatically, and step 5 below
+doesn't apply: the game runs natively, so there's nothing Linux-side to fix.
+If CET or RED4ext don't start, install the latest Microsoft Visual C++
+2015-2022 Redistributable (x64). The Windows build is still an early preview
+and hasn't been tried on a real Windows PC yet.
+
 ## 2. Check the game was found
 
 The **Game** panel on the left lists every Cyberpunk 2077 install it found in
@@ -127,9 +136,10 @@ mods** to queue the rest.
 ## 8. Start the game and check
 
 Launch Cyberpunk 2077 from Steam or Heroic as usual. Then open the
-**Diagnostics** tab in CPMX2077 and click **Check again**. It shows, at the
+**Netrunner** tab in CPMX2077 and click **Check again**. It shows, at the
 top, anything that needs attention: setup problems, new crash reports, mods
-named in log errors, and compatibility problems between your mods.
+named in log errors, and compatibility problems between your mods. Its
+*File map* shows every file your mods installed and where it went.
 
 If the game crashes or a framework does not load, see
 [Troubleshooting](user-guide.md#troubleshooting).

@@ -1,5 +1,6 @@
-//! Talking to the Linux desktop: opening links in the user's browser and
-//! registering the app for "Mod Manager Download" (`nxm://`) links.
+//! Talking to the desktop: opening links in the user's browser and
+//! registering the app for "Mod Manager Download" (`nxm://`) links. Linux uses
+//! xdg-utils and a desktop entry; Windows uses the shell and the registry.
 //!
 //! Inside an AppImage the launcher points GTK/GIO at the bundled libraries
 //! (`GIO_MODULE_DIR`, `GTK_PATH`, an `XDG_DATA_DIRS` entry under `$APPDIR`, ...).
@@ -9,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(not(windows))]
 use std::time::{Duration, Instant};
 
 use crate::{Error, Result};
@@ -109,6 +111,32 @@ pub fn open_link(url: &str) -> Result<()> {
     }
 }
 
+/// `explorer` shows folders; `url.dll` hands a link to the default browser
+/// without going through `cmd`, so characters like `&` stay part of the link.
+#[cfg(windows)]
+fn launch(target: &str) -> Result<()> {
+    let mut cmd = if Path::new(target).is_dir() {
+        Command::new("explorer")
+    } else {
+        let mut c = Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    let mut child = cmd
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| Error::Other(format!("could not open {target}: {e}")))?;
+    // explorer's exit code means nothing, so only a failed start is an error.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn launch(url: &str) -> Result<()> {
     let mut last_err = String::from("no program to open links was found (install xdg-utils)");
     for (program, args) in [("xdg-open", vec![]), ("gio", vec!["open"])] {
@@ -210,6 +238,28 @@ pub struct NxmStatus {
 }
 
 /// Who handles `nxm://` links right now.
+#[cfg(windows)]
+pub fn nxm_status() -> NxmStatus {
+    let handler = crate::winsys::nxm_command();
+    let ours = current_launcher().ok().map(|exe| crate::winsys::nxm_open_command(&exe));
+    NxmStatus { registered: handler.is_some() && handler == ours, handler }
+}
+
+/// Make this app open `nxm://` links. Replaces whichever app handled them.
+#[cfg(windows)]
+pub fn register_nxm(_home: &Path) -> Result<NxmStatus> {
+    crate::winsys::register_nxm(&current_launcher()?)?;
+    Ok(nxm_status())
+}
+
+/// The installed program doesn't move between updates: nothing to refresh.
+#[cfg(windows)]
+pub fn refresh_nxm_entry(_home: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Who handles `nxm://` links right now.
+#[cfg(not(windows))]
 pub fn nxm_status() -> NxmStatus {
     let handler = user_command("xdg-mime")
         .args(["query", "default", NXM_MIME])
@@ -223,6 +273,7 @@ pub fn nxm_status() -> NxmStatus {
 }
 
 /// Make this app open `nxm://` links. Replaces whichever app handled them.
+#[cfg(not(windows))]
 pub fn register_nxm(home: &Path) -> Result<NxmStatus> {
     let dir = applications_dir(home);
     write_nxm_entry(&dir, &current_launcher()?)?;
@@ -238,6 +289,7 @@ pub fn register_nxm(home: &Path) -> Result<NxmStatus> {
     Ok(nxm_status())
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn write_nxm_entry(dir: &Path, exe: &str) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(NXM_DESKTOP_FILE);
@@ -252,10 +304,12 @@ fn write_nxm_entry(dir: &Path, exe: &str) -> Result<()> {
 
 /// After an update the AppImage usually lives at a new path. If we already
 /// own the handler entry, point it at this copy so links keep working.
+#[cfg(not(windows))]
 pub fn refresh_nxm_entry(home: &Path) -> Result<()> {
     refresh_entry_in(&applications_dir(home), &current_launcher()?)
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn refresh_entry_in(dir: &Path, exe: &str) -> Result<()> {
     if dir.join(NXM_DESKTOP_FILE).is_file() {
         write_nxm_entry(dir, exe)?;

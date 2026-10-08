@@ -24,7 +24,7 @@
     <nav>
       <button data-tab="mods" class="active">Installed mods</button>
       <button data-tab="modpacks">Modpacks</button>
-      <button data-tab="diagnostics">Diagnostics</button>
+      <button data-tab="netrunner">Netrunner</button>
       <button data-tab="nexus">Get mods</button>
       <button data-tab="downloads">Downloads</button>
       <button data-tab="settings">Settings</button>
@@ -137,11 +137,12 @@
       <div id="coll-detail" class="hidden"></div>
     </section>
 
-    <section id="tab-diagnostics" class="tab">
+    <section id="tab-netrunner" class="tab">
       <header>
-        <h2>Diagnostics</h2>
+        <h2 class="net-title" data-text="NETRUNNER">NETRUNNER<span>diagnostics // file map // crash trace</span></h2>
         <div class="row">
           <div class="jump" aria-label="Sections">
+            <button class="link" data-jump="net-files">Files</button>
             <button class="link" data-jump="diag-graph">Graph</button>
             <button class="link" data-jump="diag-compat">Compatibility</button>
             <button class="link" data-jump="diag-crashes">Crashes &amp; logs</button>
@@ -150,6 +151,37 @@
         </div>
       </header>
       <div id="diag-problems"></div>
+
+      <section id="net-files" class="diag-section">
+        <header>
+          <h3>File map</h3>
+          <div class="row">
+            <div id="net-group" class="segmented" role="tablist" aria-label="Arrange files">
+              <button data-group="location" class="active" role="tab">By folder</button>
+              <button data-group="mod" role="tab">By mod</button>
+            </div>
+            <input id="net-filter" type="search" placeholder="Find a file or mod…" aria-label="Find a file or mod">
+          </div>
+        </header>
+        <p class="muted">Every file your mods put into the game, laid out like the game folder. Click a folder to see what's in it and which mod each file came from.</p>
+        <div id="net-address" class="mono"><span id="net-path"></span><button id="net-open" class="link inline">Open folder</button></div>
+        <div id="net-browser">
+          <div id="net-tree" role="tree" aria-label="Folders"></div>
+          <div id="net-list">
+            <table>
+              <thead><tr><th>Name</th><th>Installed at</th><th>Mod</th><th>Status</th><th>Size</th></tr></thead>
+              <tbody id="net-rows"></tbody>
+            </table>
+            <p id="net-empty" class="muted hidden"></p>
+          </div>
+        </div>
+        <div id="net-legend" class="muted">
+          <span class="net-state active">in use</span>
+          <span class="net-state overridden">overridden by a newer mod</span>
+          <span class="net-state missing">missing from the game folder</span>
+          <span class="net-state disabled">mod switched off</span>
+        </div>
+      </section>
 
       <section id="diag-graph" class="diag-section">
         <header>
@@ -463,5 +495,6 @@
   <script src="app.js"></script>
   <script src="modpacks.js"></script>
   <script src="graph.js"></script>
+  <script src="netrunner.js"></script>
 </body>
 </html>
