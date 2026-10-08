@@ -256,7 +256,8 @@ game folder; click it to open that folder, hover for the full path), the
 A red **!** next to a folder means something inside it is missing or
 overridden. **By folder** / **By mod** switches between the game's folder
 layout and one branch per mod (click a mod name in the list to jump to its
-branch). **Find a file or mod…** lists every file whose path or mod name
+branch). In **By mod**, clicking a mod opens its whole folder structure at
+once; the other mods stay collapsed. **Find a file or mod…** lists every file whose path or mod name
 matches. The map only shows files CPMX2077 installed, not the game's own
 files or mods installed by hand.
 
