@@ -176,7 +176,7 @@ move, right to open, left to close). The bar above shows where you are;
 click any part of it to go back up, and **Open folder** opens that folder in
 your file manager.
 
-Each file shows its name, **Installed at** (the folder it sits in inside the
+Each file shows its name, **Install location** (the folder it sits in inside the
 game folder; click it to open that folder, hover for the full path), the
 **Mod** it came from, its **Status** and its size:
 
