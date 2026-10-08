@@ -217,8 +217,9 @@ $("#add-path").addEventListener("click", (e) => busy(e.target, async () => {
 // ---- mods ---------------------------------------------------------------
 let mods = [];
 let updatesByMod = new Map(); // installed mod id -> update from check_updates
-// The user's own categories and which installed mod is in which (modpacks.js).
-let customCategories = { categories: [], mods: {} };
+// The user's own tags and which installed mod has which (modpacks.js):
+// { tags: [{ name, color }], mods: { modId: [tag names] } }.
+let modTags = { tags: [], mods: {} };
 let modSort = loadPref("modSort", { key: "name", dir: 1 });
 const NO_CATEGORY = "__none__";
 
@@ -231,8 +232,8 @@ function sourceLabel(m) {
 
 const SORT_KEYS = {
   name: (m) => m.name,
-  // Your own category first, then Nexus'.
-  category: (m) => customCategories.mods[m.id] || m.category || "",
+  // Your first tag, then Nexus' category.
+  category: (m) => modTags.mods[m.id]?.[0] || m.category || "",
   version: (m) => m.version || "",
   source: (m) => sourceLabel(m),
 };
@@ -251,7 +252,7 @@ function sortMods(list) {
 async function loadMods() {
   if (!currentGame) return;
   mods = await invoke("list_mods", { gameId: currentGame.id });
-  // Custom categories and dependencies (modpacks.js).
+  // Tags and dependencies (modpacks.js).
   await loadModExtras().catch((e) => toast(String(e), true));
   await loadVersionRibbon().catch(() => {});
   renderMods();
@@ -263,19 +264,19 @@ function renderMods() {
   const sel = $("#mods-category");
   const keep = sel.value;
   const cats = [...new Set(mods.map((m) => m.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const own = customCategories.categories;
-  sel.replaceChildren(el("option", { value: "" }, "All categories"),
-    own.length ? el("optgroup", { label: "Your categories" },
-      ...own.map((c) => el("option", { value: `own:${c.name}` }, c.name)),
-      el("option", { value: `own:${NO_CATEGORY}` }, "Not in one of yours")) : null,
+  const own = modTags.tags;
+  sel.replaceChildren(el("option", { value: "" }, "All tags and categories"),
+    own.length ? el("optgroup", { label: "Your tags" },
+      ...own.map((c) => el("option", { value: `tag:${c.name}` }, c.name)),
+      el("option", { value: `tag:${NO_CATEGORY}` }, "No tags")) : null,
     el("optgroup", { label: "Nexus categories" },
       ...cats.map((c) => el("option", { value: c }, c)),
       cats.length && mods.some((m) => !m.category) ? el("option", { value: NO_CATEGORY }, "No category") : null));
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   const f = sel.value;
-  const ownOf = (m) => customCategories.mods[m.id];
+  const tagsOf = (m) => modTags.mods[m.id] || [];
   const shown = sortMods(mods.filter((m) => (!f
-    || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
+    || (f.startsWith("tag:") ? (f === `tag:${NO_CATEGORY}` ? !tagsOf(m).length : tagsOf(m).includes(f.slice(4)))
       : f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
   document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
@@ -296,7 +297,7 @@ function modRow(m) {
     el("td", {}, sw),
     el("td", {}, el("b", {}, m.name), on ? null : el("span", { class: "badge" }, "disabled"),
       el("div", { class: "muted mono" }, m.archive_name)),
-    el("td", {}, customCategoryPicker(m), el("div", { class: "muted small" }, m.category || "")),
+    el("td", {}, tagEditor(m), el("div", { class: "muted small" }, m.category || "")),
     el("td", {}, m.version || "—", up ? el("div", { class: "badge ok" }, `${up.to_stable ? "stable " : ""}${up.latest} available`) : null),
     el("td", {}, el("span", { class: "badge" }, sourceLabel(m))),
     el("td", {}, m.file_count),
