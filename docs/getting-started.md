@@ -127,9 +127,10 @@ mods** to queue the rest.
 ## 8. Start the game and check
 
 Launch Cyberpunk 2077 from Steam or Heroic as usual. Then open the
-**Diagnostics** tab in CPMX2077 and click **Check again**. It shows, at the
+**Netrunner** tab in CPMX2077 and click **Check again**. It shows, at the
 top, anything that needs attention: setup problems, new crash reports, mods
-named in log errors, and compatibility problems between your mods.
+named in log errors, and compatibility problems between your mods. Its
+*File map* shows every file your mods installed and where it went.
 
 If the game crashes or a framework does not load, see
 [Troubleshooting](user-guide.md#troubleshooting).
