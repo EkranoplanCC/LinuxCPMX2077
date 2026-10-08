@@ -12,9 +12,6 @@
   let byKey = new Map();
   let modNames = new Map();
   let gameId = null;
-  // Folders seen in the "by mod" view. Each opens fully the first time it
-  // appears; after that, whatever the user collapsed stays collapsed.
-  const seenInModView = new Set();
 
   // Keys are unique per node: the folder path, prefixed by the mod in the
   // "by mod" view where the same folder appears under several mods.
@@ -23,10 +20,6 @@
     node.key = node.mod_id != null ? base : (base ? `${base}:${node.path}` : node.path);
     node.parent = parent;
     byKey.set(node.key, node);
-    if (group === "mod" && !seenInModView.has(node.key)) {
-      seenInModView.add(node.key);
-      expanded.mod.add(node.key);
-    }
     for (const c of node.folders) index(c, node, base);
   }
 
@@ -104,9 +97,16 @@
     // Selecting reveals the node: every folder above it opens, and a click
     // opens the folder itself too (arrow keys only move).
     if (open) expanded[group].add(node.key);
+    // Clicking a mod in the "by mod" view opens its whole folder structure.
+    if (open && node.mod_id != null) expandAll(node);
     for (let p = node.parent; p; p = p.parent) expanded[group].add(p.key);
     render();
     focusKey(node.key);
+  }
+
+  function expandAll(node) {
+    expanded[group].add(node.key);
+    for (const c of node.folders) expandAll(c);
   }
 
   function focusKey(key) {
