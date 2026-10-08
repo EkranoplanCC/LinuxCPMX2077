@@ -61,6 +61,8 @@ nav button.active { border-left: 3px solid var(--yellow); background: var(--pane
   border: 2px solid #9a9a9a; background: #000;
 }
 #debug-dock iframe { display: block; width: 100%; height: 100%; border: 0; }
+/* Keep the sidebar drag going when the pointer crosses the terminal frame. */
+body.resizing #debug-dock iframe { pointer-events: none; }
 .tab { display: none; }
 .tab.active { display: block; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }
