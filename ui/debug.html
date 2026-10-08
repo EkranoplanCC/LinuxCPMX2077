@@ -7,8 +7,14 @@
   <link rel="stylesheet" href="debug.css">
 </head>
 <body>
+  <div id="crt" aria-hidden="true"></div>
+  <h1 id="title">DEBUG_TERMINAL:</h1>
+  <div id="device">
+    <div class="dim">--TERMINAL--</div>
+    <div>STATUS: <span id="state">ONLINE</span></div>
+    <div>CATEGORY: CPMX2077 DEBUG LOG</div>
+  </div>
   <header id="bar">
-    <span class="prompt">cpmx2077<span class="dim">:~$</span> debug</span>
     <label><input type="checkbox" data-group="api" checked> API</label>
     <label><input type="checkbox" data-group="download" checked> Downloads</label>
     <label><input type="checkbox" data-group="extract" checked> Extractions</label>

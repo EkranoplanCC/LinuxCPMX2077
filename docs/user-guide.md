@@ -412,8 +412,12 @@ debug terminal** in Settings or in Get mods' *API requests* list, or with
 **Debug terminal** in the sidebar while debug mode is on. It works the same
 on Linux and Windows and needs no terminal program.
 
+It looks like the computer terminals in Cyberpunk 2077: a black screen
+with glowing yellow-green text and scanlines. **STATUS** at the top reads
+*ONLINE* while lines stream in and *PAUSED* after **Pause**.
+
 Each line has a time, a tag and what happened, with the file or folder in
-cyan:
+brighter text (errors in red):
 
 | Tag | What it means |
 | --- | --- |

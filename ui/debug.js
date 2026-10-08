@@ -159,6 +159,7 @@ $("#pause").addEventListener("click", () => {
   paused = !paused;
   $("#pause").textContent = paused ? "Resume" : "Pause";
   $("#pause").classList.toggle("on", paused);
+  $("#state").textContent = paused ? "PAUSED" : "ONLINE";
   status($("#out").querySelectorAll(".line").length);
 });
 $("#clear").addEventListener("click", async () => {

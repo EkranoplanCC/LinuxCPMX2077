@@ -1,56 +1,80 @@
+/* Styled after Cyberpunk 2077's in-game computer terminals: black screen,
+   glowing chartreuse text, grey divider bars and faint scanlines. */
 :root {
-  --bg: #07070c;
-  --bar: #11111a;
-  --text: #d6d6e0;
-  --dim: #6c6c82;
-  --yellow: #fcee0a;
-  --cyan: #00f0ff;
-  --red: #ff4d5e;
-  --green: #3ddc84;
-  --magenta: #ff5fd2;
-  --orange: #ffa94d;
-  --border: #23233a;
+  --bg: #000;
+  --bar: #050504;
+  --text: #d2df45;
+  --bright: #eef78a;
+  --dim: #7d8530;
+  --rule: #9a9a9a;
+  --red: #ff4b3a;
+  --border: #3b3f17;
+  --glow: 0 0 4px rgba(210, 223, 69, .55);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  margin: 0; display: flex; flex-direction: column;
-  background: var(--bg); color: var(--text);
-  font: 12.5px/1.5 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
+  margin: 0; display: flex; flex-direction: column; position: relative;
+  background: var(--bg); color: var(--text); text-shadow: var(--glow);
+  font: 13px/1.5 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
 }
+#crt {
+  /* Scanlines and a soft vignette over the whole screen; clicks pass through. */
+  position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, .28) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, .55) 100%);
+  animation: flicker 7s infinite steps(1);
+}
+@keyframes flicker { 0%, 96%, 100% { opacity: 1; } 97% { opacity: .82; } 98% { opacity: .95; } }
+@media (prefers-reduced-motion: reduce) { #crt { animation: none; } }
+#title {
+  margin: 0; padding: 10px 14px 8px; text-align: center;
+  font-size: 22px; font-weight: 700; letter-spacing: 2px; color: var(--text);
+  text-shadow: 0 0 8px rgba(210, 223, 69, .7);
+  border-bottom: 4px solid var(--rule);
+}
+#device { padding: 8px 14px 6px; text-transform: uppercase; letter-spacing: 1px; }
+.dim { color: var(--dim); }
 #bar {
   display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
-  padding: 8px 12px; background: var(--bar); border-bottom: 1px solid var(--border);
+  padding: 8px 14px; background: var(--bar);
+  border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule);
+  text-transform: uppercase; letter-spacing: .5px;
 }
-.prompt { color: var(--green); font-weight: 600; }
-.dim { color: var(--dim); }
 .spacer { flex: 1; }
-label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; color: var(--dim); }
+label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; color: var(--dim); }
 label:has(input:checked) { color: var(--text); }
+input[type=checkbox] { accent-color: var(--text); }
 input[type=search] {
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 3px; padding: 3px 6px; font: inherit; width: 180px;
+  background: #000; color: var(--bright); border: 1px solid var(--dim); border-radius: 0;
+  padding: 3px 6px; font: inherit; width: 180px; text-shadow: var(--glow);
 }
+input[type=search]::placeholder { color: var(--dim); text-transform: uppercase; }
+input[type=search]:focus { outline: none; border-color: var(--text); }
 button {
-  background: transparent; color: var(--text); border: 1px solid var(--border);
-  border-radius: 3px; padding: 3px 9px; font: inherit; cursor: pointer;
+  background: #000; color: var(--text); border: 1px solid var(--text); border-radius: 0;
+  padding: 3px 10px; font: inherit; text-transform: uppercase; letter-spacing: 1px;
+  cursor: pointer; text-shadow: var(--glow);
 }
-button:hover { border-color: var(--cyan); color: var(--cyan); }
-button.on { border-color: var(--yellow); color: var(--yellow); }
-#out { flex: 1; overflow: auto; padding: 6px 12px 12px; white-space: pre-wrap; word-break: break-all; }
+button:hover { background: var(--text); color: #000; text-shadow: none; }
+button.on { background: var(--text); color: #000; text-shadow: none; }
+#out { flex: 1; overflow: auto; padding: 6px 14px 12px; white-space: pre-wrap; word-break: break-all; }
+#out::-webkit-scrollbar { width: 10px; }
+#out::-webkit-scrollbar-thumb { background: var(--dim); }
+#out::-webkit-scrollbar-track { background: #000; }
 .line { display: grid; grid-template-columns: 96px 76px 1fr; gap: 10px; }
-.line:hover { background: #12121c; }
+.line:hover { background: rgba(210, 223, 69, .08); }
 .t { color: var(--dim); }
-.tag { font-weight: 600; }
-.path { color: var(--cyan); }
+.tag { font-weight: 700; letter-spacing: .5px; }
+.path { color: var(--bright); }
 .extra { color: var(--dim); }
-.k-nexus .tag, .k-api .tag { color: var(--magenta); }
-.k-download .tag, .k-verify .tag { color: var(--green); }
-.k-extract .tag { color: var(--yellow); }
-.k-copy .tag, .k-move .tag, .k-backup .tag, .k-restore .tag { color: var(--cyan); }
-.k-delete .tag { color: var(--orange); }
-.k-setup .tag, .k-info .tag { color: var(--text); }
-.k-error .tag, .line.failed .tag, .line.failed .msg { color: var(--red); }
-#status { padding: 4px 12px; background: var(--bar); border-top: 1px solid var(--border); color: var(--dim); }
-.empty { color: var(--dim); padding: 12px 0; }
+.k-nexus .tag, .k-api .tag, .k-download .tag, .k-verify .tag { color: var(--bright); }
+.k-delete .tag { text-decoration: underline; }
+.k-error .tag, .line.failed .tag, .line.failed .msg { color: var(--red); text-shadow: 0 0 4px rgba(255, 75, 58, .6); }
+#status {
+  padding: 4px 14px; background: var(--bar); border-top: 2px solid var(--rule);
+  color: var(--dim); text-transform: uppercase; letter-spacing: .5px;
+}
+.empty { color: var(--dim); padding: 12px 0; text-transform: uppercase; }
