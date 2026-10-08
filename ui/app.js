@@ -277,7 +277,22 @@ function renderMods() {
   const shown = sortMods(mods.filter((m) => (!f
     || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
       : f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
-  document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
+  // The mod's page in Get mods (Nexus or another source); none for manual installs.
+function modPageButton(m) {
+  const nexus = m.source === "nexus" && m.nexus_mod_id;
+  if (!nexus && !(m.source_ref && sourceInfos.some((s) => s.id === m.source))) return null;
+  return el("button", {
+    title: "Open this mod's page in Get mods: description, files and requirements",
+    onclick: (e) => busy(e.target, async () => {
+      await selectSource(nexus ? "nexus" : m.source, false);
+      showTab("nexus");
+      if (nexus) await showMod(m.nexus_mod_id);
+      else await showSourceDetails(m.source, m.source_ref);
+    }),
+  }, "Mod page");
+}
+
+document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
     th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
   });
@@ -308,6 +323,7 @@ function modRow(m) {
         title: up.to_stable ? `${m.version} is a pre-release (a test build). ${up.latest} is the release most mods are built against.` : "",
         onclick: (e) => busy(e.target, () => applyUpdate(up)),
       }, up.to_stable ? `Switch to stable ${up.latest}` : `Update to ${up.latest}`) : null, " ",
+      modPageButton(m), " ",
       on ? el("button", { onclick: (e) => busy(e.target, () => verify(m)) }, "Verify") : null, " ",
       el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall")),
   );
@@ -1310,24 +1326,59 @@ function docImage(n) {
   } }, `🖼 Picture on ${n.host}: open in browser`);
 }
 
+// The mod page's requirements, each marked with whether the user has it
+// (filled in once the installed mods are checked) and how to get it.
 function requirementsSection(modId, r) {
   if (!r) return null;
   const total = r.nexus.length + r.external.length + r.dlc.length;
-  const reqRow = (q, nexus) => el("tr", {},
-    el("td", {}, nexus && q.mod_id
-      ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); busy(null, () => showMod(q.mod_id)); } }, q.name)
-      : q.url ? docLink(q.url, [q.name]) : q.name),
-    el("td", { class: "muted" }, q.notes || ""));
-  return el("details", { class: "requirements", open: total ? "" : null },
+  const statusCells = new Map(); // nexus mod id -> [status td, action td]
+  const reqRow = (q, nexus) => {
+    const cells = [el("td", { class: "req-state" }), el("td", { class: "actions" })];
+    if (nexus && q.mod_id) statusCells.set(q.mod_id, cells);
+    return el("tr", {},
+      el("td", {}, nexus && q.mod_id
+        ? el("a", { href: "#", onclick: (e) => { e.preventDefault(); busy(null, () => showMod(q.mod_id)); } }, q.name)
+        : q.url ? docLink(q.url, [q.name]) : q.name),
+      el("td", { class: "muted" }, q.notes || ""),
+      ...(nexus ? cells : []));
+  };
+  const dlcLine = el("p", {}, "DLC: ", r.dlc.join(", "));
+  const getMissing = el("button", { class: "hidden" }, "Get missing");
+  const summary = el("p", { class: "muted small req-summary" });
+  const section = el("details", { class: "requirements", open: total ? "" : null },
     el("summary", {}, total ? `Requirements (${total})` : "Requirements: none listed"),
-    r.dlc.length ? el("p", {}, "DLC: ", r.dlc.join(", ")) : null,
+    r.dlc.length ? dlcLine : null,
+    r.nexus.length ? el("div", { class: "row" }, summary, getMissing) : null,
     r.nexus.length ? el("table", { class: "req-table" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Nexus requirements"), el("th", {}, "Notes"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Nexus requirements"), el("th", {}, "Notes"), el("th", {}, "You have"), el("th", {}))),
       el("tbody", {}, ...r.nexus.map((q) => reqRow(q, true)))) : null,
     r.external.length ? el("table", { class: "req-table" },
       el("thead", {}, el("tr", {}, el("th", {}, "Off-site requirements"), el("th", {}, "Notes"))),
       el("tbody", {}, ...r.external.map((q) => reqRow(q, false)))) : null,
     r.required_by ? el("p", { class: "muted" }, `${r.required_by.toLocaleString()} mods list this one as a requirement.`) : null);
+  if (currentGame && (statusCells.size || r.dlc.length)) {
+    invoke("requirement_states", { gameId: currentGame.id, nexusIds: [...statusCells.keys()] }).then((st) => {
+      const deps = st.mods.map((s) => ({ ...s, name: r.nexus.find((q) => q.mod_id === s.nexus_mod_id)?.name || `Mod ${s.nexus_mod_id}` }));
+      for (const d of deps) {
+        const [cls, label] = DEP_STATE[d.state] || DEP_STATE.unknown;
+        const [state, action] = statusCells.get(d.nexus_mod_id);
+        state.replaceChildren(el("span", { class: `badge ${cls}` }, label));
+        action.replaceChildren(dependencyAction(d, () => loadMods().then(() => showMod(modId))) || "");
+      }
+      const missing = deps.filter((d) => d.state === "missing");
+      summary.textContent = missing.length
+        ? `You're missing ${missing.length} of ${deps.length}.` : deps.length ? "You have all of them." : "";
+      if (missing.length > 1) {
+        getMissing.classList.remove("hidden");
+        getMissing.onclick = (e) => busy(e.target, () => getMissingDeps(missing));
+      }
+      if (r.dlc.some((n) => /phantom liberty/i.test(n))) {
+        dlcLine.append(" ", el("span", { class: `badge ${st.phantom_liberty ? "ok" : "bad"}` },
+          st.phantom_liberty ? "in the game folder" : "missing"));
+      }
+    }).catch((e) => { summary.textContent = `Couldn't check your installed mods: ${e}`; });
+  }
+  return section;
 }
 
 async function showMod(modId, highlightFile, refresh = false) {

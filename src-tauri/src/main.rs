@@ -1389,6 +1389,7 @@ fn main() {
             modpacks_cmd::export_modlist,
             modpacks_cmd::import_modlist,
             modpacks_cmd::mod_dependencies,
+            modpacks_cmd::requirement_states,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -100,9 +100,10 @@ The list of mods CPMX2077 installed in the selected game.
 | Column / control | What it does |
 |---|---|
 | **On** switch | Turns a mod off without uninstalling it: its files leave the game, whatever they replaced comes back, and a checked copy is kept. Turning it on puts them back without a download. Files the mod changed after install (its own settings) are kept. Disabled mods are left out of compatibility and crash checks. |
-| **Name / Category / Version / Source** | Click a heading to sort. The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
+| **Name / Category / Mod version / Source** | Click a heading to sort. **Mod version** is the mod's own version (the game version is under **Installed on game**). The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
 | **Installed on game** | The game version when the mod went in. *game updated since* means the game has been patched since, so check the mod still works. |
 | **Update to …** | Appears when a newer file is available. *Switch to stable …* appears when you run a pre-release and a stable release is out. |
+| **Mod page** | Opens the mod's page in **Get mods** (description, files, requirements), for mods from Nexus or GitHub. From there **Open on nexusmods.com** opens the website. Not shown for mods installed from an archive on disk. |
 | **Verify** | Re-hashes the mod's files and reports missing, edited or overridden ones. |
 | **Uninstall** | Removes the mod and restores what it replaced. |
 
@@ -124,7 +125,11 @@ Above the list:
   `.reds`, ArchiveXL for `.xl`, …). Each is marked installed, turned off,
   already in the game folder, or missing, with a button to get it (**Turn
   on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
-  off-site requirements).
+  off-site requirements). The requirements come from each mod's Nexus page,
+  asked again once a day, so a requirement you have never installed still
+  shows up as missing. The line next to the checkbox counts what is missing
+  for your turned-on mods, and **Get missing (N)** queues all of it at once:
+  core frameworks from GitHub, everything else from Nexus.
 
 ## Modpacks
 
@@ -280,7 +285,11 @@ Browse and download mods. The switch at the top right picks the source:
   mods per page and jump to any page.
 - **Mod page**: description, stats, requirements and tags, and files grouped
   as on the website (old versions folded away). Mods you have are marked
-  installed. **Refresh** asks Nexus again instead of using the saved copy.
+  installed. Each Nexus requirement has a **You have** column (installed,
+  turned off, in the game folder, or missing) with a button to get or turn
+  on what you lack, and a line saying how many you're missing; **Get
+  missing** queues them all. This works before you install the mod, so you
+  can see what it will need. **Refresh** asks Nexus again instead of using the saved copy.
 - **Downloading a file**:
   - *Premium*: **Download & install** downloads through the API and
     installs.
