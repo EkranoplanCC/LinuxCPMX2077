@@ -825,6 +825,13 @@ fn activity_log(after: Option<u64>) -> Vec<activity::Entry> {
     activity::since(after.unwrap_or(0))
 }
 
+/// A script error in the window, so the debug terminal shows it.
+#[tauri::command]
+fn log_ui_error(message: String) {
+    let message: String = message.chars().take(2000).collect();
+    activity::record(activity::Kind::Error, format!("Window error: {message}"));
+}
+
 #[tauri::command]
 fn activity_clear() {
     activity::clear();
@@ -1527,6 +1534,7 @@ fn main() {
             nexus_clear_requests,
             activity_log,
             activity_clear,
+            log_ui_error,
             save_debug_log,
             open_debug_terminal,
             nexus_cache_info,

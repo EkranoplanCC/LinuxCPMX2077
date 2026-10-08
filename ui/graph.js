@@ -94,11 +94,18 @@
   // Label width at 12px and the flowchart box, measured once per build.
   function measure(n) {
     ctx.font = font(n, 12);
+    // Labels come from mod files and can be any length: cut long ones by
+    // characters first, then trim to the width with a binary search.
     let text = fullLabel(n);
     const max = 240;
-    if (ctx.measureText(text).width > max) {
-      while (text.length > 4 && ctx.measureText(text + "…").width > max) text = text.slice(0, -1);
-      text += "…";
+    if (text.length > 120) text = text.slice(0, 120);
+    if (ctx.measureText(text).width > max || text !== fullLabel(n)) {
+      let lo = 4, hi = text.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (ctx.measureText(text.slice(0, mid) + "…").width <= max) lo = mid; else hi = mid - 1;
+      }
+      text = text.slice(0, lo) + "…";
     }
     n.text = text;
     n.tw = ctx.measureText(text).width;
@@ -256,25 +263,79 @@
     while (alpha > 0.02 && performance.now() < end) step();
   }
 
-  function step() {
+  // Repulsion between nodes closer than 800 units. Floor the distance so
+  // overlapping nodes push apart instead of flying off.
+  const REPEL = 5200, REPEL_RANGE2 = 640000;
+  function repelExact() {
     const n = nodes.length;
-    // Repulsion (O(n²) is fine for a few hundred nodes).
     for (let i = 0; i < n; i++) {
       const p = nodes[i];
       for (let j = i + 1; j < n; j++) {
         const q = nodes[j];
         let dx = q.x - p.x, dy = q.y - p.y;
         let d2 = dx * dx + dy * dy;
-        if (d2 > 640000) continue;
+        if (d2 > REPEL_RANGE2) continue;
         if (d2 < 1) { dx = (i % 7) - 3 + 0.5; dy = (j % 5) - 2 + 0.5; d2 = dx * dx + dy * dy; }
         const d = Math.sqrt(d2);
-        // Floor the distance so overlapping nodes push apart instead of
-        // flying off.
-        const f = (5200 / Math.max(d2, 400)) * alpha;
+        const f = (REPEL / Math.max(d2, 400)) * alpha;
         dx /= d; dy /= d;
         p.vx -= dx * f; p.vy -= dy * f; q.vx += dx * f; q.vy += dy * f;
       }
     }
+  }
+
+  // The same force for big graphs, with far-off clusters of nodes counted as
+  // one (Barnes-Hut quadtree). The exact pass is O(n²) and took seconds per
+  // frame with a few thousand nodes, which froze the app.
+  function repelTree() {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of nodes) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const root = { x: x0, y: y0, s: Math.max(x1 - x0, y1 - y0, 1), m: 0, cx: 0, cy: 0, p: null, kids: null };
+    const insert = (c, p, depth) => {
+      c.cx = (c.cx * c.m + p.x) / (c.m + 1); c.cy = (c.cy * c.m + p.y) / (c.m + 1); c.m++;
+      if (c.m === 1) { c.p = p; return; }
+      // Nodes on the same spot share a leaf instead of splitting forever.
+      if (depth > 40) { (c.extra ||= []).push(p); return; }
+      if (!c.kids) {
+        c.kids = [null, null, null, null];
+        const old = c.p; c.p = null;
+        if (old) put(c, old, depth);
+      }
+      put(c, p, depth);
+    };
+    const put = (c, p, depth) => {
+      const h = c.s / 2, right = p.x >= c.x + h, down = p.y >= c.y + h, i = right + 2 * down;
+      c.kids[i] ||= { x: c.x + right * h, y: c.y + down * h, s: h, m: 0, cx: 0, cy: 0, p: null, kids: null };
+      insert(c.kids[i], p, depth + 1);
+    };
+    for (const p of nodes) insert(root, p, 0);
+    const push = (p, x, y, m, k) => {
+      let dx = x - p.x, dy = y - p.y, d2 = dx * dx + dy * dy;
+      if (d2 > REPEL_RANGE2) return;
+      if (d2 < 1) { dx = (k % 7) - 3 + 0.5; dy = (k % 5) - 2 + 0.5; d2 = dx * dx + dy * dy; }
+      const d = Math.sqrt(d2), f = (REPEL / Math.max(d2, 400)) * alpha * m;
+      p.vx -= (dx / d) * f; p.vy -= (dy / d) * f;
+    };
+    nodes.forEach((p, k) => {
+      const stack = [root];
+      while (stack.length) {
+        const c = stack.pop();
+        if (!c.m) continue;
+        if (!c.kids) {
+          if (c.p && c.p !== p) push(p, c.p.x, c.p.y, 1, k);
+          for (const q of c.extra || []) if (q !== p) push(p, q.x, q.y, 1, k);
+          continue;
+        }
+        const dx = c.cx - p.x, dy = c.cy - p.y, d2 = dx * dx + dy * dy;
+        // Far enough to count as one (and so the node can't be inside it).
+        if (c.s * c.s < 0.36 * d2) push(p, c.cx, c.cy, c.m, k);
+        else for (const kid of c.kids) if (kid) stack.push(kid);
+      }
+    });
+  }
+
+  function step() {
+    if (nodes.length > 300) repelTree(); else repelExact();
     // Springs.
     for (const e of edges) {
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
@@ -443,6 +504,21 @@
     return [toScreen({ x: l.x + l.w / 2, y: l.y }), toScreen({ x: r.x - r.w / 2, y: r.y })];
   }
 
+  // The part of the line a-b inside the canvas (plus a margin), or null.
+  // Lines are only ever stroked this far: a dashed line running far off
+  // screen when zoomed in is millions of dashes, which the webview renders
+  // very slowly or not at all.
+  function clipLine(a, b, w, h) {
+    const m = 20, dx = b.x - a.x, dy = b.y - a.y;
+    let t0 = 0, t1 = 1;
+    for (const [p, q] of [[-dx, a.x + m], [dx, w + m - a.x], [-dy, a.y + m], [dy, h + m - a.y]]) {
+      if (p === 0) { if (q < 0) return null; continue; }
+      const t = q / p;
+      if (p < 0) { if (t > t1) return null; t0 = Math.max(t0, t); } else { if (t < t0) return null; t1 = Math.min(t1, t); }
+    }
+    return [{ x: a.x + t0 * dx, y: a.y + t0 * dy }, { x: a.x + t1 * dx, y: a.y + t1 * dy }];
+  }
+
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -486,12 +562,21 @@
       }
     }
     for (const e of edges) {
-      const [a, b] = edgeEnds(e);
+      let [a, b] = edgeEnds(e);
       if (Math.max(a.x, b.x) < 0 || Math.min(a.x, b.x) > r.width || Math.max(a.y, b.y) < 0 || Math.min(a.y, b.y) > r.height) continue;
+      // Curves far bigger than the canvas are drawn solid, not dashed.
+      const huge = flow && Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) > 3 * Math.max(r.width, r.height);
+      let label = [a, b];
+      if (!flow) {
+        const c = clipLine(a, b, r.width, r.height);
+        if (!c) continue;
+        [a, b] = c;
+        label = edgeEnds(e);
+      }
       const bright = !near || (near.has(e.a) && near.has(e.b) && onFocus(e));
       ctx.strokeStyle = e.conflict ? "rgba(255,77,94," + (bright ? 0.9 : 0.15) + ")" : "rgba(140,140,170," + (bright ? 0.55 : 0.08) + ")";
       ctx.lineWidth = Math.min(4, 1 + Math.log2(e.weight || 1) * 0.5) * (e.conflict ? 1.4 : 1);
-      ctx.setLineDash(e.label === "requires" ? [4, 4] : []);
+      ctx.setLineDash(e.label === "requires" && !huge ? [4, 4] : []);
       ctx.beginPath(); ctx.moveTo(a.x, a.y);
       if (flow) { const mx = (a.x + b.x) / 2; ctx.bezierCurveTo(mx, a.y, mx, b.y, b.x, b.y); } else ctx.lineTo(b.x, b.y);
       ctx.stroke();
@@ -499,7 +584,7 @@
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(232,232,240,.75)";
         ctx.font = "11px system-ui, sans-serif";
-        ctx.fillText(e.label, (a.x + b.x) / 2 + 4, (a.y + b.y) / 2 - 4);
+        ctx.fillText(e.label, (label[0].x + label[1].x) / 2 + 4, (label[0].y + label[1].y) / 2 - 4);
       }
     }
     ctx.setLineDash([]);
@@ -552,6 +637,7 @@
 
   // A ring around each group's nodes, with its name on top.
   function drawRings() {
+    const { width: w, height: h } = rect();
     const members = new Map();
     for (const n of nodes) for (const k of n.groups) (members.get(k) || members.set(k, []).get(k)).push(n);
     for (const [k, list] of members) {
@@ -559,9 +645,17 @@
       const cx = list.reduce((a, n) => a + n.x, 0) / list.length, cy = list.reduce((a, n) => a + n.y, 0) / list.length;
       const rad = Math.max(...list.map((n) => Math.hypot(n.x - cx, n.y - cy) + radius(n))) + 16;
       const p = toScreen({ x: cx, y: cy }), sr = rad * view.k;
+      // Skip rings entirely off screen; huge ones (zoomed in) get no dashes.
+      const nx = Math.max(0, -p.x, p.x - w), ny = Math.max(0, -p.y, p.y - h);
+      const fx = Math.max(Math.abs(p.x), Math.abs(p.x - w)), fy = Math.max(Math.abs(p.y), Math.abs(p.y - h));
+      if (Math.hypot(nx, ny) > sr + 20) continue;
+      const inside = Math.hypot(fx, fy) < sr;
       ctx.beginPath(); ctx.arc(p.x, p.y, sr, 0, Math.PI * 2);
       ctx.fillStyle = rgba(g.color, 0.06); ctx.fill();
-      ctx.strokeStyle = rgba(g.color, 0.45); ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+      if (!inside) {
+        ctx.strokeStyle = rgba(g.color, 0.45); ctx.lineWidth = 1.5;
+        ctx.setLineDash(sr > 4 * Math.max(w, h) ? [] : [6, 4]); ctx.stroke(); ctx.setLineDash([]);
+      }
       ctx.font = "600 12px system-ui, sans-serif";
       ctx.fillStyle = g.color;
       ctx.textAlign = "center";
@@ -573,13 +667,20 @@
   function tick() {
     cancelAnimationFrame(raf);
     const loop = () => {
-      if (layout === "force" && (alpha > 0.01 || drag?.node)) {
-        step(); step();
-        if (!userMoved) fit();
-        draw();
-        raf = requestAnimationFrame(loop);
-      } else {
-        draw();
+      try {
+        if (layout === "force" && (alpha > 0.01 || drag?.node)) {
+          step(); step();
+          if (!userMoved) fit();
+          draw();
+          raf = requestAnimationFrame(loop);
+        } else {
+          draw();
+        }
+      } catch (err) {
+        // Say so, rather than leaving a frozen picture.
+        alpha = 0; drag = null;
+        setMessage(`The graph stopped drawing: ${err}`, true);
+        window.reportUiError?.(`graph: ${err?.stack || err}`);
       }
     };
     raf = requestAnimationFrame(loop);
@@ -699,6 +800,9 @@
   });
   window.addEventListener("mousemove", (ev) => {
     const r = rect();
+    // The button came up outside the window, where no mouseup arrives. A
+    // drag left open kept the layout running every frame.
+    if (drag && ev.buttons === 0) endDrag(false);
     if (drag) {
       const dx = ev.clientX - drag.sx, dy = ev.clientY - drag.sy;
       if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; userMoved = true; }
@@ -716,9 +820,9 @@
     const n = nodeAt(ev.clientX - r.left, ev.clientY - r.top);
     if (n !== hover) { hover = n; canvas.classList.toggle("over-node", !!n); draw(); }
   });
-  window.addEventListener("mouseup", () => {
+  function endDrag(click) {
     if (!drag) return;
-    if (!drag.moved) {
+    if (click && !drag.moved) {
       selected = drag.node;
       if (!selected) lit = null;
       showInfo(selected);
@@ -726,7 +830,9 @@
     }
     drag = null;
     canvas.classList.remove("dragging");
-  });
+  }
+  window.addEventListener("mouseup", () => endDrag(true));
+  window.addEventListener("blur", () => endDrag(false));
   canvas.addEventListener("mouseleave", () => { hover = null; draw(); });
   canvas.addEventListener("wheel", (ev) => {
     ev.preventDefault();
