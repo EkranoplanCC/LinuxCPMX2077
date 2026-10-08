@@ -19,7 +19,7 @@ use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery
 use cp2077mm_core::linux_setup::{self, Check};
 use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, Location, MoveReport};
 use cp2077mm_core::game_versions::{self, Loadout, VersionEntry};
-use cp2077mm_core::{Error, Result, desktop, paths, secrets, sso, updates};
+use cp2077mm_core::{Error, Result, desktop, file_tree, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -548,6 +548,28 @@ async fn open_log_folder(app: AppHandle, game_id: i64, name: String) -> Result<(
         let log = cp2077mm_core::crash::find_log(std::path::Path::new(&game.path), &name)?;
         let dir = log.path.parent().ok_or_else(|| Error::Other("log has no folder".into()))?;
         desktop::open_folder(dir)
+    })
+    .await
+}
+
+/// Every file mods installed, as a folder tree for the Netrunner tab.
+#[tauri::command]
+async fn mod_file_tree(app: AppHandle, game_id: i64, group: file_tree::Group) -> Result<file_tree::FileTree> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        let game = db.game(game_id)?;
+        file_tree::build(&db, &game, group)
+    })
+    .await
+}
+
+/// Open a folder of the game install (or its deepest existing parent).
+#[tauri::command]
+async fn open_game_folder(app: AppHandle, game_id: i64, path: String) -> Result<()> {
+    blocking(move || {
+        let game = app.state::<AppState>().db.lock().unwrap().game(game_id)?;
+        desktop::open_folder(&file_tree::folder_in_game(std::path::Path::new(&game.path), &path)?)
     })
     .await
 }
@@ -1308,6 +1330,8 @@ fn main() {
             enable_mod,
             analyze_game,
             crash_analysis,
+            mod_file_tree,
+            open_game_folder,
             read_log,
             open_log_folder,
             mcp_command,

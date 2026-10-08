@@ -7,6 +7,11 @@ Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2
 make it executable (`chmod +x`) and run it. A Windows installer
 (`CPMX2077_<version>_x64-setup.exe`) is built too; see [Windows](#windows-preview).
 
+- **New here?** Follow [Getting started](docs/getting-started.md): install,
+  connect Nexus, set up the frameworks and Proton, and install your first mod.
+- **Reference:** the [user guide](docs/user-guide.md) explains how the app
+  works and what every tab and button does, plus troubleshooting.
+
 ![screenshot](docs/screenshot.png)
 
 ## What it does
@@ -72,16 +77,21 @@ make it executable (`chmod +x`) and run it. A Windows installer
   after install, such as its own settings, stay in place and are kept when it
   comes back. Disabled mods are left out of the compatibility check and crash
   analysis.
-- **Diagnostics tab**: one place for overview and diagnosis. It opens with a
-  summary of what needs attention (game setup warnings, recent crashes, mods
-  named in log errors, compatibility problems), followed by the graph, the
-  compatibility findings and the crash/log check. “Show in graph” next to a
+- **Netrunner tab** (formerly Diagnostics): one place for overview and
+  diagnosis. It opens with a summary of what needs attention (game setup
+  warnings, recent crashes, mods named in log errors, compatibility
+  problems), followed by the file map, the graph, the compatibility findings
+  and the crash/log check.
+- **File map**: a registry-editor style tree of every file mods installed,
+  by game folder or by mod, showing which mod owns each file, where it is
+  installed and whether it is in use, overridden by a newer mod, missing or
+  switched off. “Show in graph” next to a
   finding or a crash suspect lights up the mods involved and what they share.
 - **Compatibility check** (no AI needed): every enabled mod is indexed for
   what it touches: game resources inside `.archive` files (and which of them
   replace base-game resources), redscript `@replaceMethod`/`@wrapMethod`/
   `@addField`/`@addMethod`, TweakXL records and properties, ArchiveXL resource
-  patches, CET `Override`/`Observe` hooks and RED4ext plugins. Diagnostics
+  patches, CET `Override`/`Observe` hooks and RED4ext plugins. Netrunner
   lists hard clashes, overlaps (with which archive wins the
   load order) and frameworks a mod needs that aren't installed.
 - **Agent access (read-only MCP)**: `CPMX2077_<version>_amd64.AppImage --mcp`
