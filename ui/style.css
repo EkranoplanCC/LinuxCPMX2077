@@ -377,3 +377,21 @@ table.tree td.actions { white-space: nowrap; }
 .net-state.disabled { color: var(--muted); }
 #net-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; }
 @media (max-width: 760px) { #net-browser { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; } #net-tree { border-right: 0; border-bottom: 1px solid rgba(0, 240, 255, .35); } }
+
+/* Startup timeline in the crashes section */
+.timeline { list-style: none; margin: 0 0 12px; padding: 0; }
+.timeline .step { display: flex; gap: 10px; padding: 8px 10px; border-left: 3px solid var(--border); background: var(--panel); margin-bottom: 4px; }
+.timeline .step.ok { border-left-color: var(--green); }
+.timeline .step.warning { border-left-color: var(--yellow); }
+.timeline .step.failed { border-left-color: var(--red); }
+.timeline .step.not_run, .timeline .step.not_installed, .timeline .step.unknown { opacity: 0.7; }
+.timeline .step.first { background: var(--panel-2); outline: 1px solid var(--red); }
+.step-icon { width: 18px; text-align: center; font-weight: bold; }
+.step.ok .step-icon { color: var(--green); }
+.step.warning .step-icon { color: var(--yellow); }
+.step.failed .step-icon { color: var(--red); }
+.step-body { flex: 1; min-width: 0; }
+.step-body > div { margin: 2px 0; }
+.step-fix, .issue-hint { color: var(--muted); }
+.issue-hint { margin-top: 2px; }
+.step-badge { margin-left: 8px; padding: 1px 6px; font-size: 11px; background: var(--red); color: var(--bg); border-radius: 3px; }

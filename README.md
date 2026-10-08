@@ -103,7 +103,12 @@ make it executable (`chmod +x`) and run it. A Windows installer
 - **Crashes & logs**: reads the game's crash reports in the Proton prefix
   (`REDEngine/ReportQueue`), the CET, RED4ext, ArchiveXL, TweakXL, Codeware and
   redscript logs (plus per-mod CET logs and Proton's `steam-1091500.log`),
-  lists errors and warnings, and names the installed mod each one mentions.
+  sorts errors by game session (the last one first), names the installed mod
+  each one mentions, and explains known messages in plain words. A startup
+  timeline shows each stage of the last start (RED4ext, its plugins, script
+  mods, CET, ArchiveXL, TweakXL, Codeware, crash) and marks the first one that
+  failed. A list of known problem mods from the modding wiki's troubleshooting
+  guide (`crates/core/data/known_issues.json`) is checked too.
 - **Graph view**: mods, the frameworks they need, the game classes, tweak
   records and resources they touch, with clashes highlighted.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
