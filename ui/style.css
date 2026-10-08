@@ -166,7 +166,11 @@ button.link { background: none; border: 0; color: var(--cyan); padding: 2px 0; m
 .mod-detail details summary { cursor: pointer; color: var(--muted); margin-top: 14px; }
 details.card summary { cursor: pointer; color: var(--muted); }
 details.card[open] summary { margin-bottom: 10px; }
-#ultraplus summary { cursor: pointer; }
+#ultraplus summary, #reshade summary { cursor: pointer; }
+#reshade details[open] summary { margin-bottom: 10px; }
+#reshade .req-table td:first-child { width: 160px; }
+#reshade .badge { margin-left: 6px; }
+#reshade .mono { word-break: break-all; }
 #ultraplus details[open] summary { margin-bottom: 10px; }
 #ultraplus .req-table { width: 100%; }
 #ultraplus td:first-child { width: 38%; }

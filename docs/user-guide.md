@@ -179,6 +179,43 @@ can't be told apart by name. Installed conflicts and the setting notes also
 show under **Known problems** in Netrunner's
 [Crashes & logs](#crashes--logs).
 
+### ReShade
+
+The **ReShade** card above the list installs
+[ReShade](https://reshade.me/), the post-processing injector used for
+sharpening, colour grading and presets, and keeps it up to date. Its heading
+line shows the installed version and the DLL name it loads as, or *not
+installed*. Click the heading to open or fold the card.
+
+- **Install ReShade** reads the newest version from reshade.me, downloads
+  the standard setup (`ReShade_Setup_<version>.exe`, not the add-on build)
+  from reshade.me only, and takes `ReShade64.dll` out of it. Before
+  installing, the app checks that the DLL is a 64-bit Windows DLL, that its
+  version information names ReShade, and that its version matches the setup's
+  file name. reshade.me publishes no checksums, so the SHA-256 of the setup is
+  recorded and shown as **Setup SHA-256** instead.
+- **Install from setup file…** does the same with a setup you downloaded
+  from reshade.me in your browser, for when the app can't reach the site.
+- ReShade goes in as `bin/x64/dxgi.dll`, the name it loads under in a
+  DirectX 12 game. If another program (an upscaler or another injector)
+  already uses `dxgi.dll`, it goes in as `bin/x64/d3d12.dll`; if both names
+  are taken, the card names what's using them and installs nothing. A ReShade
+  you copied in yourself is backed up and put back when you uninstall.
+- If the game has no `bin/x64/ReShade.ini`, the app writes one that points
+  ReShade at `bin/x64/reshade-shaders/` for effects and textures. An existing
+  `ReShade.ini` is left alone.
+- ReShade is listed in the mod table like any mod (source *reshade.me*), so
+  the **On** switch, **Verify**, **Uninstall** and the File map work on it.
+  The card has **Disable**/**Enable** and **Uninstall** too.
+- **Check for update** reads the newest version from reshade.me; when it's
+  newer, **Update to &lt;version&gt;** installs it in place of the old one
+  under the same DLL name. ReShade's settings and your presets stay.
+- **Uninstall** removes the DLL, the `ReShade.ini` the app wrote (with any
+  changes ReShade made to it) and ReShade's log. Presets you made
+  (`ReShadePreset.ini` and others) stay in `bin/x64`.
+
+In game, the Home key opens ReShade's overlay.
+
 ## Modpacks
 
 Nexus collections, your own tags, and mod list import/export. Needs a
@@ -536,6 +573,10 @@ part of download links are never shown.
 - GitHub downloads come only over HTTPS from GitHub's hosts and must match
   the asset's published SHA-256. Older assets without a digest are marked
   unverified.
+- ReShade comes only over HTTPS from reshade.me, with no redirects to other
+  hosts. The DLL taken out of the setup must be a 64-bit Windows DLL that
+  names ReShade in its version information and has the version in the setup's
+  file name, or the setup is discarded.
 - The in-app Nexus window can't call any of the app's functions. It only
   hands over `nxm://` links; other sites open in your browser.
 
@@ -563,6 +604,7 @@ logs are only readable from a fixed list of known locations.
 | Staged copies of mods | `~/.local/share/cp2077-modmanager/staging/` |
 | Backed-up game files | `~/.local/share/cp2077-modmanager/backups/` |
 | Linux setup records and backups | `~/.local/share/cp2077-modmanager/setup/<game>/` |
+| ReShade setups from reshade.me | `~/.local/share/cp2077-modmanager/reshade/` |
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
 | Refreshed Ultra+ recommendations | In the library database (settings) |
 | Nexus API key | System keyring (Secret Service) only |

@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 mod modpacks_cmd;
+mod reshade_cmd;
 mod ultraplus_cmd;
 
 struct AppState {
@@ -112,7 +113,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
         .map_err(|e| Error::Other(format!("task failed: {e}")))?
 }
 
-fn with_installer<T>(db: &Db, f: impl FnOnce(&Installer) -> Result<T>) -> Result<T> {
+pub(crate) fn with_installer<T>(db: &Db, f: impl FnOnce(&Installer) -> Result<T>) -> Result<T> {
     let inst = Installer {
         db,
         staging_root: paths::staging_dir()?,
@@ -145,7 +146,7 @@ fn game_version(db: &Db, game_id: Option<i64>) -> Option<String> {
 
 /// Test servers for a debug build (`CPMX_NEXUS_API`, `CPMX_NEXUS_WEB`);
 /// release builds always talk to Nexus.
-fn debug_override(var: &str) -> Option<String> {
+pub(crate) fn debug_override(var: &str) -> Option<String> {
     if cfg!(debug_assertions) { std::env::var(var).ok() } else { None }
 }
 
@@ -645,7 +646,12 @@ async fn uninstall_mod(app: AppHandle, mod_id: i64) -> Result<()> {
     blocking(move || {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
-        with_installer(&db, |i| i.uninstall(mod_id))
+        let m = db.get_mod(mod_id)?;
+        with_installer(&db, |i| i.uninstall(mod_id))?;
+        if m.source == cp2077mm_core::reshade::SOURCE {
+            cp2077mm_core::reshade::after_uninstall(&db, &db.game(m.game_id)?)?;
+        }
+        Ok(())
     })
     .await
 }
@@ -1570,6 +1576,10 @@ fn main() {
             modpacks_cmd::requirement_states,
             ultraplus_cmd::ultraplus_report,
             ultraplus_cmd::ultraplus_refresh,
+            reshade_cmd::reshade_status,
+            reshade_cmd::reshade_latest,
+            reshade_cmd::reshade_install,
+            reshade_cmd::reshade_install_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

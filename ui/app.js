@@ -225,6 +225,7 @@ const NO_CATEGORY = "__none__";
 
 function sourceLabel(m) {
   if (m.source === "nexus" && m.nexus_mod_id) return `Nexus #${m.nexus_mod_id}`;
+  if (m.source === "reshade") return "reshade.me";
   const info = sourceInfos.find((s) => s.id === m.source);
   if (info) return m.source_ref ? `${info.label} ${m.source_ref}` : info.label;
   return "Manual";
@@ -258,6 +259,7 @@ async function loadMods() {
   renderMods();
   showLoadout().catch(() => {});
   loadUltraPlus().catch(() => {});
+  loadReShade().catch(() => {});
   refreshGame().catch(() => {});
 }
 
