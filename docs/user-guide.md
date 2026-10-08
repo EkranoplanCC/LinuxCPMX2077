@@ -278,6 +278,18 @@ Browse and download mods. The switch at the top right picks the source:
   downloaded of the mods added in the last two weeks), **Latest added**,
   **Latest updated**, **Most endorsed**, **Most downloaded**. Pick 10–80
   mods per page and jump to any page.
+- **Mods by an author**: click the author's name after "by" on a mod card or
+  a mod page to list every Cyberpunk 2077 mod that member uploaded. The top
+  of the list shows their name, how many mods they have, their unique
+  downloads, when they joined and Nexus' *recognised author* mark, with a
+  **Sort** menu and **Back to all mods**. Searching or clicking a quick list
+  also leaves the author's list.
+- **Download from the card**: the **⬇** button on a mod's picture lists up
+  to two of its main files, newest first (the primary file first when the
+  author marked one; mods without main files show their optional files).
+  Files you already have say *already downloaded*. Click one to download and
+  install it the same way as on the mod page, or **All files…** to open the
+  mod page.
 - **Mod page**: description, stats, requirements and tags, and files grouped
   as on the website (old versions folded away). Mods you have are marked
   installed. **Refresh** asks Nexus again instead of using the saved copy.
@@ -289,6 +301,18 @@ Browse and download mods. The switch at the top right picks the source:
     link, downloads, verifies and installs. *or use your browser* opens the
     page in your normal browser instead (the app offers to become the
     `nxm://` handler first).
+  - You stay on **Get mods** while it downloads: a progress bar shows at the
+    top of the page, and on the mod's card when you started from the card.
+    The Downloads tab has the same bar.
+- **No duplicate downloads**: a file that is already in your downloads (same
+  Nexus or GitHub file, still on disk and complete) is not downloaded again.
+  The app installs the copy you have and says so. Files in your downloads
+  are marked *downloaded* on the mod page, and the download queue skips the
+  Nexus window for them. Clicking the same file twice while it downloads
+  shows "this file is already downloading". If a download turns out to be
+  byte-for-byte the same as a file you already have, the new copy is
+  deleted and the entry points at the old one. To fetch a file again,
+  **Delete** it in Downloads first.
 - **Have a link?**: paste a Nexus mod URL or ID, an `nxm://` link (including
   collection links), or a GitHub repository link.
 - **Requests left** shows your Nexus API quota. Browsing pauses when fewer
@@ -333,6 +357,8 @@ Every archive you downloaded, grouped by mod with each version under it.
   GitHub's pre-release flag.
 - **Install** or **Switch to this** installs that file, replacing the version
   you have. **Delete** removes the file from disk.
+- Each file is kept once: downloading the same file again uses this copy
+  (see *No duplicate downloads* under Get mods).
 - **Open all folders** expands every mod.
 
 ## Settings
