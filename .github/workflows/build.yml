@@ -104,6 +104,9 @@ jobs:
           fi
           pre=""
           case "$tag" in v0.*) pre="--prerelease" ;; esac
+          notes="docs/releases/$tag.md"
+          [ -f "$notes" ] || notes=/dev/null
+          { cat "$notes"; echo; echo "### Install"; echo "Linux: download the AppImage, make it executable (\`chmod +x\`) and run it. Windows (early preview): run the -setup.exe installer; it isn't code-signed yet, so SmartScreen asks once (More info, Run anyway). SHA256SUMS lists every file's checksum."; } > release-notes.md
           gh release create "$tag" $pre --target "$GITHUB_SHA" --title "$tag" --generate-notes \
-            --notes "Linux: download the AppImage, make it executable (\`chmod +x\`) and run it. Windows (early preview): run the -setup.exe installer; it isn't code-signed yet, so SmartScreen asks once (More info, Run anyway). SHA256SUMS lists every file's checksum." \
+            --notes-file release-notes.md \
             dist/*.AppImage dist/*.exe dist/SHA256SUMS
