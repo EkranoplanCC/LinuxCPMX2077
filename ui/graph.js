@@ -4,7 +4,7 @@
 // canvas text or set via textContent.
 (() => {
   const COLORS = {
-    mod: "#fcee0a", framework: "#00f0ff", class: "#b48cff", record: "#3ddc84",
+    mod: "#f6cf3c", framework: "#4fe3d0", class: "#b48cff", record: "#3ddc84",
     records: "#6b6b85", shared_resources: "#ff4d5e", base_game: "#e8e8f0",
   };
   const NAMES = {
@@ -16,12 +16,12 @@
   // change. The last column is grouped by kind in this order.
   const COLUMN = { framework: 0, mod: 1 };
   const GROUP = { base_game: 0, shared_resources: 1, class: 2, record: 3, records: 4 };
-  const BADGE = { error: "#ff4d5e", warning: "#fcee0a" };
+  const BADGE = { error: "#ff4d5e", warning: "#f6cf3c" };
   // "Group by": every node by its type, or mods by one of their properties.
   // Groups get a ring (web) or a heading (flowchart); a mod with several
   // tags sits between its tags' rings and under its first tag's heading.
   const GROUP_BY = { type: "Node type", modtype: "Mod type", tag: "Tag", category: "Nexus category", source: "Source" };
-  const PALETTE = ["#00f0ff", "#fcee0a", "#b48cff", "#3ddc84", "#ff9f43", "#4da3ff", "#ff6bcb", "#e8e8f0", "#9be15d", "#ff4d5e"];
+  const PALETTE = ["#4fe3d0", "#f6cf3c", "#b48cff", "#3ddc84", "#ff9f43", "#4da3ff", "#ff6bcb", "#e8e8f0", "#9be15d", "#ff4d5e"];
   // What a mod's files do, from the analysis counts, in this order.
   const MOD_KINDS = [
     ["Archive", ["resource", "xl_patch"]],

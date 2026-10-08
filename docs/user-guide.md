@@ -4,6 +4,10 @@ A reference for how CPMX2077 works and what each part of the window does.
 New here? Start with [Getting started](getting-started.md). Screenshots
 show sample data, with file locations blurred.
 
+The app shows tab names, buttons and headings in capitals (INSTALL FROM
+ARCHIVE…); this guide writes them in normal case (**Install from
+archive…**). The selected tab is the amber one in the left menu.
+
 - [How it works](#how-it-works)
 - [Game panel](#game-panel)
 - [Installed mods](#installed-mods)
