@@ -277,7 +277,15 @@ function renderMods() {
   const shown = sortMods(mods.filter((m) => (!f
     || (f.startsWith("own:") ? (f === `own:${NO_CATEGORY}` ? !ownOf(m) : ownOf(m) === f.slice(4))
       : f === NO_CATEGORY ? !m.category : m.category === f)) && ribbonFilter(m)));
-  // The mod's page in Get mods (Nexus or another source); none for manual installs.
+  document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
+    th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
+    th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
+  });
+  $("#mods-empty").classList.toggle("hidden", mods.length > 0);
+  $("#mods-body").replaceChildren(...shown.flatMap((m) => [modRow(m), ...dependencyRows(m)]));
+}
+
+// The mod's page in Get mods (Nexus or another source); none for manual installs.
 function modPageButton(m) {
   const nexus = m.source === "nexus" && m.nexus_mod_id;
   if (!nexus && !(m.source_ref && sourceInfos.some((s) => s.id === m.source))) return null;
@@ -290,14 +298,6 @@ function modPageButton(m) {
       else await showSourceDetails(m.source, m.source_ref);
     }),
   }, "Mod page");
-}
-
-document.querySelectorAll("#tab-mods th.sortable").forEach((th) => {
-    th.classList.toggle("asc", th.dataset.sort === modSort.key && modSort.dir > 0);
-    th.classList.toggle("desc", th.dataset.sort === modSort.key && modSort.dir < 0);
-  });
-  $("#mods-empty").classList.toggle("hidden", mods.length > 0);
-  $("#mods-body").replaceChildren(...shown.flatMap((m) => [modRow(m), ...dependencyRows(m)]));
 }
 
 function modRow(m) {
