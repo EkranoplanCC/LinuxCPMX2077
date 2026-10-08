@@ -1,5 +1,5 @@
 // Commands for the Modpacks tab (Nexus collections the user follows, their
-// own categories, mod list import/export) and the dependency view in the
+// own tags, mod list import/export) and the dependency view in the
 // Installed mods tab. The logic lives in cp2077mm-core.
 
 use std::collections::{BTreeSet, HashMap};
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use cp2077mm_core::analysis;
 use cp2077mm_core::db::Db;
 use cp2077mm_core::dependencies::{self, ModDependencies};
-use cp2077mm_core::modpacks::{self, CollectionModStatus, CustomCategory, ImportReport, RevisionDiff, StatusCounts, TrackedCollection};
+use cp2077mm_core::modpacks::{self, CollectionModStatus, ImportReport, RevisionDiff, StatusCounts, Tag, TrackedCollection};
 use cp2077mm_core::nexus_browse::{Collection, CollectionPage, CollectionSearch};
 use cp2077mm_core::{Error, Result, paths};
 use serde::Serialize;
@@ -127,47 +127,48 @@ pub async fn untrack_collection(app: AppHandle, game_id: i64, slug: String) -> R
     blocking(move || with_db(&app, |db| modpacks::untrack(db, game_id, &slug))).await
 }
 
-// ---- the user's own categories ---------------------------------------------
+// ---- the user's own tags ---------------------------------------------------
 
 #[derive(Serialize)]
-pub struct CustomCategories {
-    categories: Vec<CustomCategory>,
-    /// Installed mod id -> its category.
-    mods: HashMap<i64, String>,
+pub struct ModTags {
+    tags: Vec<Tag>,
+    /// Installed mod id -> its tags, in the order of the tag list.
+    mods: HashMap<i64, Vec<String>>,
 }
 
-fn custom_categories_for(db: &Db, game_id: i64) -> Result<CustomCategories> {
-    let by_key = modpacks::mod_categories(db)?;
-    let mods = db.mods(game_id)?.into_iter().filter_map(|m| Some((m.id, by_key.get(&modpacks::mod_key(&m))?.clone()))).collect();
-    Ok(CustomCategories { categories: modpacks::categories(db)?, mods })
-}
-
-#[tauri::command]
-pub async fn custom_categories(app: AppHandle, game_id: i64) -> Result<CustomCategories> {
-    blocking(move || with_db(&app, |db| custom_categories_for(db, game_id))).await
+fn mod_tags_for(db: &Db, game_id: i64) -> Result<ModTags> {
+    let mut by_key = modpacks::mod_tags(db)?;
+    let mods = db.mods(game_id)?.into_iter().filter_map(|m| Some((m.id, by_key.remove(&modpacks::mod_key(&m))?))).collect();
+    Ok(ModTags { tags: modpacks::tags(db)?, mods })
 }
 
 #[tauri::command]
-pub async fn add_custom_category(app: AppHandle, name: String, color: Option<String>) -> Result<String> {
-    blocking(move || with_db(&app, |db| modpacks::add_category(db, &name, color.as_deref()))).await
+pub async fn mod_tags(app: AppHandle, game_id: i64) -> Result<ModTags> {
+    blocking(move || with_db(&app, |db| mod_tags_for(db, game_id))).await
 }
 
 #[tauri::command]
-pub async fn edit_custom_category(app: AppHandle, name: String, new_name: String, color: Option<String>) -> Result<()> {
-    blocking(move || with_db(&app, |db| modpacks::edit_category(db, &name, &new_name, color.as_deref()))).await
+pub async fn add_tag(app: AppHandle, name: String, color: Option<String>) -> Result<String> {
+    blocking(move || with_db(&app, |db| modpacks::add_tag(db, &name, color.as_deref()))).await
 }
 
 #[tauri::command]
-pub async fn delete_custom_category(app: AppHandle, name: String) -> Result<()> {
-    blocking(move || with_db(&app, |db| modpacks::delete_category(db, &name))).await
+pub async fn edit_tag(app: AppHandle, name: String, new_name: String, color: Option<String>) -> Result<()> {
+    blocking(move || with_db(&app, |db| modpacks::edit_tag(db, &name, &new_name, color.as_deref()))).await
 }
 
 #[tauri::command]
-pub async fn set_mod_custom_category(app: AppHandle, mod_id: i64, category: Option<String>) -> Result<()> {
+pub async fn delete_tag(app: AppHandle, name: String) -> Result<()> {
+    blocking(move || with_db(&app, |db| modpacks::delete_tag(db, &name))).await
+}
+
+/// Give an installed mod exactly these tags.
+#[tauri::command]
+pub async fn set_mod_tags(app: AppHandle, mod_id: i64, tags: Vec<String>) -> Result<()> {
     blocking(move || {
         with_db(&app, |db| {
             let m = db.get_mod(mod_id)?;
-            modpacks::set_mod_category(db, &modpacks::mod_key(&m), category.as_deref())
+            modpacks::set_mod_tags(db, &modpacks::mod_key(&m), &tags)
         })
     })
     .await
@@ -175,7 +176,7 @@ pub async fn set_mod_custom_category(app: AppHandle, mod_id: i64, category: Opti
 
 // ---- mod lists ---------------------------------------------------------------
 
-/// Write the game's mod list, categories and followed collections to `path`.
+/// Write the game's mod list, tags and followed collections to `path`.
 #[tauri::command]
 pub async fn export_modlist(app: AppHandle, game_id: i64, path: String) -> Result<usize> {
     blocking(move || {
@@ -191,7 +192,7 @@ pub async fn export_modlist(app: AppHandle, game_id: i64, path: String) -> Resul
     .await
 }
 
-/// Read a mod list from `path` and apply its categories. Mods it lists that
+/// Read a mod list from `path` and apply its tags. Mods it lists that
 /// aren't installed are returned for the UI to offer, not downloaded.
 #[tauri::command]
 pub async fn import_modlist(app: AppHandle, game_id: i64, path: String) -> Result<ImportReport> {

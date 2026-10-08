@@ -29,13 +29,40 @@ body {
 }
 @keyframes flicker { 0%, 96%, 100% { opacity: 1; } 97% { opacity: .82; } 98% { opacity: .95; } }
 @media (prefers-reduced-motion: reduce) { #crt { animation: none; } }
+#top { display: flex; min-height: 150px; border-bottom: 2px solid var(--rule); }
+#panel {
+  /* The light screen next to the terminal: a status bar, the app's emblem
+     and a diagonal band of data blocks. */
+  position: relative; width: 190px; flex-shrink: 0; overflow: hidden;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, .07) 0 1px, transparent 1px 3px),
+    #c9cbc4;
+  color: #141414; text-shadow: none; border-right: 4px solid var(--rule);
+}
+#panel-bar {
+  background: #0b0b0b; color: var(--text); text-shadow: var(--glow);
+  font-weight: 700; letter-spacing: 1px; padding: 3px 8px; margin: 6px 6px 0;
+}
+#emblem { display: block; width: 78px; height: 78px; margin: 12px 14px 0 auto; position: relative; z-index: 1; }
+#data {
+  position: absolute; left: -46px; bottom: -22px; width: 140px; height: 46px; transform: rotate(-42deg);
+  background:
+    linear-gradient(#0b0b0b, #0b0b0b) top / 100% 5px no-repeat,
+    repeating-conic-gradient(#0b0b0b 0 25%, transparent 0 50%) 0 9px / 8px 8px,
+    repeating-linear-gradient(90deg, transparent 0 11px, #c9cbc4 11px 14px);
+  opacity: .9;
+}
+#screen { flex: 1; min-width: 0; }
 #title {
   margin: 0; padding: 10px 14px 8px; text-align: center;
   font-size: 22px; font-weight: 700; letter-spacing: 2px; color: var(--text);
   text-shadow: 0 0 8px rgba(210, 223, 69, .7);
   border-bottom: 4px solid var(--rule);
 }
-#device { padding: 8px 14px 6px; text-transform: uppercase; letter-spacing: 1px; }
+#device { padding: 8px 14px 10px; text-transform: uppercase; letter-spacing: 1px; }
+.hl { background: var(--text); color: #000; text-shadow: none; padding: 0 6px; font-weight: 700; }
+#state.paused { background: var(--dim); }
+@media (max-width: 640px) { #panel { display: none; } }
 .dim { color: var(--dim); }
 #bar {
   display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
@@ -70,9 +97,12 @@ button.on { background: var(--text); color: #000; text-shadow: none; }
 .tag { font-weight: 700; letter-spacing: .5px; }
 .path { color: var(--bright); }
 .extra { color: var(--dim); }
-.k-nexus .tag, .k-api .tag, .k-download .tag, .k-verify .tag { color: var(--bright); }
+.k-nexus .tag, .k-api .tag, .k-download .tag { color: var(--bright); }
+/* Results get the highlighted bar, like a terminal's status line. */
+.k-info .tag, .k-verify .tag { justify-self: start; background: var(--text); color: #000; text-shadow: none; padding: 0 4px; }
 .k-delete .tag { text-decoration: underline; }
-.k-error .tag, .line.failed .tag, .line.failed .msg { color: var(--red); text-shadow: 0 0 4px rgba(255, 75, 58, .6); }
+.line.failed .tag, .line.failed .msg { color: var(--red); text-shadow: 0 0 4px rgba(255, 75, 58, .6); }
+.line.k-error .tag { justify-self: start; background: var(--red); color: #000; text-shadow: none; padding: 0 4px; }
 #status {
   padding: 4px 14px; background: var(--bar); border-top: 2px solid var(--rule);
   color: var(--dim); text-transform: uppercase; letter-spacing: .5px;

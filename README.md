@@ -98,11 +98,11 @@ Screenshots show sample data, with file locations blurred.
   version, and install the missing ones through the download queue.
   Installing from a collection follows it: "Check for updates" asks Nexus
   for new revisions, and opening one shows what the new revision adds,
-  changes and drops, with one button to update. Your own categories (with
-  colors) sort installed mods your way and stay with a mod through updates.
-  "Export mod list" saves your mods, categories and followed collections to
-  a JSON file; "Import mod list" applies its categories and offers to get
-  the mods you don't have.
+  changes and drops, with one button to update. Your own tags (with colors,
+  as many per mod as you like) sort installed mods your way and stay with a
+  mod through updates. "Export mod list" saves your mods, tags and followed
+  collections to a JSON file; "Import mod list" applies its tags and offers
+  to get the mods you don't have.
 - **Dependencies**: "Show dependencies" in Installed mods lists what each mod
   needs indented under it, from its Nexus page and from the frameworks its
   files use (redscript for `.reds`, ArchiveXL for `.xl`, …), marked
@@ -154,7 +154,9 @@ Screenshots show sample data, with file locations blurred.
   failed. A list of known problem mods from the modding wiki's troubleshooting
   guide (`crates/core/data/known_issues.json`) is checked too.
 - **Graph view**: mods, the frameworks they need, the game classes, tweak
-  records and resources they touch, with clashes highlighted.
+  records and resources they touch, with clashes highlighted. "Group by"
+  rings or heads the nodes by node type, mod type, tag, Nexus category or
+  source.
 - **Verify**: re-hashes a mod's files and reports missing, edited or
   overridden ones.
 - **Nexus Mods sign-in**: “Sign in with Nexus Mods” uses Nexus SSO, so you
@@ -197,8 +199,8 @@ Screenshots show sample data, with file locations blurred.
   and the app downloads and installs that mod in the background while moving
   on to the next page. Skip and Cancel are in the window's “Download queue”
   menu and in the queue panel. Update all uses the same queue.
-- **Categories, versions and updates**: the Installed tab can be filtered by
-  category and sorted by name, category, version or source. Downloads show
+- **Tags, versions and updates**: the Installed tab can be filtered by tag
+  or Nexus category and sorted by name, tag/category, version or source. Downloads show
   the mod version, the game version they were downloaded on, the source and
   how the file was verified. “Check for updates” (also run at start-up) asks
   Nexus and GitHub for newer files; outdated mods get an Update button in the

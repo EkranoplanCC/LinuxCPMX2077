@@ -114,6 +114,8 @@ button.link.inline { margin: 0 0 0 6px; padding: 0; font-size: 12px; }
 #graph-wrap { position: relative; height: max(420px, 62vh); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #0a0a10; }
 #graph { width: 100%; height: 100%; display: block; cursor: grab; }
 #graph.dragging { cursor: grabbing; }
+#diag-graph header .check { white-space: nowrap; }
+#graph-layout, #graph-group { width: auto; }
 #graph-info { position: absolute; top: 10px; right: 10px; width: 300px; max-height: calc(100% - 20px); overflow-y: auto; background: rgba(21, 21, 32, .94); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 13px; }
 #graph-info h3 { margin: 0 0 6px; color: var(--text); text-transform: none; font-size: 15px; }
 #graph-info ul { margin: 6px 0 0; padding-left: 16px; }
@@ -216,7 +218,12 @@ button.select-mode.active { border-color: var(--yellow); color: var(--yellow); }
 .cat-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
 input[type=color] { flex: 0 0 auto !important; width: 32px; height: 28px; padding: 2px; }
 .cat-list input[type=color] { width: 26px; height: 22px; }
-select.cat-pick { width: auto; max-width: 160px; margin: 0 0 2px; padding: 3px 6px; font-size: 12px; border-left: 4px solid var(--border); }
+.tag-cell { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 2px; max-width: 240px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 2px 1px 6px; font-size: 12px; border-radius: 3px;
+  background: var(--panel-2); border-left: 4px solid var(--border); }
+.tag-chip .tag-remove { background: none; border: 0; padding: 0 4px; min-width: 0; color: var(--muted); font-size: 13px; line-height: 1; cursor: pointer; }
+.tag-chip .tag-remove:hover { color: var(--red); }
+select.tag-add { width: auto; max-width: 120px; margin: 0; padding: 1px 4px; font-size: 12px; }
 tr.dep td { border-bottom: 0; padding-top: 1px; padding-bottom: 1px; }
 tr.dep td:nth-child(2) { padding-left: 26px; }
 tr.dep + tr:not(.dep) td { border-top: 1px solid var(--border); }
