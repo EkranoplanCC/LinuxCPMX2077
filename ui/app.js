@@ -2578,6 +2578,56 @@ async function showLoadout() {
             m.change === "updated" ? `updated to ${m.now_version || "another file"}` : LABEL[m.change]))))))));
 }
 
+// ---- sidebar width ------------------------------------------------------
+// Drag the divider to resize the left menu; double-click resets it. The
+// width is kept between launches. Everything in the sidebar (including the
+// docked debug terminal) follows its width.
+const SIDEBAR_DEFAULT = 290, SIDEBAR_MIN = 220, SIDEBAR_MAX = 640;
+function setSidebarWidth(px, save = true) {
+  // Leave the main area at least 360px however wide the menu is dragged.
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 360));
+  const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, px)));
+  document.documentElement.style.setProperty("--sidebar-width", `${w}px`);
+  $("#sidebar-resizer").setAttribute("aria-valuenow", w);
+  if (save) savePref("sidebarWidth", w);
+  return w;
+}
+(() => {
+  const handle = $("#sidebar-resizer");
+  handle.setAttribute("aria-valuemin", SIDEBAR_MIN);
+  handle.setAttribute("aria-valuemax", SIDEBAR_MAX);
+  let width = setSidebarWidth(Number(loadPref("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT, false);
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX, startW = $("#sidebar").getBoundingClientRect().width;
+    document.body.classList.add("resizing");
+    const move = (ev) => { width = setSidebarWidth(startW + ev.clientX - startX, false); };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      document.body.classList.remove("resizing");
+      savePref("sidebarWidth", width);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  });
+  handle.addEventListener("dblclick", () => { width = setSidebarWidth(SIDEBAR_DEFAULT); });
+  handle.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 50 : 10;
+    if (e.key === "ArrowLeft") width = setSidebarWidth(width - step);
+    else if (e.key === "ArrowRight") width = setSidebarWidth(width + step);
+    else if (e.key === "Home") width = setSidebarWidth(SIDEBAR_DEFAULT);
+    else return;
+    e.preventDefault();
+  });
+  // A smaller window shrinks the menu if needed; the saved width is kept.
+  window.addEventListener("resize", () => { width = setSidebarWidth(Number(loadPref("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT, false); });
+})();
+
 // ---- agent access ------------------------------------------------------
 $("#copy-mcp").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#mcp-cmd").textContent); toast("Copied"); }
