@@ -159,8 +159,10 @@ connected Nexus account for collections.
 
 One place to see whether your setup is healthy (called Diagnostics in
 earlier versions). **Check again** reruns every check. The top of the
-tab summarises what needs attention: game setup problems, recent crash
-reports, mods named in log errors, and compatibility problems. **Show in
+tab summarises what needs attention: game setup problems, where the last
+start went wrong (**Start here**), whether the game crashed in the last
+session, errors from that session, known problem mods, and compatibility
+problems. **Show in
 graph** next to a finding lights up the mods involved. The links under the
 title (**Files**, **Graph**, **Compatibility**, **Crashes & logs**) jump to
 each section.
@@ -226,9 +228,41 @@ table. No AI is involved: this is a local index of the mods' files.
 
 Reads the crash reports in the Proton prefix (`REDEngine/ReportQueue`), the
 CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs, per-mod CET
-logs and Proton's `steam-1091500.log`. Errors and warnings are listed, and
-each is matched to the installed mod it mentions. **Logs found** lists every
-log with **View** (with **Copy all** and **Open folder**).
+logs and Proton's `steam-1091500.log`.
+
+- **Last game session.** The top card says when the game last started,
+  when it last wrote a log, and whether it crashed. CPMX2077 works this out
+  from the time stamps in the RED4ext, CET and redscript logs.
+- **Last start, step by step.** One line per stage of a modded start, in the
+  order the game runs them: *Mod loader (RED4ext)*, *RED4ext plugins*,
+  *Script mods (redscript)*, *Cyber Engine Tweaks (CET)*, *Game file
+  extensions (ArchiveXL)*, *Item and stat changes (TweakXL)*, *Script
+  extensions (Codeware)* and *Game crash*. Each shows ✓ (fine), ! (worth a
+  look), ✗ (failed), – (didn't run) or ○ (not installed), the installed
+  version, the mods involved and **What to do**. The first failed step is
+  marked **Start here**: errors after it usually follow from it. For example,
+  if the RED4ext log stops at "Loading plugin from …", the game died while
+  loading that plugin, and the step names the mod that installed it.
+  **Log lines** shows the lines behind the result.
+- **Known problems.** Mods and setups the modding wiki's troubleshooting
+  guide warns about, each with what to do and **Read more on the modding
+  wiki**: cybercmd next to RED4ext, CTD Helper, NPCs Gone Wild, System-Ex,
+  Respector, the old Material and Texture Override, KSUV and VTK together, two
+  copies of Virtual Atelier, a `modlist.txt` that changes the archive load
+  order, ReShade or OptiScaler files, more than about 460 mods, and a script
+  mod installed twice.
+- **Errors and warnings from the last session** come first, each matched to
+  the installed mod it mentions, with the time it was written. Known messages
+  (for example `EXCEPTION_ACCESS_VIOLATION`, `Gpu Crash`, "Failed to resolve
+  address for hash" or a script error) get a plain explanation and **What to
+  do**. Script errors keep the line that says what went wrong. Harmless
+  messages the wiki says to ignore (such as "Failed to create record") are
+  left out. Older errors are folded under **Errors and warnings from earlier
+  sessions**, since they may already be fixed.
+
+**Logs found** lists every log with **View** (with **Copy all** and **Open
+folder**). It includes RED4ext's dated logs, ArchiveXL's and TweakXL's dated
+logs and other RED4ext plugins' own logs.
 
 ## Get mods
 
@@ -400,9 +434,11 @@ uninstalling it later restores the other mod's copy.
 clicked the download in CPMX2077's own Nexus window, or that CPMX2077 handles
 `nxm://` links (Settings) if you used your browser.
 
-**The game crashes.** Open Netrunner → *Crashes & logs*. Mods named in
-errors are listed; turn them off with the **On** switch to test, then
-**Check again**. The compatibility list may also name a clash.
+**The game crashes.** Open Netrunner → *Crashes & logs* and start with the
+step marked **Start here** under *Last start, step by step*, then *Known
+problems*. Mods named in errors from the last session are listed; turn them
+off with the **On** switch to test, start the game again, then **Check
+again**. The compatibility list may also name a clash.
 
 **Browsing stopped working.** Check *Requests left* on the Get mods tab;
 Nexus limits API requests per hour and per day. Saved pages still open.

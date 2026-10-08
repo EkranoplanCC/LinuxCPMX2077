@@ -54,7 +54,7 @@ fn tools() -> Value {
             }), &["key"]),
         tool("compatibility_report", "Conflicts between enabled mods (same method replaced, same resources, same tweak values, duplicate plugins) and frameworks mods need but are missing, with a per-mod summary.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
-        tool("crash_analysis", "Errors and warnings from the game's crash reports and the framework logs, each matched to the installed mods it mentions, plus the mods most often implicated.",
+        tool("crash_analysis", "Errors and warnings from the game's crash reports and the framework logs, each matched to the installed mods it mentions and marked as from the last game session or earlier, plus the mods most often implicated, a step-by-step startup timeline (first failed step marked) and known problem mods from the modding wiki.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),
         tool("list_logs", "Log files the game and modding frameworks wrote (CET, RED4ext and its plugins, redscript, CET mods, crash reports in the Proton prefix, Proton's log), with sizes and modification times.",
             json!({ "game_id": { "type": "integer" } }), &["game_id"]),

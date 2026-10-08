@@ -531,11 +531,18 @@ function renderProblems(analysis, crash) {
   if (warnings.length) items.push(el("div", { class: "card finding warning" },
     el("h3", {}, "Game setup"), el("ul", { class: "warnings plain" }, ...warnings.map(warningItem))));
   if (crash) {
-    const errors = crash.issues.filter((i) => i.level === "error").length;
+    const errors = crash.issues.filter((i) => i.level === "error" && i.last_session).length;
     const ids = suspectIds(crash);
     const lines = [];
-    if (crash.latest_crash) lines.push(el("li", {}, "Latest crash report: ", el("b", {}, fmtTime(crash.latest_crash.modified_unix))));
-    if (errors) lines.push(el("li", {}, `${errors} error${errors === 1 ? "" : "s"} in the logs`));
+    const first = crash.timeline.find((s) => s.first_problem);
+    if (first) lines.push(el("li", {}, el("b", {}, "Start here: "), `${first.title}: ${first.summary} `,
+      el("button", { class: "link inline", onclick: () => $("#crash-timeline").scrollIntoView({ behavior: "smooth", block: "center" }) }, "See the startup steps")));
+    if (crash.session?.crashed) lines.push(el("li", {}, "The game crashed in the last session (", fmtTime(crash.latest_crash?.modified_unix), ")"));
+    else if (crash.latest_crash && !crash.session) lines.push(el("li", {}, "Latest crash report: ", el("b", {}, fmtTime(crash.latest_crash.modified_unix))));
+    if (errors) lines.push(el("li", {}, `${errors} error${errors === 1 ? "" : "s"} in the logs${crash.session ? " from the last session" : ""}`));
+    const known = crash.known_issues.filter((k) => k.severity !== "info");
+    if (known.length) lines.push(el("li", {}, `${known.length} known problem${known.length === 1 ? "" : "s"}: `, known.map((k) => k.title).join("; "), " ",
+      el("button", { class: "link inline", onclick: () => $("#crash-known").scrollIntoView({ behavior: "smooth", block: "start" }) }, "See what to do")));
     for (const [name, n] of crash.suspects.slice(0, 8)) {
       const m = [...(ids.get(name) || [])];
       lines.push(el("li", {}, el("b", {}, name), ` is named in ${n} error${n === 1 ? "" : "s"} `, graphButton(m, `${name}: named in log errors`)));
@@ -589,24 +596,69 @@ function fmtTime(unix) {
   return unix ? new Date(unix * 1000).toLocaleString() : "—";
 }
 
+const STEP_ICON = { ok: "✓", warning: "!", failed: "✗", not_run: "–", not_installed: "○", unknown: "?" };
+
+// Known problem mods and messages from the modding wiki.
+function knownIssueCard(k) {
+  return el("div", { class: `card finding ${k.severity}` },
+    el("h3", {}, k.title),
+    el("p", {}, k.explanation),
+    el("p", {}, el("b", {}, "What to do: "), k.fix),
+    el("div", { class: "row" },
+      k.mod_names.length ? el("span", { class: "muted" }, "Mods: " + k.mod_names.join(", ")) : null,
+      graphButton(k.mod_ids, k.title),
+      docLink(k.link, ["Read more on the modding wiki"])));
+}
+
+function renderTimeline(steps) {
+  $("#crash-timeline").replaceChildren(...steps.map((s) => el("li", { class: `step ${s.status}` + (s.first_problem ? " first" : "") },
+    el("span", { class: "step-icon", "aria-hidden": "true" }, STEP_ICON[s.status] || "?"),
+    el("div", { class: "step-body" },
+      el("div", {}, el("b", {}, s.title), s.version ? el("span", { class: "muted" }, ` ${s.version}`) : null,
+        s.first_problem ? el("span", { class: "step-badge" }, "Start here") : null),
+      el("div", {}, s.summary),
+      s.mod_names.length ? el("div", {}, "Mods: ", el("b", {}, s.mod_names.join(", ")), " ", graphButton(s.mod_ids, `${s.title}: ${s.summary}`)) : null,
+      s.fix ? el("div", { class: "step-fix" }, el("b", {}, "What to do: "), s.fix) : null,
+      s.details.length ? el("details", {}, el("summary", {}, "Log lines"),
+        el("ul", { class: "affected-items mono" }, ...s.details.map((d) => el("li", {}, d)))) : null))));
+}
+
+function issueList(items) {
+  return el("ul", {}, ...items.slice(0, 200).map((i) => el("li", {},
+    i.mod_names.length ? el("b", {}, i.mod_names.join(", ") + ": ") : null,
+    el("span", { class: "mono" }, i.line), " ",
+    el("span", { class: "muted" }, "· " + i.log + (i.time_unix ? " · " + fmtTime(i.time_unix) : "")), " ",
+    graphButton(i.mod_ids, `${i.mod_names.join(", ")}: ${i.log}`),
+    i.meaning ? el("div", { class: "issue-hint" }, i.meaning, i.fix ? el("span", {}, " ", el("b", {}, "What to do: "), i.fix) : null) : null)));
+}
+
 function renderCrash(r) {
   const ids = suspectIds(r);
-  const errors = r.issues.filter((i) => i.level === "error");
-  const warnings = r.issues.filter((i) => i.level === "warning");
-  $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length ? "error" : "ok") },
+  const current = r.issues.filter((i) => i.last_session);
+  const earlier = r.issues.filter((i) => !i.last_session);
+  const errors = current.filter((i) => i.level === "error");
+  const warnings = current.filter((i) => i.level === "warning");
+  const s = r.session;
+  $("#crash-summary").replaceChildren(el("div", { class: "card finding " + (errors.length || s?.crashed ? "error" : "ok") },
+    s ? el("p", {}, "Last game session: started ", el("b", {}, fmtTime(s.started_unix)), ", last log written ", el("b", {}, fmtTime(s.last_write_unix)),
+      s.crashed ? el("span", {}, ", and the game ", el("b", {}, "crashed"), ".") : ".")
+      : el("p", { class: "muted" }, "Couldn't tell game sessions apart from the logs, so all errors are shown together."),
     r.latest_crash ? el("p", {}, "Latest crash report: ", el("b", {}, fmtTime(r.latest_crash.modified_unix))) : el("p", {}, "No crash reports found."),
     r.suspects.length
       ? el("p", {}, "Mods named in errors: ", ...r.suspects.flatMap(([name, n], i) => [i ? ", " : "", el("b", {}, name), ` (${n})`]), " ",
         graphButton([...new Set(r.suspects.flatMap(([name]) => [...(ids.get(name) || [])]))], "Mods named in log errors"))
-      : el("p", { class: "muted" }, errors.length ? "None of the errors name an installed mod." : "No errors in the logs."),
+      : el("p", { class: "muted" }, errors.length ? "None of the errors name an installed mod." : "No errors in the logs from the last session."),
   ));
+  renderTimeline(r.timeline);
+  $("#crash-known").replaceChildren(...(r.known_issues.length ? [el("h3", {}, "Known problems"), ...r.known_issues.map(knownIssueCard)] : []));
   const group = (title, items, cls) => items.length ? el("div", { class: `card finding ${cls}` },
-    el("h3", {}, `${title} (${items.length})`),
-    el("ul", {}, ...items.slice(0, 200).map((i) => el("li", {},
-      i.mod_names.length ? el("b", {}, i.mod_names.join(", ") + ": ") : null,
-      el("span", { class: "mono" }, i.line), " ", el("span", { class: "muted" }, "· " + i.log), " ",
-      graphButton(i.mod_ids, `${i.mod_names.join(", ")}: ${i.log}`))))) : null;
-  $("#crash-issues").replaceChildren(...[group("Errors", errors, "error"), group("Warnings", warnings, "warning")].filter(Boolean));
+    el("h3", {}, `${title} (${items.length})`), issueList(items)) : null;
+  const label = s ? "from the last session" : "";
+  const older = earlier.length ? el("details", { class: "card finding info" },
+    el("summary", {}, `Errors and warnings from earlier sessions (${earlier.length})`),
+    el("p", { class: "muted" }, "These were written before the last time the game started. They may already be fixed."),
+    issueList(earlier)) : null;
+  $("#crash-issues").replaceChildren(...[group(`Errors ${label}`.trim(), errors, "error"), group(`Warnings ${label}`.trim(), warnings, "warning"), older].filter(Boolean));
   $("#crash-logs").replaceChildren(...r.logs.map((l) => el("tr", {},
     el("td", { class: "mono" }, el("button", { class: "link", style: "margin: 0", title: "Show this log", onclick: (e) => busy(e.target, () => showLog(l.name)) }, l.name)),
     el("td", {}, fmtSize(l.size)), el("td", {}, fmtTime(l.modified_unix)),
