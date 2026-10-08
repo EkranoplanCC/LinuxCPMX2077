@@ -1592,6 +1592,11 @@ fn main() {
             reshade_cmd::reshade_launch,
             reshade_cmd::reshade_install,
             reshade_cmd::reshade_install_file,
+            reshade_cmd::reshade_packs,
+            reshade_cmd::reshade_pack_latest,
+            reshade_cmd::reshade_pack_install,
+            reshade_cmd::reshade_presets,
+            reshade_cmd::reshade_set_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

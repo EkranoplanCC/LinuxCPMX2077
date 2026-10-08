@@ -5,6 +5,8 @@
 
 let reshadeOpen = loadPref("reshadeOpen", false);
 let reshadeLatest = null;
+// Pack id → newest commit sha, after Check for updates.
+let reshadePackLatest = {};
 let reshadeProgress = "";
 
 listen("reshade-progress", (e) => {
@@ -18,13 +20,15 @@ async function loadReShade() {
   const box = $("#reshade");
   if (!currentGame) return box.classList.add("hidden");
   const gameId = currentGame.id;
-  const [s, launch] = await Promise.all([
+  const [s, launch, packs, presets] = await Promise.all([
     invoke("reshade_status", { gameId }),
     invoke("reshade_launch", { gameId }).catch(() => null),
+    invoke("reshade_packs", { gameId }),
+    invoke("reshade_presets", { gameId }),
   ]);
   if (currentGame?.id !== gameId) return;
   box.classList.remove("hidden");
-  renderReShade(s, launch);
+  renderReShade(s, launch, packs, presets);
 }
 
 async function reshadeInstall(args) {
@@ -39,9 +43,68 @@ async function reshadeInstall(args) {
   }
 }
 
-async function reshadeCheckLatest() {
-  reshadeLatest = await invoke("reshade_latest");
+// ReShade on reshade.me, and the installed packs on GitHub.
+async function reshadeCheckLatest(packs) {
+  const errors = [];
+  try { reshadeLatest = await invoke("reshade_latest"); } catch (e) { errors.push(`reshade.me: ${e}`); }
+  for (const p of packs.filter((x) => x.mod_id)) {
+    try { reshadePackLatest[p.id] = (await invoke("reshade_pack_latest", { id: p.id })).sha; }
+    catch (e) { errors.push(`${p.name}: ${e}`); }
+  }
+  if (errors.length) toast(errors.join("\n"), true);
   loadReShade();
+}
+
+async function reshadePackInstall(p) {
+  reshadeProgress = "";
+  try {
+    const r = await invoke("reshade_pack_install", { gameId: currentGame.id, id: p.id });
+    delete reshadePackLatest[p.id];
+    reportInstall(r, `Shaders in bin/x64/reshade-shaders/Shaders/${p.id}`);
+  } finally {
+    reshadeProgress = "";
+    loadMods();
+  }
+}
+
+function reshadePacks(packs) {
+  return el("table", { class: "req-table" }, el("tbody", {}, ...packs.map((p) => {
+    const m = p.mod_id ? mods.find((x) => x.id === p.mod_id) : null;
+    const latest = reshadePackLatest[p.id];
+    const newer = p.commit && latest && latest !== p.commit;
+    const state = !p.mod_id ? el("span", { class: "badge" }, "not installed")
+      : el("span", { class: `badge ${p.enabled ? "ok" : "bad"}` }, p.enabled ? p.version || "installed" : "disabled");
+    return el("tr", {},
+      el("td", {}, docLink(`https://github.com/${p.repo}`, [p.name])),
+      el("td", {}, state, newer ? el("span", { class: "badge bad" }, `newer commit ${latest.slice(0, 7)}`) : null),
+      el("td", { class: "muted" }, p.what),
+      el("td", { class: "actions" },
+        !p.mod_id || newer ? el("button", { class: newer ? "update" : null,
+          title: `Download the newest commit of ${p.repo} from GitHub; only shader and texture files are installed`,
+          onclick: (e) => busy(e.target, () => reshadePackInstall(p)) }, newer ? "Update" : "Install") : null,
+        m ? el("button", { onclick: (e) => busy(e.target, () => setEnabled(m, !p.enabled)).finally(loadMods) }, p.enabled ? "Disable" : "Enable") : null,
+        m ? el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall") : null));
+  })));
+}
+
+function reshadePresets(presets) {
+  if (!presets.length) {
+    return el("p", { class: "muted small" }, "No presets in bin/x64. ReShade saves one there (ReShadePreset.ini) the first time you change effects in its overlay; preset mods from Nexus install there too.");
+  }
+  return el("table", { class: "req-table" }, el("tbody", {}, ...presets.map((p) => el("tr", {},
+    el("td", {}, p.file, p.mod_name ? el("div", { class: "muted small" }, `from ${p.mod_name}`) : null),
+    el("td", {}, `${p.techniques} technique${p.techniques === 1 ? "" : "s"}`),
+    el("td", {}, p.missing.length
+      ? [el("span", { class: "badge bad" }, `${p.missing.length} effect file${p.missing.length === 1 ? "" : "s"} missing`),
+        el("div", { class: "muted small" }, p.missing.join(", "))]
+      : el("span", { class: "badge ok" }, "all effect files found")),
+    el("td", { class: "actions" }, p.active ? el("span", { class: "badge ok" }, "active")
+      : el("button", { title: "Set PresetPath in ReShade.ini; ReShade loads it at the next game start",
+        onclick: (e) => busy(e.target, async () => {
+          await invoke("reshade_set_preset", { gameId: currentGame.id, file: p.file });
+          toast(`ReShade loads ${p.file} at the next game start`);
+          loadReShade();
+        }) }, "Use"))))));
 }
 
 function reshadeSummary(s) {
@@ -79,7 +142,7 @@ function reshadeProton(launch) {
   return el("table", { class: "req-table" }, el("tbody", {}, ...rows));
 }
 
-function renderReShade(s, launch) {
+function renderReShade(s, launch, packs, presets) {
   const i = s.installed;
   const m = i ? mods.find((x) => x.id === i.mod_id) : null;
   const newer = i && reshadeLatest && compareVersions(reshadeLatest, i.version || "0") > 0;
@@ -112,13 +175,19 @@ function renderReShade(s, launch) {
     el("p", { id: "reshade-progress", class: "muted small" }, reshadeProgress),
     el("div", { class: "row" },
       newer ? el("button", { class: "update", onclick: (e) => busy(e.target, () => reshadeInstall({})) }, `Update to ${reshadeLatest}`) : null,
-      i ? el("button", { title: "Read the newest version from reshade.me",
-        onclick: (e) => busy(e.target, reshadeCheckLatest) }, "Check for update") : null,
+      i ? el("button", { title: "Read the newest ReShade version from reshade.me and the newest commit of each installed shader pack",
+        onclick: (e) => busy(e.target, () => reshadeCheckLatest(packs)) }, "Check for updates") : null,
       fromSite, fromFile,
       m ? el("button", { onclick: (e) => busy(e.target, () => setEnabled(m, !i.enabled)).finally(loadMods) },
         i.enabled ? "Disable" : "Enable") : null,
       m ? el("button", { class: "danger", onclick: (e) => busy(e.target, () => uninstall(m)) }, "Uninstall") : null,
-      docLink("https://reshade.me/", ["Open reshade.me"])));
+      docLink("https://reshade.me/", ["Open reshade.me"])),
+    el("h3", {}, "Shader packs"),
+    el("p", { class: "muted small" },
+      "From each author's GitHub repository, pinned to the newest commit. Only shader (.fx, .fxh) and texture files are installed, each pack in its own folder under bin/x64/reshade-shaders. GitHub publishes no checksums for these archives."),
+    reshadePacks(packs),
+    el("h3", {}, "Presets"),
+    reshadePresets(presets));
   details.addEventListener("toggle", () => { reshadeOpen = details.open; savePref("reshadeOpen", reshadeOpen); });
   $("#reshade").replaceChildren(details);
 }

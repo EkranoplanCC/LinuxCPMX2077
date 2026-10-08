@@ -27,8 +27,16 @@ const PAGE_SIZE: u32 = 20;
 const MAX_BODY_CHARS: usize = 5000;
 /// Hosts GitHub serves release downloads from (github.com redirects to one
 /// of the others).
-const DOWNLOAD_HOSTS: &[&str] =
-    &["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "github-releases.githubusercontent.com"];
+const DOWNLOAD_HOSTS: &[&str] = &[
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+    // Source archives of a commit (`/zipball/<sha>` redirects here).
+    "codeload.github.com",
+];
+/// Largest source archive of a commit the app downloads.
+const MAX_ZIPBALL: u64 = 256 << 20;
 
 /// A well-known framework hosted on GitHub, shown before the user searches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +517,88 @@ impl Client {
         activity::record_path(Kind::Move, "Saved download as", &final_path);
         Ok(Downloaded { path: final_path, file_name, sha256, md5, size: done, verified })
     }
+}
+
+/// A commit of a repository's default (or given) branch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Commit {
+    pub sha: String,
+    /// Committer date, Unix time.
+    pub date: Option<i64>,
+}
+
+impl Client {
+    /// The newest commit on `branch`, or on the default branch.
+    pub fn latest_commit(&self, owner: &str, repo: &str, branch: Option<&str>) -> Result<Commit> {
+        let (owner, repo) = checked(owner, repo)?;
+        let branch = match branch {
+            Some(b) => b.to_string(),
+            None => self
+                .get(&format!("/repos/{owner}/{repo}"), &[])?
+                .get("default_branch")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .ok_or_else(|| Error::Other(format!("GitHub: {owner}/{repo} has no default branch")))?,
+        };
+        if branch.is_empty() || !branch.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c)) || branch.contains("..") {
+            return Err(Error::Other(format!("GitHub: unexpected branch name {branch:?}")));
+        }
+        let v = self.get(&format!("/repos/{owner}/{repo}/commits/{branch}"), &[])?;
+        let sha = v.get("sha").and_then(Value::as_str).filter(|s| is_sha(s)).ok_or_else(|| Error::Other("GitHub: unexpected commit data".into()))?;
+        let date = v.pointer("/commit/committer/date").and_then(Value::as_str).and_then(parse_time);
+        Ok(Commit { sha: sha.to_ascii_lowercase(), date })
+    }
+
+    /// Download the source archive (zip) of commit `sha` into `dest_dir`.
+    /// GitHub publishes no checksum for these; the commit pins the content.
+    pub fn download_commit(&self, owner: &str, repo: &str, sha: &str, dest_dir: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<Downloaded> {
+        let (owner, repo) = checked(owner, repo)?;
+        if !is_sha(sha) {
+            return Err(Error::Other(format!("not a commit id: {sha}")));
+        }
+        std::fs::create_dir_all(dest_dir)?;
+        let file_name = format!("{owner}-{repo}-{}.zip", &sha[..12]);
+        let final_path = dest_dir.join(&file_name);
+        let part_path = final_path.with_extension("part");
+        let url = format!("{}/repos/{owner}/{repo}/zipball/{sha}", self.base);
+        activity::record_path(Kind::Download, format!("Downloading {owner}/{repo} at commit {}", &sha[..12]), &final_path);
+        let mut resp = self.http.get(&url).header("Accept", "application/vnd.github+json").send()?;
+        if !resp.status().is_success() {
+            return Err(Error::Other(format!("GitHub download failed: {}", resp.status())));
+        }
+        let total = resp.content_length().unwrap_or(0);
+        let mut out = std::fs::File::create(&part_path)?;
+        let mut buf = vec![0u8; 1 << 16];
+        let mut done = 0u64;
+        loop {
+            let n = resp.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            done += n as u64;
+            if done > MAX_ZIPBALL {
+                drop(out);
+                let _ = std::fs::remove_file(&part_path);
+                return Err(Error::Integrity(format!("{owner}/{repo} is larger than {}; discarded", activity::size(MAX_ZIPBALL))));
+            }
+            out.write_all(&buf[..n])?;
+            progress(done, total.max(done));
+        }
+        out.sync_all()?;
+        drop(out);
+        if total > 0 && done != total {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(Error::Integrity(format!("size mismatch: got {done} bytes, expected {total}")));
+        }
+        let (sha256, md5) = hash::file_digests(&part_path)?;
+        activity::record(Kind::Verify, format!("Source archive of commit {}: SHA-256 {sha256} ({})", &sha[..12], activity::size(done)));
+        std::fs::rename(&part_path, &final_path)?;
+        Ok(Downloaded { path: final_path, file_name, sha256, md5, size: done, verified: false })
+    }
+}
+
+fn is_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// GitHub releases as a [`ModSource`].

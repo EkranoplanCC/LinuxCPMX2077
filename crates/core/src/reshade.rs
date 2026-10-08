@@ -507,6 +507,333 @@ pub fn status(db: &Db, game: &GameRow) -> Result<Status> {
     Ok(Status { installed, unmanaged, dll_choice })
 }
 
+// ---- Shader packs ------------------------------------------------------------
+
+/// `mods.source` of a shader pack; `source_ref` is its `owner/repo` and
+/// `source_file` the commit it was installed from.
+pub const PACK_SOURCE: &str = "reshade-shaders";
+/// Each pack gets its own folder under `Shaders` and `Textures`, so two packs
+/// shipping the same header (`ReShade.fxh`) don't collide.
+pub const SHADERS_DIR: &str = "bin/x64/reshade-shaders/Shaders";
+pub const TEXTURES_DIR: &str = "bin/x64/reshade-shaders/Textures";
+const SHADER_EXTS: &[&str] = &["fx", "fxh", "h", "hlsl"];
+const TEXTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "dds", "bmp", "tga"];
+
+/// A shader collection on GitHub, installed from its own repository.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Pack {
+    /// Folder name under `Shaders` and `Textures`.
+    pub id: &'static str,
+    /// `owner/repo`.
+    pub repo: &'static str,
+    /// `None`: the repository's default branch.
+    pub branch: Option<&'static str>,
+    pub name: &'static str,
+    pub what: &'static str,
+}
+
+/// The shader repositories offered, all from their authors' own GitHub.
+pub const PACKS: &[Pack] = &[
+    Pack {
+        id: "Standard",
+        repo: "crosire/reshade-shaders",
+        branch: Some("slim"),
+        name: "Standard effects",
+        what: "The effects ReShade's own installer offers first (SMAA, LumaSharpen, Vibrance, Deband, …).",
+    },
+    Pack { id: "SweetFX", repo: "CeeJayDK/SweetFX", branch: None, name: "SweetFX", what: "Colour, tonemapping, sharpening and film effects." },
+    Pack { id: "qUINT", repo: "martymcmodding/qUINT", branch: None, name: "qUINT", what: "MXAO ambient occlusion, Lightroom colour grading, depth of field." },
+    Pack { id: "iMMERSE", repo: "martymcmodding/iMMERSE", branch: None, name: "iMMERSE", what: "Marty McFly's free effects: sharpening, anti-aliasing, MXAO." },
+    Pack { id: "prod80", repo: "prod80/prod80-ReShade-Repository", branch: None, name: "prod80", what: "Colour correction and grading." },
+    Pack { id: "AstrayFX", repo: "BlueSkyDefender/AstrayFX", branch: None, name: "AstrayFX", what: "Clarity, smart sharpening, bloom and other image effects." },
+    Pack { id: "FXShaders", repo: "luluco250/FXShaders", branch: None, name: "FXShaders", what: "Bloom, motion blur and stylised effects." },
+];
+
+pub fn pack(id: &str) -> Result<&'static Pack> {
+    PACKS.iter().find(|p| p.id.eq_ignore_ascii_case(id)).ok_or_else(|| Error::Other(format!("{id} is not a listed shader pack")))
+}
+
+fn ext_of(name: &str) -> String {
+    name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
+}
+
+/// Where each file of a pack's source archive goes: shader files from its
+/// `Shaders` folder and images from its `Textures` folder, into the pack's
+/// own folders. Everything else (readmes, scripts, images outside
+/// `Textures`) is left out. Returns (archive path, game path) pairs.
+pub fn pack_layout(files: &[String], id: &str) -> Vec<(String, String)> {
+    // The shallowest `Shaders` folder; source archives wrap everything in
+    // an `owner-repo-sha/` folder.
+    let prefix = files
+        .iter()
+        .filter_map(|f| {
+            let parts: Vec<&str> = f.split('/').collect();
+            let i = parts[..parts.len().saturating_sub(1)].iter().position(|p| p.eq_ignore_ascii_case("Shaders"))?;
+            Some((i, parts[..i].join("/")))
+        })
+        .min_by_key(|(i, _)| *i)
+        .map(|(_, p)| if p.is_empty() { p } else { format!("{p}/") });
+    let Some(prefix) = prefix else { return Vec::new() };
+    let mut out = Vec::new();
+    for f in files {
+        let Some(rest) = f.strip_prefix(&prefix) else { continue };
+        let Some((top, inner)) = rest.split_once('/') else { continue };
+        let ext = ext_of(inner);
+        if top.eq_ignore_ascii_case("Shaders") && SHADER_EXTS.contains(&ext.as_str()) {
+            out.push((f.clone(), format!("{SHADERS_DIR}/{id}/{inner}")));
+        } else if top.eq_ignore_ascii_case("Textures") && TEXTURE_EXTS.contains(&ext.as_str()) {
+            out.push((f.clone(), format!("{TEXTURES_DIR}/{id}/{inner}")));
+        }
+    }
+    out
+}
+
+/// The installed copy of a pack (the newest, if several).
+pub fn pack_mod(db: &Db, game_id: i64, pack: &Pack) -> Result<Option<ModRow>> {
+    Ok(db
+        .mods(game_id)?
+        .into_iter()
+        .filter(|m| m.source == PACK_SOURCE && m.source_ref.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(pack.repo)))
+        .max_by_key(|m| m.id))
+}
+
+/// Unix time as `YYYY-MM-DD` (UTC).
+fn ymd(unix: i64) -> String {
+    // Days to civil date (Howard Hinnant's algorithm).
+    let z = unix.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// "2026-09-12 abc1234": the commit date and short id.
+pub fn pack_version(commit: &crate::sources::github::Commit) -> String {
+    let date = commit.date.map(ymd).unwrap_or_default();
+    format!("{date} {}", &commit.sha[..7]).trim().to_string()
+}
+
+/// Install (or update) `pack` from the source archive of `commit`.
+pub fn install_pack(
+    inst: &Installer,
+    game: &GameRow,
+    pack: &Pack,
+    archive: &Path,
+    commit: &crate::sources::github::Commit,
+) -> Result<InstallReport> {
+    let mut p = inst.prepare(game, archive)?;
+    p.fomod = None;
+    let layout = pack_layout(&p.files, pack.id);
+    if !layout.iter().any(|(_, t)| ext_of(t) == "fx") {
+        inst.discard(&p);
+        return Err(Error::Other(format!("{} has no .fx effects in a Shaders folder", pack.repo)));
+    }
+    // Lay the staged files out like the game folder.
+    let relaid = p.dir.join("relaid");
+    let moved = (|| -> Result<()> {
+        for (from, to) in &layout {
+            let dst = relaid.join(to);
+            std::fs::create_dir_all(dst.parent().unwrap_or(&relaid))?;
+            std::fs::rename(p.dir.join("files").join(from), dst)?;
+        }
+        std::fs::remove_dir_all(p.dir.join("files"))?;
+        std::fs::rename(&relaid, p.dir.join("files"))?;
+        Ok(())
+    })();
+    if let Err(e) = moved {
+        inst.discard(&p);
+        return Err(e);
+    }
+    p.files = layout.into_iter().map(|(_, t)| t).collect();
+    p.file_count = p.files.len();
+    let meta = NewMod {
+        name: format!("{} (ReShade shaders)", pack.name),
+        version: Some(pack_version(commit)),
+        source: PACK_SOURCE.into(),
+        archive_name: p.archive_name.clone(),
+        category: Some("ReShade".into()),
+        source_ref: Some(pack.repo.into()),
+        source_file: Some(commit.sha.clone()),
+        ..Default::default()
+    };
+    let opts = InstallOptions { meta, overwrite: false, fomod_choices: None };
+    let result = match pack_mod(inst.db, game.id, pack)? {
+        Some(old) => inst.finish_replacing(game, &p, opts, old.id),
+        None => inst.finish(game, &p, opts),
+    };
+    if result.is_err() {
+        inst.discard(&p);
+    }
+    result
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PackState {
+    #[serde(flatten)]
+    pub pack: Pack,
+    pub mod_id: Option<i64>,
+    pub version: Option<String>,
+    /// Commit the installed copy came from.
+    pub commit: Option<String>,
+    pub enabled: bool,
+}
+
+pub fn packs(db: &Db, game_id: i64) -> Result<Vec<PackState>> {
+    PACKS
+        .iter()
+        .map(|p| {
+            let m = pack_mod(db, game_id, p)?;
+            Ok(PackState {
+                pack: *p,
+                mod_id: m.as_ref().map(|m| m.id),
+                version: m.as_ref().and_then(|m| m.version.clone()),
+                commit: m.as_ref().and_then(|m| m.source_file.clone()),
+                enabled: m.as_ref().is_some_and(|m| m.enabled()),
+            })
+        })
+        .collect()
+}
+
+// ---- Presets ---------------------------------------------------------------
+
+/// A ReShade preset in the game folder (`bin/x64/*.ini` with a
+/// `Techniques=` line).
+#[derive(Debug, Clone, Serialize)]
+pub struct Preset {
+    pub file: String,
+    pub techniques: usize,
+    /// Effect files the preset uses that aren't under `reshade-shaders/Shaders`.
+    pub missing: Vec<String>,
+    pub active: bool,
+    /// The mod that installed it, if any.
+    pub mod_name: Option<String>,
+}
+
+const MAX_PRESET: u64 = 1 << 20;
+
+/// `PresetPath` from `ReShade.ini`'s `[GENERAL]` section.
+fn ini_value(ini: &str, section: &str, key: &str) -> Option<String> {
+    let mut cur = String::new();
+    for line in ini.lines() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            cur = t[1..t.len() - 1].to_string();
+        } else if cur.eq_ignore_ascii_case(section)
+            && let Some((k, v)) = t.split_once('=')
+            && k.trim().eq_ignore_ascii_case(key)
+        {
+            return Some(v.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Effect files (`Name@File.fx`) a preset's `Techniques=` line uses, and how
+/// many techniques it lists; `None` if the file isn't a preset.
+fn preset_techniques(text: &str) -> Option<(usize, Vec<String>)> {
+    let line = text.lines().find_map(|l| {
+        let (k, v) = l.split_once('=')?;
+        k.trim().eq_ignore_ascii_case("Techniques").then(|| v.trim().to_string())
+    })?;
+    let entries: Vec<&str> = line.split(',').map(str::trim).filter(|e| !e.is_empty()).collect();
+    let mut files: Vec<String> = entries.iter().filter_map(|e| e.split_once('@').map(|(_, f)| f.trim().to_string())).collect();
+    files.sort_by_key(|f| f.to_ascii_lowercase());
+    files.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    Some((entries.len(), files))
+}
+
+fn file_name_of(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+pub fn presets(db: &Db, game: &GameRow) -> Result<Vec<Preset>> {
+    let game_dir = Path::new(&game.path);
+    let bin = resolve_ci(game_dir, BIN);
+    let effects: std::collections::HashSet<String> = walkdir::WalkDir::new(resolve_ci(game_dir, SHADERS_DIR))
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.file_name().to_string_lossy().to_ascii_lowercase())
+        .collect();
+    let active = std::fs::read_to_string(bin.join(INI))
+        .ok()
+        .and_then(|ini| ini_value(&ini, "GENERAL", "PresetPath"))
+        .map(|p| file_name_of(&p).to_ascii_lowercase());
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&bin) else { return Ok(out) };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if ext_of(&name) != "ini" || name.eq_ignore_ascii_case(INI) || !e.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        if e.metadata().map(|m| m.len()).unwrap_or(u64::MAX) > MAX_PRESET {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(e.path()) else { continue };
+        let Some((techniques, files)) = preset_techniques(&String::from_utf8_lossy(&bytes)) else { continue };
+        let missing = files.into_iter().filter(|f| !effects.contains(&file_name_of(f).to_ascii_lowercase())).collect();
+        let owner = db.owners_of(game.id, &format!("{BIN}/{name}"), -1)?.first().map(|f| f.mod_id);
+        out.push(Preset {
+            active: active.as_deref() == Some(name.to_ascii_lowercase().as_str()),
+            mod_name: owner.map(|id| db.get_mod(id).map(|m| m.name)).transpose()?,
+            file: name,
+            techniques,
+            missing,
+        });
+    }
+    out.sort_by_key(|p| p.file.to_ascii_lowercase());
+    Ok(out)
+}
+
+/// `ini` with `key=value` set in `[section]` (added if missing).
+fn set_ini_value(ini: &str, section: &str, key: &str, value: &str) -> String {
+    let nl = if ini.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = ini.lines().map(String::from).collect();
+    let mut cur = String::new();
+    let mut section_at = None;
+    for (i, line) in lines.iter_mut().enumerate() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            cur = t[1..t.len() - 1].to_string();
+            if cur.eq_ignore_ascii_case(section) {
+                section_at = Some(i);
+            }
+        } else if cur.eq_ignore_ascii_case(section) && t.split_once('=').is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key)) {
+            *line = format!("{key}={value}");
+            return lines.join(nl) + nl;
+        }
+    }
+    match section_at {
+        Some(i) => lines.insert(i + 1, format!("{key}={value}")),
+        None => {
+            lines.insert(0, format!("[{section}]"));
+            lines.insert(1, format!("{key}={value}"));
+        }
+    }
+    lines.join(nl) + nl
+}
+
+/// Make `file` (a preset listed by [`presets`]) the one ReShade loads at the
+/// next start, by setting `PresetPath` in `ReShade.ini`.
+pub fn set_active_preset(db: &Db, game: &GameRow, file: &str) -> Result<()> {
+    if !presets(db, game)?.iter().any(|p| p.file == file) {
+        return Err(Error::Other(format!("{file} is not a ReShade preset in bin/x64")));
+    }
+    let ini_path = bin_file(Path::new(&game.path), INI);
+    let ini = std::fs::read_to_string(&ini_path).unwrap_or_else(|_| DEFAULT_INI.to_string());
+    let new = set_ini_value(&ini, "GENERAL", "PresetPath", &format!(".\\{file}"));
+    let tmp = ini_path.with_extension("ini.cpmx-tmp");
+    std::fs::write(&tmp, new)?;
+    std::fs::rename(&tmp, &ini_path)?;
+    activity::record_path(Kind::Copy, format!("Set ReShade's preset to {file}"), &ini_path);
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -684,6 +1011,95 @@ pub(crate) mod tests {
         assert_eq!(r.backed_up_game_files, ["bin/x64/dxgi.dll"]);
         inst.uninstall(r.mod_id).unwrap();
         assert_eq!(std::fs::read(gdir.join("bin/x64/dxgi.dll")).unwrap(), hand);
+    }
+
+    #[test]
+    fn lays_out_a_shader_repository() {
+        let files: Vec<String> = [
+            "SweetFX-abc123/Shaders/SweetFX/Vibrance.fx",
+            "SweetFX-abc123/Shaders/ReShade.fxh",
+            "SweetFX-abc123/Shaders/install.bat",
+            "SweetFX-abc123/Textures/LUT.png",
+            "SweetFX-abc123/Textures/notes.txt",
+            "SweetFX-abc123/README.md",
+            "SweetFX-abc123/Docs/Shaders/old.fx",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let l = pack_layout(&files, "SweetFX");
+        let targets: Vec<&str> = l.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(
+            targets,
+            [
+                "bin/x64/reshade-shaders/Shaders/SweetFX/SweetFX/Vibrance.fx",
+                "bin/x64/reshade-shaders/Shaders/SweetFX/ReShade.fxh",
+                "bin/x64/reshade-shaders/Textures/SweetFX/LUT.png",
+            ]
+        );
+        assert!(pack_layout(&["x/readme.md".to_string()], "X").is_empty());
+        assert_eq!(ymd(1_757_635_200), "2025-09-12");
+        assert_eq!(ymd(0), "1970-01-01");
+    }
+
+    #[test]
+    fn installs_and_updates_a_pack_from_a_source_archive() {
+        let (dir, db, game) = setup_game();
+        let gdir = PathBuf::from(&game.path);
+        let inst = installer(&db, dir.path());
+        let zip_at = |name: &str, files: &[(&str, &str)]| {
+            let p = dir.path().join(name);
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+            for (n, body) in files {
+                z.start_file(*n, zip::write::SimpleFileOptions::default()).unwrap();
+                z.write_all(body.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+            p
+        };
+        let pk = pack("sweetfx").unwrap();
+        let c1 = crate::sources::github::Commit { sha: "a".repeat(40), date: Some(1_757_635_200) };
+        let a = zip_at("a.zip", &[("r-aaa/Shaders/Vibrance.fx", "v1"), ("r-aaa/Shaders/ReShade.fxh", "h"), ("r-aaa/run.exe", "MZ")]);
+        let r = install_pack(&inst, &game, pk, &a, &c1).unwrap();
+        assert_eq!(r.files_installed, 2);
+        assert!(gdir.join("bin/x64/reshade-shaders/Shaders/SweetFX/Vibrance.fx").is_file());
+        assert!(!gdir.join("run.exe").exists() && !gdir.join("bin/x64/reshade-shaders/Shaders/SweetFX/run.exe").exists());
+        let st = packs(&db, game.id).unwrap().into_iter().find(|p| p.pack.id == "SweetFX").unwrap();
+        assert_eq!(st.version.as_deref(), Some("2025-09-12 aaaaaaa"));
+
+        // A preset using it, and one using an effect nobody installed.
+        std::fs::write(gdir.join("bin/x64/Night.ini"), "Techniques=Vibrance@Vibrance.fx,MXAO@qUINT_mxao.fx\n").unwrap();
+        std::fs::write(gdir.join("bin/x64/Day.ini"), "Techniques=Vibrance@Vibrance.fx\n").unwrap();
+        std::fs::write(gdir.join("bin/x64/ReShade.ini"), "[GENERAL]\r\nPresetPath=.\\Day.ini\r\n").unwrap();
+        std::fs::write(gdir.join("bin/x64/other.ini"), "[Settings]\nx=1\n").unwrap();
+        let ps = presets(&db, &game).unwrap();
+        assert_eq!(ps.iter().map(|p| p.file.as_str()).collect::<Vec<_>>(), ["Day.ini", "Night.ini"]);
+        assert!(ps[0].active && ps[0].missing.is_empty());
+        assert_eq!(ps[1].missing, ["qUINT_mxao.fx"]);
+        set_active_preset(&db, &game, "Night.ini").unwrap();
+        assert_eq!(std::fs::read_to_string(gdir.join("bin/x64/ReShade.ini")).unwrap(), "[GENERAL]\r\nPresetPath=.\\Night.ini\r\n");
+        assert!(set_active_preset(&db, &game, "../x.ini").is_err());
+        assert!(set_active_preset(&db, &game, "other.ini").is_err());
+
+        // An update replaces the files of the old commit.
+        let c2 = crate::sources::github::Commit { sha: "b".repeat(40), date: None };
+        let b = zip_at("b.zip", &[("r-bbb/Shaders/Vibrance.fx", "v2")]);
+        let r2 = install_pack(&inst, &game, pk, &b, &c2).unwrap();
+        assert!(r2.replaced.is_some());
+        assert!(!gdir.join("bin/x64/reshade-shaders/Shaders/SweetFX/ReShade.fxh").exists());
+        inst.uninstall(r2.mod_id).unwrap();
+        assert!(!gdir.join("bin/x64/reshade-shaders").exists());
+
+        let none = zip_at("c.zip", &[("r/readme.md", "x")]);
+        assert!(install_pack(&inst, &game, pk, &none, &c2).unwrap_err().to_string().contains("no .fx effects"));
+    }
+
+    #[test]
+    fn edits_ini_values() {
+        assert_eq!(set_ini_value("[GENERAL]\nA=1\n[INPUT]\nK=2\n", "INPUT", "K", "3"), "[GENERAL]\nA=1\n[INPUT]\nK=3\n");
+        assert_eq!(set_ini_value("[GENERAL]\nA=1\n", "GENERAL", "PresetPath", ".\\x.ini"), "[GENERAL]\nPresetPath=.\\x.ini\nA=1\n");
+        assert_eq!(set_ini_value("", "GENERAL", "PresetPath", "p"), "[GENERAL]\nPresetPath=p\n");
+        assert_eq!(ini_value("[OTHER]\nPresetPath=no\n[GENERAL]\n PresetPath = .\\a.ini\n", "GENERAL", "PresetPath").as_deref(), Some(".\\a.ini"));
     }
 
     #[test]

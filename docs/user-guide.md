@@ -197,6 +197,8 @@ show under **Known problems** in Netrunner's
 
 ### ReShade
 
+![The ReShade card with a shader pack and two presets](images/reshade-card.png)
+
 The **ReShade** card above the list installs
 [ReShade](https://reshade.me/), the post-processing injector used for
 sharpening, colour grading and presets, and keeps it up to date. Its heading
@@ -223,9 +225,11 @@ installed*. Click the heading to open or fold the card.
 - ReShade is listed in the mod table like any mod (source *reshade.me*), so
   the **On** switch, **Verify**, **Uninstall** and the File map work on it.
   The card has **Disable**/**Enable** and **Uninstall** too.
-- **Check for update** reads the newest version from reshade.me; when it's
-  newer, **Update to &lt;version&gt;** installs it in place of the old one
-  under the same DLL name. ReShade's settings and your presets stay.
+- **Check for updates** reads the newest version from reshade.me and the
+  newest commit of each installed shader pack. When ReShade is newer,
+  **Update to &lt;version&gt;** installs it in place of the old one under the
+  same DLL name; ReShade's settings and your presets stay. A pack with a newer
+  commit shows **Update**.
 - **Uninstall** removes the DLL, the `ReShade.ini` the app wrote (with any
   changes ReShade made to it) and ReShade's log. Presets you made
   (`ReShadePreset.ini` and others) stay in `bin/x64`.
@@ -242,6 +246,29 @@ On Linux the card also shows what ReShade needs from Proton:
 Right after ReShade is installed, the app offers both fixes in one dialog,
 like it does after installing CET or RED4ext. On Windows none of this is
 needed and the rows don't show.
+
+**Shader packs** lists effect collections from their authors' GitHub
+repositories: Standard effects (the ones ReShade's own installer offers),
+SweetFX, qUINT, iMMERSE, prod80, AstrayFX and FXShaders. **Install**
+downloads the newest commit of that repository from GitHub and installs only
+its shader files (`.fx`, `.fxh`) and textures, each pack in its own folder:
+`bin/x64/reshade-shaders/Shaders/<pack>/` and
+`bin/x64/reshade-shaders/Textures/<pack>/`, so packs that ship the same
+header don't collide. Scripts, readmes and anything else in the repository
+are left out. Each pack is a mod row too (*SweetFX (ReShade shaders)*),
+with the commit date and id as its version, and **Disable**, **Enable** and
+**Uninstall** next to it. GitHub publishes no checksums for these archives;
+the commit id pins what was installed.
+
+**Presets** lists the ReShade presets in `bin/x64` (`.ini` files with a
+`Techniques=` line), with the mod that installed each one. *N effect files
+missing* names the effect files a preset uses that aren't under
+`reshade-shaders/Shaders`; install the pack that has them (the file names
+usually give it away, for example `qUINT_mxao.fx` is in qUINT). *active* marks
+the preset ReShade loads; **Use** makes another one active by setting
+`PresetPath` in `ReShade.ini`, from the next game start. Preset mods from
+Nexus install their `.ini` into `bin/x64` and their shaders into
+`bin/x64/reshade-shaders`, so they show up here.
 
 In game, the Home key opens ReShade's overlay.
 
@@ -617,6 +644,9 @@ part of download links are never shown.
 - GitHub downloads come only over HTTPS from GitHub's hosts and must match
   the asset's published SHA-256. Older assets without a digest are marked
   unverified.
+- ReShade shader packs come only from the listed repositories on GitHub, as
+  the source archive of one commit, over HTTPS from GitHub's hosts. Only
+  shader and texture files are installed from them.
 - ReShade comes only over HTTPS from reshade.me, with no redirects to other
   hosts. The DLL taken out of the setup must be a 64-bit Windows DLL that
   names ReShade in its version information and has the version in the setup's
