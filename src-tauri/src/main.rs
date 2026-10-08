@@ -19,7 +19,7 @@ use cp2077mm_core::sources::{self, Details, ListingPage, SourceInfo, SourceQuery
 use cp2077mm_core::linux_setup::{self, Check};
 use cp2077mm_core::downloads::{self as dl_store, DownloadGroup, Location, MoveReport};
 use cp2077mm_core::game_versions::{self, Loadout, VersionEntry};
-use cp2077mm_core::{Error, Result, desktop, file_tree, paths, secrets, sso, updates};
+use cp2077mm_core::{Error, Result, activity, desktop, file_tree, paths, secrets, sso, updates};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -287,7 +287,8 @@ async fn delete_download(app: AppHandle, download_id: i64) -> Result<()> {
         let d = db.download(download_id)?;
         match std::fs::remove_file(&d.path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
+            Err(_) => activity::record(activity::Kind::Info, format!("Forgot download {} (file was already gone)", d.path)),
+            Ok(()) => activity::record_path(activity::Kind::Delete, "Deleted download", std::path::Path::new(&d.path)),
         }
         // Every entry for this file (it may have been downloaded twice).
         db.delete_downloads_at(&d.path)?;
@@ -521,12 +522,32 @@ async fn setup_checks(app: AppHandle, game_id: i64) -> Result<Vec<Check>> {
 
 #[tauri::command]
 async fn setup_fix(app: AppHandle, game_id: i64, id: String) -> Result<String> {
-    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::apply(ctx, &id))).await
+    blocking(move || {
+        activity::record(activity::Kind::Setup, format!("Applying Linux setup fix {id}"));
+        let out = with_setup(&app, game_id, |ctx| linux_setup::apply(ctx, &id));
+        log_outcome(&out);
+        out
+    })
+    .await
+}
+
+/// The result of a setup fix or undo, for the debug terminal.
+fn log_outcome(out: &Result<String>) {
+    match out {
+        Ok(msg) => activity::record(activity::Kind::Setup, msg.clone()),
+        Err(e) => activity::record(activity::Kind::Error, e.to_string()),
+    }
 }
 
 #[tauri::command]
 async fn setup_undo(app: AppHandle, game_id: i64, id: String) -> Result<String> {
-    blocking(move || with_setup(&app, game_id, |ctx| linux_setup::undo(ctx, &id))).await
+    blocking(move || {
+        activity::record(activity::Kind::Setup, format!("Undoing Linux setup fix {id}"));
+        let out = with_setup(&app, game_id, |ctx| linux_setup::undo(ctx, &id));
+        log_outcome(&out);
+        out
+    })
+    .await
 }
 
 /// The end of one log from the Crashes & logs list, by its display name.
@@ -750,6 +771,54 @@ fn nexus_requests(after: Option<u64>) -> Vec<RequestRecord> {
 #[tauri::command]
 fn nexus_clear_requests() {
     NEXUS.clear_request_log();
+}
+
+/// What the app did on this machine after the entry with id `after`, for
+/// the debug terminal.
+#[tauri::command]
+fn activity_log(after: Option<u64>) -> Vec<activity::Entry> {
+    activity::since(after.unwrap_or(0))
+}
+
+#[tauri::command]
+fn activity_clear() {
+    activity::clear();
+    NEXUS.clear_request_log();
+}
+
+/// Save the debug terminal's text to `path`.
+#[tauri::command]
+async fn save_debug_log(path: String, text: String) -> Result<()> {
+    blocking(move || {
+        let mut path = PathBuf::from(path);
+        if path.extension().is_none() {
+            path.set_extension("log");
+        }
+        std::fs::write(&path, text)?;
+        Ok(())
+    })
+    .await
+}
+
+const DEBUG_WINDOW: &str = "debug";
+
+/// Open the debug terminal: a window of its own that streams Nexus API
+/// requests and file operations as they happen.
+#[tauri::command]
+fn open_debug_terminal(app: AppHandle) -> Result<()> {
+    if let Some(w) = app.get_webview_window(DEBUG_WINDOW) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
+        .title("CPMX2077 debug terminal")
+        .inner_size(1000.0, 620.0)
+        .min_inner_size(520.0, 300.0)
+        .build()
+        .map_err(|e| Error::Other(format!("could not open the debug terminal: {e}")))?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1352,6 +1421,10 @@ fn main() {
             nexus_mod_details,
             nexus_requests,
             nexus_clear_requests,
+            activity_log,
+            activity_clear,
+            save_debug_log,
+            open_debug_terminal,
             nexus_cache_info,
             nexus_clear_cache,
             open_web_link,

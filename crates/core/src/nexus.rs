@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::activity::{self, Kind};
 use crate::nexus_cache::{RequestLog, RequestRecord, ResponseCache, Served, loggable_endpoint, started_ms};
 use crate::{APP_NAME, APP_VERSION, Error, NEXUS_GAME_DOMAIN, Result, hash};
 
@@ -604,12 +605,19 @@ impl Client {
         let final_path = dest_dir.join(format!("{mod_id}-{file_id}-{file_name}"));
         let part_path = final_path.with_extension("part");
 
+        activity::record_path(
+            Kind::Download,
+            format!("Downloading {} from {}", info.file_name, activity::safe_url(&link.uri)),
+            &final_path,
+        );
         let mut resp = self.http.get(&link.uri).send()?;
         // Redirects must stay on Nexus' hosts too.
         if !self.allowed_download(resp.url().as_str()) {
+            activity::record(Kind::Error, format!("Download redirected to untrusted host {}; stopped", activity::safe_url(resp.url().as_str())));
             return Err(Error::Nexus(format!("download redirected to untrusted host {}", resp.url())));
         }
         if !resp.status().is_success() {
+            activity::record(Kind::Error, format!("Download failed: {}", resp.status()));
             return Err(Error::Nexus(format!("download failed: {}", resp.status())));
         }
         let expected = info.size_in_bytes.or(resp.content_length()).unwrap_or(0);
@@ -627,6 +635,7 @@ impl Client {
             if done > cap {
                 drop(out);
                 let _ = std::fs::remove_file(&part_path);
+                activity::record_path(Kind::Error, "Download larger than Nexus says; deleted", &part_path);
                 return Err(Error::Integrity("download is larger than Nexus says it should be".into()));
             }
             out.write_all(&buf[..n])?;
@@ -636,15 +645,18 @@ impl Client {
         drop(out);
         if expected > 0 && done != expected {
             let _ = std::fs::remove_file(&part_path);
+            activity::record_path(Kind::Error, format!("Size mismatch ({done} of {expected} bytes); deleted"), &part_path);
             return Err(Error::Integrity(format!("size mismatch: got {done} bytes, expected {expected}")));
         }
 
         let (sha256, md5) = hash::file_digests(&part_path)?;
+        activity::record_path(Kind::Download, format!("Received {}", activity::size(done)), &part_path);
         let verified = match self.md5_search(&md5) {
             Ok(hits) => {
                 let ok = hits.iter().any(|h| h.mod_.mod_id == mod_id && h.file_details.file_id == file_id);
                 if !ok {
                     let _ = std::fs::remove_file(&part_path);
+                    activity::record_path(Kind::Error, format!("MD5 {md5} doesn't match this Nexus file; deleted"), &part_path);
                     return Err(Error::Integrity(
                         "Nexus does not recognise this file's MD5 for the requested mod; discarded".into(),
                     ));
@@ -655,11 +667,21 @@ impl Client {
             // briefly unavailable; keep the file, flagged unverified.
             Err(Error::Nexus(msg)) if msg.starts_with("404") => {
                 let _ = std::fs::remove_file(&part_path);
+                activity::record_path(Kind::Error, format!("Nexus has no record of MD5 {md5}; deleted"), &part_path);
                 return Err(Error::Integrity("Nexus has no record of this file's MD5; discarded".into()));
             }
             Err(_) => false,
         };
+        activity::record(
+            Kind::Verify,
+            if verified {
+                format!("MD5 {md5} matches Nexus' record; SHA-256 {sha256}")
+            } else {
+                format!("Couldn't check MD5 {md5} with Nexus; kept as unverified")
+            },
+        );
         std::fs::rename(&part_path, &final_path)?;
+        activity::record_path(Kind::Move, "Saved download as", &final_path);
         Ok(Downloaded {
             path: final_path,
             file_name,

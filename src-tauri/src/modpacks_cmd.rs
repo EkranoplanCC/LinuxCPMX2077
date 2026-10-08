@@ -185,6 +185,7 @@ pub async fn export_modlist(app: AppHandle, game_id: i64, path: String) -> Resul
             path.set_extension("json");
         }
         std::fs::write(&path, serde_json::to_vec_pretty(&list)?)?;
+        cp2077mm_core::activity::record_path(cp2077mm_core::activity::Kind::Setup, "Exported the mod list to", &path);
         Ok(list.mods.len())
     })
     .await

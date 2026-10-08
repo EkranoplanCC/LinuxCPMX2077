@@ -295,7 +295,8 @@ Browse and download mods. The switch at the top right picks the source:
   than 25 requests remain so downloads still work, and nothing is sent once
   Nexus says the quota is used up until it resets.
 - **API requests** (Settings → debug mode) lists every request with timing.
-  Your API key is never shown.
+  Your API key is never shown. **Open debug terminal** there opens the
+  [debug terminal](#debug-terminal).
 - Adult-flagged mods are hidden unless you turn them on in Settings.
 
 ### GitHub
@@ -347,10 +348,54 @@ Every archive you downloaded, grouped by mod with each version under it.
   the read-only MCP server, with **Copy**.
 - **Nexus browser sign-in**: the application slug Nexus issues for browser
   sign-in.
-- **Nexus browsing**: show adult content, debug mode (API request list),
-  and **Clear saved pages**. Pages and searches are saved for a week; lists
-  count as fresh for 5 minutes and mod pages for 10.
+- **Nexus browsing**: show adult content, debug mode, **Open debug
+  terminal** and **Clear saved pages**. Ticking *Debug mode* adds the API
+  request list to Get mods, opens the [debug terminal](#debug-terminal) and
+  adds a **Debug terminal** button under the tabs in the sidebar. Pages and
+  searches are saved for a week; lists count as fresh for 5 minutes and mod
+  pages for 10.
 - **Nexus account**: **Forget API key** removes it from the keyring.
+
+### Debug terminal
+
+A terminal-style window that shows, live and oldest first, every Nexus API
+request and everything the app does on your machine. Open it with **Open
+debug terminal** in Settings or in Get mods' *API requests* list, or with
+**Debug terminal** in the sidebar while debug mode is on. It works the same
+on Linux and Windows and needs no terminal program.
+
+Each line has a time, a tag and what happened, with the file or folder in
+cyan:
+
+| Tag | What it means |
+| --- | --- |
+| `NEXUS` | A Nexus API request: endpoint, status, time taken, requests left, or *(cached)* / *(saved copy)* / *(held back)* when it wasn't sent |
+| `API` | A GitHub API request, with status and requests left |
+| `DOWNLOAD` | A file being fetched (host shown without its signed link), and its size when done |
+| `VERIFY` | The download's MD5/SHA-256 checked against Nexus or GitHub, or an archive hashed before install |
+| `EXTRACT` | An archive being unpacked into staging, and how many files came out |
+| `COPY` | A mod file written into the game folder |
+| `BACKUP` | An original game file (or a Proton prefix file) saved before it is replaced |
+| `RESTORE` | A file put back: the original game file, or another mod's copy |
+| `MOVE` | A file moved: a finished download, sorting downloads into folders, a Linux setup fix moving files |
+| `DELETE` | A file or folder removed: uninstalled mod files, a deleted download, a stored copy |
+| `SETUP` | Linux setup fixes and undos (including the protontricks command run), settings files rewritten, mod list exports |
+| `INFO` | Summaries: mod installed, enabled, disabled or uninstalled |
+| `ERROR` | Something failed or a download was discarded (always shown) |
+
+- The checkboxes **API**, **Downloads**, **Extractions**, **File changes**
+  and **Setup & summaries** hide or show those lines; **Filter text…**
+  shows only lines containing what you type.
+- **Follow** keeps the newest line in view. **Pause** stops new lines
+  (**Resume** picks up everything that happened meanwhile).
+- **Copy** copies the shown lines; **Save…** writes them to a `.log` file
+  to attach to a bug report.
+- **Clear** empties the terminal and the API request list.
+
+The app keeps the most recent 5000 operations in memory while it runs, so
+the terminal also shows what happened before you opened it. Nothing is
+written to disk unless you click **Save…**. Your API key and the signed
+part of download links are never shown.
 
 ## Download safety
 
@@ -439,6 +484,11 @@ step marked **Start here** under *Last start, step by step*, then *Known
 problems*. Mods named in errors from the last session are listed; turn them
 off with the **On** switch to test, start the game again, then **Check
 again**. The compatibility list may also name a clash.
+
+**Something went wrong and you want to see exactly what happened.** Tick
+*Debug mode* in Settings and use the [debug terminal](#debug-terminal): it
+lists each request, download, checksum check, extraction and file the app
+touched. **Save…** gives you a log to attach to a bug report.
 
 **Browsing stopped working.** Check *Requests left* on the Get mods tab;
 Nexus limits API requests per hour and per day. Saved pages still open.

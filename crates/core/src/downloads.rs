@@ -116,6 +116,12 @@ pub fn plan_moves(rows: &[DownloadRow], root: &Path) -> Vec<PlannedMove> {
 /// different file, a free name like `file (2).zip` is used. Returns where
 /// the file ended up.
 pub fn move_file(from: &Path, to: &Path) -> Result<PathBuf> {
+    let moved = move_file_inner(from, to)?;
+    crate::activity::record_path(crate::activity::Kind::Move, format!("Moved {} to", from.display()), &moved);
+    Ok(moved)
+}
+
+fn move_file_inner(from: &Path, to: &Path) -> Result<PathBuf> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }

@@ -46,6 +46,7 @@ select { width: 100%; margin-bottom: 8px; }
 nav { display: flex; flex-direction: column; gap: 4px; margin-top: 20px; }
 nav button { text-align: left; background: transparent; border-color: transparent; }
 nav button.active { border-left: 3px solid var(--yellow); background: var(--panel-2); }
+#debug-terminal-side { width: 100%; margin-top: 12px; text-align: left; font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace; color: var(--green); }
 .tab { display: none; }
 .tab.active { display: block; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }

@@ -145,6 +145,9 @@ problems between your mods. Its
 
 If the game crashes or a framework does not load, see
 [Troubleshooting](user-guide.md#troubleshooting).
+To watch what the app does step by step (API requests, downloads,
+extractions, files moved), tick *Debug mode* in **Settings**: the
+[debug terminal](user-guide.md#debug-terminal) opens.
 
 ## Next steps
 

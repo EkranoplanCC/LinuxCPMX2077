@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CPMX2077 debug terminal</title>
+  <link rel="stylesheet" href="debug.css">
+</head>
+<body>
+  <header id="bar">
+    <span class="prompt">cpmx2077<span class="dim">:~$</span> debug</span>
+    <label><input type="checkbox" data-group="api" checked> API</label>
+    <label><input type="checkbox" data-group="download" checked> Downloads</label>
+    <label><input type="checkbox" data-group="extract" checked> Extractions</label>
+    <label><input type="checkbox" data-group="files" checked> File changes</label>
+    <label><input type="checkbox" data-group="setup" checked> Setup &amp; summaries</label>
+    <input id="filter" type="search" placeholder="Filter text…" spellcheck="false">
+    <span class="spacer"></span>
+    <label title="Keep the newest line in view"><input type="checkbox" id="follow" checked> Follow</label>
+    <button id="pause">Pause</button>
+    <button id="copy">Copy</button>
+    <button id="save">Save…</button>
+    <button id="clear">Clear</button>
+  </header>
+  <div id="out" role="log" aria-live="off"></div>
+  <footer id="status"></footer>
+  <script src="debug.js"></script>
+</body>
+</html>

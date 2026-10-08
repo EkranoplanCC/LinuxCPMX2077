@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{Details, InstalledRef, Listing, ListingPage, ModSource, Progress, SourceFile, SourceInfo, SourceQuery, UpdateOffer};
+use crate::activity::{self, Kind};
 use crate::nexus::{parse_time, safe_file_name};
 use crate::{APP_NAME, APP_VERSION, Error, Result, hash};
 
@@ -359,8 +360,10 @@ impl Client {
         if let Some((at, v)) = self.cache.lock().unwrap().get(&key)
             && at.elapsed() < CACHE_TTL
         {
+            activity::record(Kind::Api, format!("GitHub GET {path} (cached)"));
             return Ok(v.clone());
         }
+        let started = Instant::now();
         let resp = self
             .http
             .get(format!("{}{}", self.base, path))
@@ -373,6 +376,16 @@ impl Client {
         let remaining = header_i64(&resp, "x-ratelimit-remaining");
         let reset = header_i64(&resp, "x-ratelimit-reset");
         let text = resp.text()?;
+        activity::record(
+            Kind::Api,
+            format!(
+                "GitHub GET {path} → {} in {} ms ({}{})",
+                status.as_u16(),
+                started.elapsed().as_millis(),
+                activity::size(text.len() as u64),
+                remaining.map(|r| format!(", {r} requests left this hour")).unwrap_or_default(),
+            ),
+        );
         if (status.as_u16() == 403 || status.as_u16() == 429) && remaining == Some(0) {
             let wait = reset.map(|r| (r - crate::nexus::now_unix()).max(0) / 60 + 1).unwrap_or(60);
             return Err(Error::Other(format!(
@@ -438,8 +451,14 @@ impl Client {
         let final_path = dest_dir.join(format!("gh-{owner}-{repo}-{}-{file_name}", asset.id));
         let part_path = final_path.with_extension("part");
 
+        activity::record_path(
+            Kind::Download,
+            format!("Downloading {} from {}", asset.name, activity::safe_url(&asset.download_url)),
+            &final_path,
+        );
         let mut resp = self.http.get(url).header("Accept", "application/octet-stream").send()?;
         if !resp.status().is_success() {
+            activity::record(Kind::Error, format!("Download failed: {}", resp.status()));
             return Err(Error::Other(format!("GitHub download failed: {}", resp.status())));
         }
         let expected = asset.size;
@@ -455,6 +474,7 @@ impl Client {
             if done > expected {
                 drop(out);
                 let _ = std::fs::remove_file(&part_path);
+                activity::record_path(Kind::Error, "Download larger than GitHub says; deleted", &part_path);
                 return Err(Error::Integrity("download is larger than GitHub says it should be".into()));
             }
             out.write_all(&buf[..n])?;
@@ -464,6 +484,7 @@ impl Client {
         drop(out);
         if done != expected {
             let _ = std::fs::remove_file(&part_path);
+            activity::record_path(Kind::Error, format!("Size mismatch ({done} of {expected} bytes); deleted"), &part_path);
             return Err(Error::Integrity(format!("size mismatch: got {done} bytes, expected {expected}")));
         }
         let (sha256, md5) = hash::file_digests(&part_path)?;
@@ -471,11 +492,21 @@ impl Client {
             Some(want) if want.eq_ignore_ascii_case(&sha256) => true,
             Some(_) => {
                 let _ = std::fs::remove_file(&part_path);
+                activity::record_path(Kind::Error, format!("SHA-256 {sha256} doesn't match GitHub's; deleted"), &part_path);
                 return Err(Error::Integrity("the file doesn't match the SHA-256 GitHub published for it; discarded".into()));
             }
             None => false,
         };
+        activity::record(
+            Kind::Verify,
+            if verified {
+                format!("SHA-256 {sha256} matches GitHub's ({})", activity::size(done))
+            } else {
+                format!("GitHub publishes no checksum for this file; SHA-256 {sha256} ({})", activity::size(done))
+            },
+        );
         std::fs::rename(&part_path, &final_path)?;
+        activity::record_path(Kind::Move, "Saved download as", &final_path);
         Ok(Downloaded { path: final_path, file_name, sha256, md5, size: done, verified })
     }
 }

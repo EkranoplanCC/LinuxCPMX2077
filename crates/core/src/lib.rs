@@ -2,6 +2,7 @@
 //! safe archive installation and the Nexus Mods API client. The Tauri app is a
 //! thin shell over this crate so everything here is testable without a GUI.
 
+pub mod activity;
 pub mod analysis;
 pub mod archive;
 pub mod crash;

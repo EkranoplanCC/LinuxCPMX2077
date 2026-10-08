@@ -1207,6 +1207,7 @@ function setDebugMode(on) {
   savePref("nexusDebug", on);
   $("#nexus-debug-mode").checked = on;
   $("#nexus-debug").classList.toggle("hidden", !on);
+  $("#debug-terminal-side").classList.toggle("hidden", !on);
   clearInterval(debugTimer);
   debugTimer = null;
   if (on) {
@@ -1218,7 +1219,14 @@ function setDebugMode(on) {
   }
 }
 
-$("#nexus-debug-mode").addEventListener("change", (e) => setDebugMode(e.target.checked));
+$("#nexus-debug-mode").addEventListener("change", (e) => {
+  setDebugMode(e.target.checked);
+  if (e.target.checked) openDebugTerminal();
+});
+function openDebugTerminal() {
+  invoke("open_debug_terminal").catch((e) => toast(String(e), true));
+}
+for (const b of document.querySelectorAll("button.debug-open")) b.addEventListener("click", openDebugTerminal);
 $("#nexus-debug-clear").addEventListener("click", (e) => busy(e.target, async () => {
   await invoke("nexus_clear_requests");
   debugRequests = [];

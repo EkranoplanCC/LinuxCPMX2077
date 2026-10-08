@@ -1,0 +1,56 @@
+:root {
+  --bg: #07070c;
+  --bar: #11111a;
+  --text: #d6d6e0;
+  --dim: #6c6c82;
+  --yellow: #fcee0a;
+  --cyan: #00f0ff;
+  --red: #ff4d5e;
+  --green: #3ddc84;
+  --magenta: #ff5fd2;
+  --orange: #ffa94d;
+  --border: #23233a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  font: 12.5px/1.5 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
+}
+#bar {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
+  padding: 8px 12px; background: var(--bar); border-bottom: 1px solid var(--border);
+}
+.prompt { color: var(--green); font-weight: 600; }
+.dim { color: var(--dim); }
+.spacer { flex: 1; }
+label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; color: var(--dim); }
+label:has(input:checked) { color: var(--text); }
+input[type=search] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 6px; font: inherit; width: 180px;
+}
+button {
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 9px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--cyan); color: var(--cyan); }
+button.on { border-color: var(--yellow); color: var(--yellow); }
+#out { flex: 1; overflow: auto; padding: 6px 12px 12px; white-space: pre-wrap; word-break: break-all; }
+.line { display: grid; grid-template-columns: 96px 76px 1fr; gap: 10px; }
+.line:hover { background: #12121c; }
+.t { color: var(--dim); }
+.tag { font-weight: 600; }
+.path { color: var(--cyan); }
+.extra { color: var(--dim); }
+.k-nexus .tag, .k-api .tag { color: var(--magenta); }
+.k-download .tag, .k-verify .tag { color: var(--green); }
+.k-extract .tag { color: var(--yellow); }
+.k-copy .tag, .k-move .tag, .k-backup .tag, .k-restore .tag { color: var(--cyan); }
+.k-delete .tag { color: var(--orange); }
+.k-setup .tag, .k-info .tag { color: var(--text); }
+.k-error .tag, .line.failed .tag, .line.failed .msg { color: var(--red); }
+#status { padding: 4px 12px; background: var(--bar); border-top: 1px solid var(--border); color: var(--dim); }
+.empty { color: var(--dim); padding: 12px 0; }
