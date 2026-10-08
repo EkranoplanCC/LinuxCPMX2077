@@ -91,6 +91,70 @@ pub fn game_has(game_dir: &std::path::Path) -> GameHas {
     }
 }
 
+fn by_nexus(mods: &[ModRow]) -> HashMap<i64, &ModRow> {
+    mods.iter().filter_map(|m| Some((m.nexus_mod_id?, m))).collect()
+}
+
+/// The installed mod that is framework `key`, from Nexus or GitHub.
+fn framework_mod<'a>(mods: &'a [ModRow], by_nexus: &HashMap<i64, &'a ModRow>, key: &str) -> Option<&'a ModRow> {
+    let (_, _, nexus, repo) = framework(key)?;
+    nexus
+        .and_then(|n| by_nexus.get(&n).copied())
+        .or_else(|| mods.iter().find(|m| m.source_ref.as_deref().zip(*repo).is_some_and(|(r, f)| r.eq_ignore_ascii_case(f))))
+}
+
+fn state_of(m: Option<&ModRow>, present: bool) -> (DepState, Option<i64>) {
+    match m {
+        Some(m) if m.enabled() => (DepState::Installed, Some(m.id)),
+        Some(m) if present => (DepState::Present, Some(m.id)),
+        Some(m) => (DepState::Disabled, Some(m.id)),
+        None if present => (DepState::Present, None),
+        None => (DepState::Missing, None),
+    }
+}
+
+/// Whether the user has Nexus mod `id`: its state, the installed mod that
+/// provides it, and its framework key when it is a core framework (which
+/// also counts when installed from GitHub or by hand).
+fn nexus_state(
+    mods: &[ModRow],
+    by_nexus: &HashMap<i64, &ModRow>,
+    has: &GameHas,
+    id: i64,
+) -> (DepState, Option<i64>, Option<&'static str>) {
+    match framework_for_nexus(id) {
+        Some(key) => {
+            let (s, m) = state_of(framework_mod(mods, by_nexus, key), has.frameworks.contains(key));
+            (s, m, Some(key))
+        }
+        None => {
+            let (s, m) = state_of(by_nexus.get(&id).copied(), false);
+            (s, m, None)
+        }
+    }
+}
+
+/// Whether the user has a requirement listed on a Nexus mod page.
+#[derive(Debug, Clone, Serialize)]
+pub struct RequirementState {
+    pub nexus_mod_id: i64,
+    pub state: DepState,
+    pub installed_id: Option<i64>,
+    pub framework: Option<String>,
+}
+
+/// The state of each Nexus mod in `ids` against what is installed, for the
+/// requirements on a mod page (installed or not).
+pub fn requirement_states(mods: &[ModRow], has: &GameHas, ids: &[i64]) -> Vec<RequirementState> {
+    let by_nexus = by_nexus(mods);
+    ids.iter()
+        .map(|&id| {
+            let (state, installed_id, fw) = nexus_state(mods, &by_nexus, has, id);
+            RequirementState { nexus_mod_id: id, state, installed_id, framework: fw.map(str::to_string) }
+        })
+        .collect()
+}
+
 /// Every installed mod's dependencies. `requirements` maps a Nexus mod id
 /// to what its page lists; `detected` maps an installed mod's id to the
 /// framework keys its files use.
@@ -100,22 +164,8 @@ pub fn resolve(
     detected: &HashMap<i64, BTreeSet<String>>,
     has: &GameHas,
 ) -> Vec<ModDependencies> {
-    let by_nexus: HashMap<i64, &ModRow> = mods.iter().filter_map(|m| Some((m.nexus_mod_id?, m))).collect();
-    // The installed mod that is framework `key`, from Nexus or GitHub.
-    let framework_mod = |key: &str| -> Option<&ModRow> {
-        let (_, _, nexus, repo) = framework(key)?;
-        nexus
-            .and_then(|n| by_nexus.get(&n).copied())
-            .or_else(|| mods.iter().find(|m| m.source_ref.as_deref().zip(*repo).is_some_and(|(r, f)| r.eq_ignore_ascii_case(f))))
-    };
-    let state_of = |m: Option<&ModRow>, present: bool| match m {
-        Some(m) if m.enabled() => (DepState::Installed, Some(m.id)),
-        Some(m) if present => (DepState::Present, Some(m.id)),
-        Some(m) => (DepState::Disabled, Some(m.id)),
-        None if present => (DepState::Present, None),
-        None => (DepState::Missing, None),
-    };
-
+    let by_nexus = by_nexus(mods);
+    let fw_mod = |key: &str| framework_mod(mods, &by_nexus, key);
     let mut out: Vec<ModDependencies> = mods
         .iter()
         .map(|m| {
@@ -137,11 +187,9 @@ pub fn resolve(
                     });
                     continue;
                 }
-                let fw = r.mod_id.and_then(framework_for_nexus);
-                let (state, installed_id) = match (r.mod_id, fw) {
-                    (_, Some(key)) => state_of(framework_mod(key), has.frameworks.contains(key)),
-                    (Some(id), None) => state_of(by_nexus.get(&id).copied(), false),
-                    (None, None) => (DepState::Unknown, None),
+                let (state, installed_id, fw) = match r.mod_id {
+                    Some(id) => nexus_state(mods, &by_nexus, has, id),
+                    None => (DepState::Unknown, None, None),
                 };
                 deps.push(Dependency {
                     name: fw.and_then(framework).map(|f| f.1.to_string()).unwrap_or_else(|| r.name.clone()),
@@ -164,14 +212,14 @@ pub fn resolve(
             for key in keys {
                 let Some(&(key, name, nexus, _)) = framework(&key) else { continue };
                 // A framework doesn't depend on itself.
-                if framework_mod(key).is_some_and(|f| f.id == m.id) || nexus.is_some_and(|n| m.nexus_mod_id == Some(n)) {
+                if fw_mod(key).is_some_and(|f| f.id == m.id) || nexus.is_some_and(|n| m.nexus_mod_id == Some(n)) {
                     continue;
                 }
                 if let Some(d) = deps.iter_mut().find(|d| d.framework.as_deref() == Some(key)) {
                     d.detected = true;
                     continue;
                 }
-                let (state, installed_id) = state_of(framework_mod(key), has.frameworks.contains(key));
+                let (state, installed_id) = state_of(fw_mod(key), has.frameworks.contains(key));
                 deps.push(Dependency {
                     name: name.to_string(),
                     state,
@@ -338,6 +386,27 @@ mod tests {
         assert_eq!(r[2].required_by, [1]);
         let hand: Vec<(&str, DepState)> = r[3].deps.iter().map(|d| (d.name.as_str(), d.state)).collect();
         assert_eq!(hand, [("Cyber Engine Tweaks", DepState::Missing), ("REDmod", DepState::Present)]);
+    }
+
+    #[test]
+    fn states_of_page_requirements() {
+        let mods = vec![
+            row(1, "AMM", Some(790), None, false),
+            row(2, "ArchiveXL", None, Some("psiberx/cp2077-archive-xl"), true),
+            row(3, "Some Lib", Some(9000), None, true),
+        ];
+        let has = GameHas { frameworks: BTreeSet::from(["red4ext".to_string()]), phantom_liberty: false };
+        let s = requirement_states(&mods, &has, &[790, 4198, 2380, 9000, 1234, 107]);
+        let got: Vec<(i64, DepState, Option<i64>, Option<&str>)> =
+            s.iter().map(|r| (r.nexus_mod_id, r.state, r.installed_id, r.framework.as_deref())).collect();
+        assert_eq!(got, [
+            (790, DepState::Disabled, Some(1), None),
+            (4198, DepState::Installed, Some(2), Some("archivexl")),
+            (2380, DepState::Present, None, Some("red4ext")),
+            (9000, DepState::Installed, Some(3), None),
+            (1234, DepState::Missing, None, None),
+            (107, DepState::Missing, None, Some("cet")),
+        ]);
     }
 
     #[test]

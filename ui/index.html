@@ -64,6 +64,7 @@
         <label class="check small" title="List what each mod needs under it: from its Nexus page and from the frameworks its files use">
           <input type="checkbox" id="show-deps"> Show dependencies</label>
         <span id="deps-note" class="muted small"></span>
+        <button id="deps-get-missing" class="hidden" title="Queue every missing requirement: core frameworks from GitHub, the rest from Nexus">Get missing</button>
         <span id="updates-note" class="muted small"></span>
       </div>
       <table>
@@ -71,7 +72,7 @@
           <th title="Turn a mod off without uninstalling it">On</th>
           <th class="sortable" data-sort="name">Name</th>
           <th class="sortable" data-sort="category">Category</th>
-          <th class="sortable" data-sort="version">Version</th>
+          <th class="sortable" data-sort="version">Mod version</th>
           <th class="sortable" data-sort="source">Source</th>
           <th>Files</th><th>Installed on game</th><th></th>
         </tr></thead>

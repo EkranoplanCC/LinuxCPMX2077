@@ -107,7 +107,10 @@ Screenshots show sample data, with file locations blurred.
   needs indented under it, from its Nexus page and from the frameworks its
   files use (redscript for `.reds`, ArchiveXL for `.xl`, …), marked
   installed, turned off, already in the game folder or missing, with a button
-  to get what's missing, plus which mods need it.
+  to get what's missing (or "Get missing" for all of them), plus which mods
+  need it. A mod's page in Get mods marks its requirements the same way.
+- **Mod page** button in Installed mods opens a mod's Nexus or GitHub page
+  in Get mods.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed
