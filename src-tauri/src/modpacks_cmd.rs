@@ -260,3 +260,23 @@ pub async fn mod_dependencies(app: AppHandle, game_id: i64, refresh: bool) -> Re
     })
     .await
 }
+
+/// Whether the user has each Nexus mod a mod page lists as a requirement.
+#[tauri::command]
+pub async fn requirement_states(app: AppHandle, game_id: i64, nexus_ids: Vec<i64>) -> Result<RequirementStates> {
+    blocking(move || {
+        let (mods, game_dir) = with_db(&app, |db| Ok((db.mods(game_id)?, PathBuf::from(db.game(game_id)?.path))))?;
+        let has = dependencies::game_has(&game_dir);
+        Ok(RequirementStates {
+            mods: dependencies::requirement_states(&mods, &has, &nexus_ids),
+            phantom_liberty: has.phantom_liberty,
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct RequirementStates {
+    mods: Vec<dependencies::RequirementState>,
+    phantom_liberty: bool,
+}

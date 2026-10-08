@@ -34,6 +34,9 @@ pub struct ModCard {
     pub name: String,
     pub summary: Option<String>,
     pub author: Option<String>,
+    /// The Nexus member who uploaded it (whose mod list "by …" opens).
+    pub uploader: Option<String>,
+    pub uploader_id: Option<i64>,
     pub version: Option<String>,
     /// Only ever a `https://staticdelivery.nexusmods.com/` URL.
     pub picture_url: Option<String>,
@@ -91,6 +94,9 @@ pub struct Search {
     /// Only mods in this Nexus category (by name, as `categories()` lists it).
     #[serde(default)]
     pub category: Option<String>,
+    /// Only mods uploaded by this Nexus member.
+    #[serde(default)]
+    pub uploader_id: Option<i64>,
     /// Ask Nexus even if a recent copy is cached.
     #[serde(default)]
     pub refresh: bool,
@@ -538,6 +544,8 @@ fn card_from_graphql(n: &Value) -> Option<ModCard> {
         name: clean_line(s("name"), 300)?,
         summary: clean_line(s("summary"), 1000),
         author: clean_line(s("author").or_else(|| n.pointer("/uploader/name").and_then(Value::as_str)), 200),
+        uploader: clean_line(n.pointer("/uploader/name").and_then(Value::as_str), 200),
+        uploader_id: n.pointer("/uploader/memberId").and_then(as_id),
         version: clean_line(s("version"), 100),
         picture_url: safe_image(s("thumbnailUrl")).or_else(|| safe_image(s("pictureUrl"))),
         endorsements: i("endorsements"),
@@ -565,10 +573,56 @@ const MODS_QUERY: &str = "query BrowseMods($filter: ModsFilter, $sort: [ModsSort
     nodes {
       modId name summary version author pictureUrl thumbnailUrl
       endorsements downloads createdAt updatedAt adultContent
-      uploader { name }
+      uploader { name memberId }
     }
   }
 }";
+
+const AUTHOR_QUERY: &str = "query Author($id: Int!) {
+  user(id: $id) { name memberId modCount uniqueModDownloads joined recognizedAuthor }
+}";
+
+/// A Nexus member, for the top of their mod list.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Author {
+    pub member_id: i64,
+    pub name: String,
+    /// Mods they've uploaded, on every game.
+    pub mod_count: Option<i64>,
+    pub unique_downloads: Option<i64>,
+    pub joined: Option<i64>,
+    /// Nexus' "Recognised author" mark.
+    pub recognized: bool,
+}
+
+fn author_from_graphql(member_id: i64, data: &Value) -> Option<Author> {
+    let u = data.get("user").filter(|u| !u.is_null())?;
+    Some(Author {
+        member_id,
+        name: clean_line(u.get("name").and_then(Value::as_str), 200)?,
+        mod_count: u.get("modCount").and_then(Value::as_i64),
+        unique_downloads: u.get("uniqueModDownloads").and_then(Value::as_i64),
+        joined: u.get("joined").and_then(Value::as_str).and_then(parse_time),
+        recognized: u.get("recognizedAuthor").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+/// Up to `n` files to offer straight from a mod's card: its main files,
+/// newest first (the primary one first when Nexus marks one). Without main
+/// files, the newest optional or update files stand in.
+pub fn quick_files(files: &[FileInfo], n: usize) -> Vec<FileInfo> {
+    let newest_in = |cat: &str| {
+        let mut v: Vec<&FileInfo> = files.iter().filter(|f| f.category_name.as_deref() == Some(cat)).collect();
+        v.sort_by_key(|f| (std::cmp::Reverse(f.is_primary), std::cmp::Reverse(f.uploaded_timestamp.unwrap_or(0))));
+        v
+    };
+    let mut picked = newest_in("MAIN");
+    if picked.is_empty() {
+        picked = newest_in("OPTIONAL");
+        picked.extend(newest_in("UPDATE"));
+    }
+    picked.into_iter().take(n).cloned().collect()
+}
 
 /// Search text as sent to Nexus: no control characters, bounded length.
 pub fn clean_query(s: &str) -> String {
@@ -592,6 +646,9 @@ pub fn graphql_variables(q: &Search, stemmed: bool) -> Value {
     }
     if let Some(cat) = q.category.as_deref().map(clean_query).filter(|c| !c.is_empty()) {
         filter["categoryName"] = json!([{ "value": cat, "op": "EQUALS" }]);
+    }
+    if let Some(id) = q.uploader_id.filter(|id| *id > 0) {
+        filter["uploaderId"] = json!([{ "value": id.to_string(), "op": "EQUALS" }]);
     }
     match q.sort {
         Sort::Updated => filter["hasUpdated"] = json!([{ "value": true }]),
@@ -789,6 +846,20 @@ impl Client {
             fetched_at: got.fetched_at,
             saved_copy: got.saved,
         })
+    }
+
+    /// A Nexus member's name and stats (cached like a list).
+    pub fn author(&self, member_id: i64) -> Result<Author> {
+        let id = i32::try_from(member_id).ok().filter(|id| *id > 0).ok_or_else(|| Error::Nexus(format!("`{member_id}` is not a Nexus member id")))?;
+        let data = self.graphql(AUTHOR_QUERY, json!({ "id": id }), false)?.value;
+        author_from_graphql(member_id, &data).ok_or_else(|| Error::Nexus(format!("Nexus has no member {member_id}")))
+    }
+
+    /// Files to offer on a mod's card (see [`quick_files`]); shares the
+    /// mod page's cached file list.
+    pub fn quick_files(&self, mod_id: i64, n: usize) -> Result<Vec<FileInfo>> {
+        let got = self.cached_v1(&format!("/games/{NEXUS_GAME_DOMAIN}/mods/{mod_id}/files.json"), DETAIL_TTL, false, true)?;
+        Ok(quick_files(&parse_files(got.value)?.0, n))
     }
 
     /// The mods of a collection revision (the latest when `revision` is `None`).
@@ -1231,6 +1302,57 @@ mod tests {
         assert_eq!(v["count"], MAX_PAGE);
         assert_eq!(v["offset"], 20);
         assert!(body["query"].as_str().unwrap().contains("mods(filter: $filter"));
+    }
+
+    #[test]
+    fn lists_one_uploaders_mods_and_their_profile() {
+        let v = graphql_variables(&Search { uploader_id: Some(108159138), ..Default::default() }, true);
+        assert_eq!(v["filter"]["uploaderId"][0]["value"], "108159138");
+        assert_eq!(v["filter"]["uploaderId"][0]["op"], "EQUALS");
+        assert!(graphql_variables(&Search::default(), true)["filter"].get("uploaderId").is_none());
+
+        let (addr, seen) = serve(vec![
+            ("graphql", 200, vec![], fixture("search.json")),
+            ("graphql", 200, vec![], r#"{"data":{"user":{"name":"psiberx","memberId":108159138,"modCount":9,"uniqueModDownloads":16176038,"joined":"2021-01-26T12:56:02Z","recognizedAuthor":true}}}"#.into()),
+            ("graphql", 200, vec![], r#"{"data":{"user":null}}"#.into()),
+        ]);
+        let c = client(&addr);
+        let page = c.search(&Search { text: "x".into(), ..Default::default() }, true).unwrap();
+        assert_eq!((page.mods[0].uploader.as_deref(), page.mods[0].uploader_id), (Some("pMarK"), Some(4242)));
+        assert_eq!(page.mods[1].uploader_id, None);
+        let a = c.author(108159138).unwrap();
+        assert_eq!((a.name.as_str(), a.mod_count, a.recognized), ("psiberx", Some(9), true));
+        assert_eq!(a.joined, parse_time("2021-01-26T12:56:02Z"));
+        let body: Value = serde_json::from_str(&seen.lock().unwrap()[1].body).unwrap();
+        assert_eq!(body["variables"]["id"], 108159138);
+        assert!(c.author(5).is_err(), "no such member");
+        assert!(c.author(1 << 40).is_err(), "Nexus ids fit in 32 bits");
+    }
+
+    #[test]
+    fn quick_files_are_the_newest_main_files() {
+        let f = |id: i64, cat: &str, at: i64, primary: bool| FileInfo {
+            file_id: id,
+            name: None,
+            version: None,
+            category_name: Some(cat.into()),
+            is_primary: primary,
+            file_name: format!("{id}.zip"),
+            size_in_bytes: None,
+            uploaded_timestamp: Some(at),
+            mod_version: None,
+            external_virus_scan_url: None,
+            description: None,
+        };
+        let ids = |v: Vec<FileInfo>| v.into_iter().map(|f| f.file_id).collect::<Vec<_>>();
+        let files = vec![f(1, "MAIN", 10, false), f(2, "MAIN", 30, false), f(3, "OPTIONAL", 40, false), f(4, "MAIN", 20, false), f(5, "OLD_VERSION", 50, false)];
+        assert_eq!(ids(quick_files(&files, 2)), [2, 4]);
+        let mut primary = files.clone();
+        primary[0].is_primary = true;
+        assert_eq!(ids(quick_files(&primary, 2)), [1, 2], "the primary file comes first");
+        let no_main = vec![f(3, "OPTIONAL", 40, false), f(6, "UPDATE", 60, false), f(5, "ARCHIVED", 70, false)];
+        assert_eq!(ids(quick_files(&no_main, 2)), [3, 6]);
+        assert!(quick_files(&[f(5, "OLD_VERSION", 1, false)], 2).is_empty());
     }
 
     #[test]

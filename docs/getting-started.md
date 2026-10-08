@@ -112,6 +112,11 @@ yourself.
      download**. The app catches the download link, fetches the file, checks
      it with Nexus, and installs it.
 
+You stay on **Get mods** while it downloads; the progress bar is at the top of
+the page. For a quick install from the list, click the **⬇** button on a mod's
+picture and pick one of its main files. Click an author's name to see all
+their mods.
+
 If the mod ships a FOMOD installer, a wizard opens and asks which options you
 want, the same way it would on Windows.
 
