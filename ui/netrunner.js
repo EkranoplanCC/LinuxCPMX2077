@@ -12,6 +12,9 @@
   let byKey = new Map();
   let modNames = new Map();
   let gameId = null;
+  // Folders seen in the "by mod" view. Each opens fully the first time it
+  // appears; after that, whatever the user collapsed stays collapsed.
+  const seenInModView = new Set();
 
   // Keys are unique per node: the folder path, prefixed by the mod in the
   // "by mod" view where the same folder appears under several mods.
@@ -20,6 +23,10 @@
     node.key = node.mod_id != null ? base : (base ? `${base}:${node.path}` : node.path);
     node.parent = parent;
     byKey.set(node.key, node);
+    if (group === "mod" && !seenInModView.has(node.key)) {
+      seenInModView.add(node.key);
+      expanded.mod.add(node.key);
+    }
     for (const c of node.folders) index(c, node, base);
   }
 
