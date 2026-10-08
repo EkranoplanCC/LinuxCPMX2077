@@ -103,7 +103,7 @@ The list of mods CPMX2077 installed in the selected game.
 | Column / control | What it does |
 |---|---|
 | **On** switch | Turns a mod off without uninstalling it: its files leave the game, whatever they replaced comes back, and a checked copy is kept. Turning it on puts them back without a download. Files the mod changed after install (its own settings) are kept. Disabled mods are left out of compatibility and crash checks. |
-| **Name / Category / Mod version / Source** | Click a heading to sort. **Mod version** is the mod's own version (the game version is under **Installed on game**). The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
+| **Name / Tags & category / Mod version / Source** | Click a heading to sort (*Tags & category* sorts by a mod's first tag, then its Nexus category). **Mod version** is the mod's own version (the game version is under **Installed on game**). A mod's tags show as chips: **+ Tag** (or **+** once it has one) adds one of your tags (see [Modpacks](#modpacks)), **×** on a chip takes it off. A mod can have any number of tags. The Nexus category is shown under them. |
 | **Installed on game** | The game version when the mod went in. *game updated since* means the game has been patched since, so check the mod still works. |
 | **Update to …** | Appears when a newer file is available. *Switch to stable …* appears when you run a pre-release and a stable release is out. |
 | **Mod page** | Opens the mod's page in **Get mods** (description, files, requirements), for mods from Nexus or GitHub. From there **Open on nexusmods.com** opens the website. Not shown for mods installed from an archive on disk. |
@@ -122,7 +122,8 @@ Above the list:
   one to list the mods installed on it. For an older version, a summary shows
   what you had when the game updated and what changed since (updated, turned
   off, removed, added).
-- **Category filter**: your own categories and Nexus categories.
+- **Tag and category filter**: one of your tags (or *No tags*), or a Nexus
+  category.
 - **Show dependencies** lists what each mod needs, indented under it: its
   Nexus page's requirements and the frameworks its files use (redscript for
   `.reds`, ArchiveXL for `.xl`, …). Each is marked installed, turned off,
@@ -138,9 +139,45 @@ Above the list:
   for your turned-on mods, and **Get missing (N)** queues all of it at once:
   core frameworks from GitHub, everything else from Nexus.
 
+### Ultra+ recommendations
+
+When [Ultra+](https://www.nexusmods.com/cyberpunk2077/mods/10490) (the path
+tracing mod) is installed, through CPMX2077 or by hand or with Ultra+
+Manager, an **Ultra+ recommendations** card appears above the list. It shows
+what the Ultra+ team's
+[Cyberpunk page](https://theultraplace.com/games/cyberpunk2077/) lists, and
+where each mod stands in your game. The heading line sums it up (conflicting
+mods installed, how many recommended mods you have, and a missing
+requirement); click it to fold the card away.
+
+- **Conflicts with Ultra+ path tracing**: mods the Ultra+ team says don't
+  work with its path tracing. Ones you have are marked *installed* in red,
+  with **Turn off**. Also listed: RedHotTools, which Ultra+ itself checks for
+  at start-up because it turns Ultra+'s V5 lighting off.
+- **Recommended for path tracing and ray tracing**: mods the Ultra+ team
+  suggests alongside it, with notes such as The Nullifier's "set 'Fix Broken
+  PT Lights' to disabled". **Get** adds a missing one to the download queue,
+  **Turn on** switches one back on, and **Get all missing** queues them all.
+- **Also recommended for ray tracing only**: Ultra+ doesn't fix ray traced
+  lighting, so the Ultra+ team suggests these when you play with ray tracing.
+  Several of them are in the conflicts list too, since they don't belong in a
+  path tracing setup.
+- **Required** appears only when Cyber Engine Tweaks or RED4ext is missing.
+- **Refresh from Ultra+ page** reads the lists again from the Ultra+ team's
+  page (its public source on GitLab) and keeps them. Until you do, the card
+  uses a copy built into the app; the line under the heading says which.
+- **Open the Ultra+ page** opens the page in your browser. **Open Project
+  Ultrapunk modpack** opens the collection the page suggests instead of
+  adding mods one by one.
+
+*not installed* means CPMX2077 didn't install it; a mod you copied in by hand
+can't be told apart by name. Installed conflicts and the setting notes also
+show under **Known problems** in Netrunner's
+[Crashes & logs](#crashes--logs).
+
 ## Modpacks
 
-Nexus collections, your own categories, and mod list import/export. Needs a
+Nexus collections, your own tags, and mod list import/export. Needs a
 connected Nexus account for collections.
 
 - **Search collections**: search Cyberpunk 2077 collections and sort by most
@@ -160,12 +197,18 @@ connected Nexus account for collections.
   **Check for updates** asks Nexus for new revisions; **See what changed**
   shows what a revision adds, changes and drops, with one button to update.
   **Stop following** leaves its mods installed.
-- **Your categories**: add categories with a name and color, rename or
-  delete them. Assign them in Installed mods. They stay with a mod through
-  updates.
-- **Export mod list…** saves your mods, categories and followed collections
-  to a JSON file. **Import mod list…** reads one, adds its categories and
-  offers to get the mods you don't have.
+- **Your tags**: add tags with a name and color, rename them or change their
+  color, or delete them (a deleted tag comes off its mods; the mods stay
+  installed). Give mods tags in Installed mods; a mod can have several. Tags
+  stay with a mod through updates and can group the [graph](#graph). The
+  list shows how many mods have each tag. (Older versions had one "custom
+  category" per mod; those became tags automatically.)
+- **Export mod list…** saves your mods, tags and followed collections to a
+  JSON file. **Import mod list…** reads one, adds its tags (and gives your
+  installed mods the tags the list has for them, on top of the ones they
+  already have) and offers to get the mods you don't have. Mod lists exported
+  by older versions, with categories, still import: their categories become
+  tags.
 
 ## Netrunner
 
@@ -222,6 +265,16 @@ records and resources they touch, and the base game. Clashes are drawn in
 red.
 
 - **Layout**: *Web* (force layout) or *Flowchart* (left to right).
+- **Group by** gathers nodes into groups: *Node type* (mods, frameworks, game
+  classes, …), *Mod type* (what a mod's files are: Archive, Redscript,
+  TweakXL, CET, RED4ext plugin, REDmod, or a mix such as "Archive + CET"),
+  *Tag*, *Nexus category* or *Source* (Nexus, GitHub, installed by hand).
+  *Nothing* turns grouping off. In the web, each group gets a dashed ring
+  with its name and size; a mod with several tags sits between its tags'
+  rings and is counted in each. In the flowchart, each group gets a heading
+  in its column, and a mod with several tags is listed under its first tag.
+  Game parts (classes, records, resources) are only grouped by *Node type*.
+  Clicking a mod shows its tags in the details panel.
 - **Hide harmless hooks** hides hooks that several mods share without
   conflict.
 - Drag to pan, scroll or use the zoom bar (− / 100% / + / **Fit**), drag a
@@ -272,7 +325,9 @@ logs and Proton's `steam-1091500.log`.
   Respector, the old Material and Texture Override, KSUV and VTK together, two
   copies of Virtual Atelier, a `modlist.txt` that changes the archive load
   order, ReShade or OptiScaler files, more than about 460 mods, and a script
-  mod installed twice.
+  mod installed twice. With Ultra+ installed, mods the Ultra+ team lists as
+  conflicting with it show here too, with **Read more on the Ultra+ page**
+  (see [Ultra+ recommendations](#ultra-recommendations)).
 - **Errors and warnings from the last session** come first, each matched to
   the installed mod it mentions, with the time it was written. Known messages
   (for example `EXCEPTION_ACCESS_VIOLATION`, `Gpu Crash`, "Failed to resolve
@@ -504,6 +559,7 @@ logs are only readable from a fixed list of known locations.
 | Backed-up game files | `~/.local/share/cp2077-modmanager/backups/` |
 | Linux setup records and backups | `~/.local/share/cp2077-modmanager/setup/<game>/` |
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
+| Refreshed Ultra+ recommendations | In the library database (settings) |
 | Nexus API key | System keyring (Secret Service) only |
 
 On Windows the library folders are under `%APPDATA%\cp2077-modmanager\`,

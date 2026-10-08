@@ -1,0 +1,39 @@
+{
+  "_about": "Ultra+ (Nexus mod 10490) recommendations for Cyberpunk 2077, from the Ultra+ team's page https://theultraplace.com/games/cyberpunk2077/ (its source: gitlab.com/ultra-plus/ultraplus-wiki, _games/Cyberpunk2077.md, commit e50461d of 2026-10-07). The app can refresh the four site lists from that page; extra_conflicts and collection come only from this file. RedHotTools is from Ultra+'s own startup check (lib/Engine.lua, CheckIncompatibleMods), not the site.",
+  "checked": "2026-10-07",
+  "conflicts": [
+    { "nexus_mod_id": 16060, "name": "Disable Fake Lights with Path Tracing" },
+    { "nexus_mod_id": 29720, "name": "Ray Traced Lighting Fixes" },
+    { "nexus_mod_id": 28401, "name": "Reference Path Tracing" },
+    { "nexus_mod_id": 5082, "name": "Improved Vehicle Lights Draw Distance" },
+    { "nexus_mod_id": 8610, "name": "Faster Rainmap and Distant Shadows" }
+  ],
+  "recommended": [
+    { "nexus_mod_id": 27210, "name": "Draw Distance ReImagined" },
+    { "nexus_mod_id": 20405, "name": "General Shadows Fixes" },
+    { "nexus_mod_id": 20623, "name": "Improved Distant Shadows and Reflections" },
+    { "nexus_mod_id": 12700, "name": "Always Best Quality" },
+    { "nexus_mod_id": 4923, "name": "Improved Environment LODs" },
+    { "nexus_mod_id": 3627, "name": "Improved Vegetation LODs" },
+    { "nexus_mod_id": 11240, "name": "Not So Good Draw Distance" },
+    { "nexus_mod_id": 23091, "name": "The Nullifier", "note": "Important: set 'Fix Broken PT Lights' to disabled" }
+  ],
+  "ray_tracing": [
+    { "nexus_mod_id": 29720, "name": "Ray Traced Lighting Fixes" },
+    { "nexus_mod_id": 16060, "name": "Disable Fake Lights with Path Tracing" },
+    { "nexus_mod_id": 5082, "name": "Improved Vehicle Lights Draw Distance" }
+  ],
+  "required": [
+    { "nexus_mod_id": 107, "name": "Cyber Engine Tweaks (CET)" },
+    { "nexus_mod_id": 2380, "name": "RED4ext" }
+  ],
+  "extra_conflicts": [
+    {
+      "name": "RedHotTools",
+      "url": "https://github.com/psiberx/cp2077-red-hot-tools",
+      "paths": ["red4ext/plugins/RedHotTools"],
+      "note": "Ultra+ turns its V5 lighting off while RedHotTools is installed (both hook the same engine function)"
+    }
+  ],
+  "collection": { "slug": "eem6yz", "name": "Project Ultrapunk" }
+}

@@ -60,8 +60,9 @@
       </header>
       <div id="version-ribbon" class="ribbon hidden" role="tablist" aria-label="Game versions"></div>
       <div id="version-loadout" class="card hidden"></div>
+      <div id="ultraplus" class="card hidden"></div>
       <div class="row filters">
-        <select id="mods-category" class="inline" aria-label="Category"><option value="">All categories</option></select>
+        <select id="mods-category" class="inline" aria-label="Tag or category"><option value="">All tags and categories</option></select>
         <label class="check small" title="List what each mod needs under it: from its Nexus page and from the frameworks its files use">
           <input type="checkbox" id="show-deps"> Show dependencies</label>
         <span id="deps-note" class="muted small"></span>
@@ -72,7 +73,7 @@
         <thead><tr>
           <th title="Turn a mod off without uninstalling it">On</th>
           <th class="sortable" data-sort="name">Name</th>
-          <th class="sortable" data-sort="category">Category</th>
+          <th class="sortable" data-sort="category" title="Your tags, with the Nexus category under them">Tags &amp; category</th>
           <th class="sortable" data-sort="version">Mod version</th>
           <th class="sortable" data-sort="source">Source</th>
           <th>Files</th><th>Installed on game</th><th></th>
@@ -86,8 +87,8 @@
       <header>
         <h2>Modpacks</h2>
         <div class="row">
-          <button id="modlist-import" title="Read a mod list exported from CPMX2077: adds its categories and offers the mods you don't have">Import mod list…</button>
-          <button id="modlist-export" title="Save your mods, categories and followed collections to a JSON file">Export mod list…</button>
+          <button id="modlist-import" title="Read a mod list exported from CPMX2077: adds its tags and offers the mods you don't have">Import mod list…</button>
+          <button id="modlist-export" title="Save your mods, tags and followed collections to a JSON file">Export mod list…</button>
         </div>
       </header>
       <div id="modpacks-main">
@@ -103,11 +104,12 @@
             so it can tell you when the collection changes and which of its mods you're missing.</p>
         </section>
         <section class="card">
-          <h3>Your categories</h3>
-          <p class="muted">Sort your installed mods your own way. Pick a mod's category in the Installed mods tab;
-            categories stay with a mod through updates and go along when you export a mod list.</p>
+          <h3>Your tags</h3>
+          <p class="muted">Sort your installed mods your own way. A mod can have as many tags as you like: add them in the
+            Installed mods tab. Tags stay with a mod through updates, can group the graph in Netrunner, and go along when you
+            export a mod list.</p>
           <div class="row">
-            <input id="cat-name" maxlength="60" placeholder="New category, e.g. Visuals">
+            <input id="cat-name" maxlength="60" placeholder="New tag, e.g. Visuals">
             <input id="cat-color" type="color" value="#00f0ff" title="Color">
             <button id="cat-add">Add</button>
           </div>
@@ -193,6 +195,16 @@
               <select id="graph-layout">
                 <option value="force">Web</option>
                 <option value="flow">Flowchart (left to right)</option>
+              </select>
+            </label>
+            <label class="check">Group by
+              <select id="graph-group">
+                <option value="">Nothing</option>
+                <option value="type">Node type</option>
+                <option value="modtype">Mod type</option>
+                <option value="tag">Tag</option>
+                <option value="category">Nexus category</option>
+                <option value="source">Source</option>
               </select>
             </label>
             <label class="check"><input type="checkbox" id="graph-hide-hooks"> Hide harmless hooks</label>
@@ -508,5 +520,6 @@
   <script src="modpacks.js"></script>
   <script src="graph.js"></script>
   <script src="netrunner.js"></script>
+  <script src="ultraplus.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// Modpacks: Nexus collections the user follows, their own mod categories,
+// Modpacks: Nexus collections the user follows, their own mod tags,
 // mod list import/export, and the dependency rows under each installed mod.
 // Loaded after app.js and built from its helpers (el, $, busy, enqueue, …).
 // As there, nothing from Nexus or an imported file is inserted as HTML.
@@ -8,16 +8,16 @@ let depsByMod = null; // installed mod id -> { deps, required_by } while shown
 let showDeps = loadPref("showDeps", false);
 $("#show-deps").checked = showDeps;
 
-// Custom categories and dependencies for the mod list; called by loadMods.
+// Tags and dependencies for the mod list; called by loadMods.
 async function loadModExtras(refreshDeps = false) {
   if (!currentGame) return;
   const gameId = currentGame.id;
-  const [cats, deps] = await Promise.all([
-    invoke("custom_categories", { gameId }),
+  const [tags, deps] = await Promise.all([
+    invoke("mod_tags", { gameId }),
     showDeps ? invoke("mod_dependencies", { gameId, refresh: refreshDeps }) : null,
   ]);
   if (currentGame?.id !== gameId) return;
-  customCategories = cats;
+  modTags = tags;
   depsByMod = deps ? new Map(deps.mods.map((d) => [d.mod_id, d])) : null;
   const enabled = deps ? deps.mods.filter((d) => mods.some((m) => m.id === d.mod_id && m.status === "installed")) : [];
   const missing = missingDeps(enabled);
@@ -128,63 +128,81 @@ function dependencyAction(dep, after = loadMods) {
   return null;
 }
 
-// ---- your own categories --------------------------------------------------
+// ---- your own tags ---------------------------------------------------------
 const COLOR = /^#[0-9a-f]{6}$/i;
 
-// The category picker in a mod's row; nothing until the user makes one.
-function customCategoryPicker(m) {
-  const own = customCategories.categories;
+// After tags change: the mod list and, when grouped by tag, the graph.
+function tagsChanged() {
+  renderMods();
+  window.graphTagsChanged?.();
+}
+
+async function setModTags(m, tags) {
+  await invoke("set_mod_tags", { modId: m.id, tags });
+  if (tags.length) modTags.mods[m.id] = modTags.tags.map((t) => t.name).filter((n) => tags.includes(n));
+  else delete modTags.mods[m.id];
+  tagsChanged();
+}
+
+// A mod's tags as chips (× takes one off) and a picker to add one; nothing
+// until the user makes a tag.
+function tagEditor(m) {
+  const own = modTags.tags;
   if (!own.length) return null;
-  const current = customCategories.mods[m.id] || "";
-  const sel = el("select", { class: "inline cat-pick", "aria-label": `Your category for ${m.name}` },
-    el("option", { value: "" }, "—"), ...own.map((c) => el("option", { value: c.name }, c.name)));
-  sel.value = current;
-  const color = own.find((c) => c.name === current)?.color;
-  if (color && COLOR.test(color)) sel.style.borderLeftColor = color;
-  sel.addEventListener("change", () => busy(sel, async () => {
-    await invoke("set_mod_custom_category", { modId: m.id, category: sel.value || null });
-    if (sel.value) customCategories.mods[m.id] = sel.value;
-    else delete customCategories.mods[m.id];
-    renderMods();
-  }));
-  return sel;
+  const current = modTags.mods[m.id] || [];
+  const chips = current.map((name) => {
+    const color = own.find((t) => t.name === name)?.color;
+    const chip = el("span", { class: "tag-chip" }, name,
+      el("button", { class: "tag-remove", title: `Remove the tag ${name}`, "aria-label": `Remove the tag ${name} from ${m.name}`,
+        onclick: (e) => busy(e.target, () => setModTags(m, current.filter((t) => t !== name))) }, "×"));
+    if (color && COLOR.test(color)) chip.style.borderLeftColor = color;
+    return chip;
+  });
+  const left = own.filter((t) => !current.includes(t.name));
+  let add = null;
+  if (left.length) {
+    add = el("select", { class: "inline tag-add", "aria-label": `Add a tag to ${m.name}`, title: "Add a tag" },
+      el("option", { value: "" }, current.length ? "+" : "+ Tag"), ...left.map((t) => el("option", { value: t.name }, t.name)));
+    add.addEventListener("change", () => add.value && busy(add, () => setModTags(m, [...current, add.value])));
+  }
+  return el("div", { class: "tag-cell" }, ...chips, add);
 }
 
 async function renderCategories() {
   if (!currentGame) return;
-  customCategories = await invoke("custom_categories", { gameId: currentGame.id });
+  modTags = await invoke("mod_tags", { gameId: currentGame.id });
   const counts = {};
-  for (const name of Object.values(customCategories.mods)) counts[name] = (counts[name] || 0) + 1;
-  $("#cat-list").replaceChildren(...customCategories.categories.map((c) => categoryItem(c, counts[c.name] || 0)));
+  for (const names of Object.values(modTags.mods)) for (const n of names) counts[n] = (counts[n] || 0) + 1;
+  $("#cat-list").replaceChildren(...modTags.tags.map((c) => categoryItem(c, counts[c.name] || 0)));
 }
 
 function categoryItem(c, count) {
   const color = el("input", { type: "color", title: "Color", value: COLOR.test(c.color || "") ? c.color : "#8a8aa0" });
   color.addEventListener("change", () => busy(color, async () => {
-    await invoke("edit_custom_category", { name: c.name, newName: c.name, color: color.value });
+    await invoke("edit_tag", { name: c.name, newName: c.name, color: color.value });
     await renderCategories();
-    renderMods();
+    tagsChanged();
   }));
   const name = el("span", { class: "cat-name" }, c.name);
   const li = el("li", {}, color, name, el("span", { class: "muted small" }, `${count} mod${count === 1 ? "" : "s"}`),
     el("span", { class: "spacer" }),
     el("button", { class: "link inline", onclick: () => rename() }, "Rename"),
     el("button", { class: "link inline danger", onclick: (e) => busy(e.target, async () => {
-      const ok = await dialog.ask(`Delete the category “${c.name}”? Its ${count} mod${count === 1 ? "" : "s"} stay installed, just without a category.`,
-        { title: "Delete category", kind: "warning" });
+      const ok = await dialog.ask(`Delete the tag “${c.name}”? It comes off its ${count} mod${count === 1 ? "" : "s"}; they stay installed.`,
+        { title: "Delete tag", kind: "warning" });
       if (!ok) return;
-      await invoke("delete_custom_category", { name: c.name });
+      await invoke("delete_tag", { name: c.name });
       await renderCategories();
-      renderMods();
+      tagsChanged();
     }) }, "Delete"));
   function rename() {
     const input = el("input", { value: c.name, maxlength: 60, "aria-label": "New name" });
     const save = () => busy(input, async () => {
       if (input.value.trim() && input.value.trim() !== c.name) {
-        await invoke("edit_custom_category", { name: c.name, newName: input.value, color: c.color ?? null });
+        await invoke("edit_tag", { name: c.name, newName: input.value, color: c.color ?? null });
       }
       await renderCategories();
-      renderMods();
+      tagsChanged();
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") save();
@@ -198,11 +216,11 @@ function categoryItem(c, count) {
 
 async function addCategory() {
   const name = $("#cat-name").value;
-  if (!name.trim()) throw "Type a name for the category";
-  await invoke("add_custom_category", { name, color: $("#cat-color").value });
+  if (!name.trim()) throw "Type a name for the tag";
+  await invoke("add_tag", { name, color: $("#cat-color").value });
   $("#cat-name").value = "";
   await renderCategories();
-  renderMods();
+  tagsChanged();
 }
 $("#cat-add").addEventListener("click", (e) => busy(e.target, addCategory));
 $("#cat-name").addEventListener("keydown", (e) => {
@@ -216,7 +234,7 @@ $("#modlist-export").addEventListener("click", (e) => busy(e.target, async () =>
     filters: [{ name: "CPMX2077 mod list", extensions: ["json"] }] });
   if (!path) return;
   const n = await invoke("export_modlist", { gameId: currentGame.id, path });
-  toast(`Saved ${n} mod${n === 1 ? "" : "s"}, your categories and followed collections`);
+  toast(`Saved ${n} mod${n === 1 ? "" : "s"}, your tags and followed collections`);
 }));
 
 $("#modlist-import").addEventListener("click", (e) => busy(e.target, async () => {
@@ -237,8 +255,8 @@ function renderImport(r) {
     && sourceInfos.some((s) => s.id === m.source));
   const byHand = r.not_installed.filter((m) => !nexus.includes(m) && !other.includes(m));
   const names = (list) => list.map((m) => m.version ? `${m.name} ${m.version}` : m.name).join(", ");
-  const summary = [`Added ${r.categories_added} categor${r.categories_added === 1 ? "y" : "ies"}`,
-    `sorted ${r.assigned} of your mods into them`].join(" and ");
+  const summary = [`Added ${r.tags_added} tag${r.tags_added === 1 ? "" : "s"}`,
+    `tagged ${r.assigned} of your mods`].join(" and ");
   box.classList.remove("hidden");
   box.replaceChildren(el("div", { class: "card notice" },
     el("div", { class: "row" }, el("b", {}, "Mod list imported"), el("span", { class: "spacer" }),

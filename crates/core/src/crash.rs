@@ -588,7 +588,9 @@ pub fn analyze(db: &Db, game: &GameRow) -> Result<CrashReport> {
     });
 
     let session_lines: Vec<String> = issues.iter().filter(|i| i.last_session).map(|i| i.line.clone()).collect();
-    let known_issues = known_issues::check(&known_issues::Context { game_dir, mods: &infos, log_lines: &session_lines });
+    let mut known_issues = known_issues::check(&known_issues::Context { game_dir, mods: &infos, log_lines: &session_lines });
+    known_issues.extend(crate::ultraplus::known_issues(game_dir, &infos, &crate::ultraplus::saved(db)));
+    known_issues.sort_by_key(|i| i.severity);
     Ok(CrashReport { logs, issues, latest_crash, suspects, session, timeline, known_issues })
 }
 

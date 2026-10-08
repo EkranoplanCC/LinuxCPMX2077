@@ -123,17 +123,18 @@ CREATE TABLE IF NOT EXISTS collection_mods (
     PRIMARY KEY (game_id, slug, nexus_mod_id, nexus_file_id),
     FOREIGN KEY (game_id, slug) REFERENCES tracked_collections (game_id, slug) ON DELETE CASCADE
 );
--- The user's own mod categories, and which mod is in which. Mods are keyed
--- by where they came from (modpacks::mod_key), so a category survives
+-- The user's own mod tags, and which mod has which (several per mod). Mods
+-- are keyed by where they came from (modpacks::mod_key), so tags survive
 -- updates and reinstalls.
-CREATE TABLE IF NOT EXISTS custom_categories (
+CREATE TABLE IF NOT EXISTS tags (
     name     TEXT PRIMARY KEY COLLATE NOCASE,
     color    TEXT,
     position INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS mod_custom_categories (
-    mod_key  TEXT PRIMARY KEY,
-    category TEXT NOT NULL REFERENCES custom_categories (name) ON DELETE CASCADE ON UPDATE CASCADE
+CREATE TABLE IF NOT EXISTS mod_tags (
+    mod_key TEXT NOT NULL,
+    tag     TEXT NOT NULL REFERENCES tags (name) ON DELETE CASCADE ON UPDATE CASCADE,
+    PRIMARY KEY (mod_key, tag)
 );
 -- What a Nexus mod's page says it needs (JSON list of
 -- nexus_browse::Requirement), cached between runs.
@@ -340,6 +341,20 @@ impl Db {
             if !exists {
                 conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
             }
+        }
+        // Custom categories (one per mod) became tags (several per mod).
+        let old: bool =
+            conn.query_row("SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'custom_categories'", [], |r| r.get(0))?;
+        if old {
+            conn.execute_batch(
+                "BEGIN;
+                 INSERT OR IGNORE INTO tags (name, color, position) SELECT name, color, position FROM custom_categories;
+                 INSERT OR IGNORE INTO mod_tags (mod_key, tag)
+                   SELECT c.mod_key, t.name FROM mod_custom_categories c JOIN tags t ON t.name = c.category;
+                 DROP TABLE IF EXISTS mod_custom_categories;
+                 DROP TABLE custom_categories;
+                 COMMIT;",
+            )?;
         }
         Ok(Self { conn })
     }
@@ -808,6 +823,39 @@ fn map_file(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turns_custom_categories_into_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE custom_categories (name TEXT PRIMARY KEY COLLATE NOCASE, color TEXT, position INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE mod_custom_categories (mod_key TEXT PRIMARY KEY,
+                   category TEXT NOT NULL REFERENCES custom_categories (name) ON DELETE CASCADE ON UPDATE CASCADE);
+                 INSERT INTO custom_categories VALUES ('Visuals', '#ff0000', 0), ('Core', NULL, 1);
+                 INSERT INTO mod_custom_categories VALUES ('nexus:107', 'Core'), ('github:a/b', 'Visuals');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let tags: Vec<(String, Option<String>)> = db
+            .conn
+            .prepare("SELECT name, color FROM tags ORDER BY position")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(tags, [("Visuals".into(), Some("#ff0000".into())), ("Core".into(), None)]);
+        let n: i64 = db.conn.query_row("SELECT count(*) FROM mod_tags WHERE (mod_key, tag) IN (VALUES ('nexus:107', 'Core'), ('github:a/b', 'Visuals'))", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        let old: i64 = db.conn.query_row("SELECT count(*) FROM sqlite_master WHERE name LIKE '%custom_categories'", [], |r| r.get(0)).unwrap();
+        assert_eq!(old, 0, "old tables are gone");
+        drop(db);
+        Db::open(&path).unwrap();
+    }
 
     #[test]
     fn upgrades_a_v01_library() {
