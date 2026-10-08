@@ -231,7 +231,7 @@ pub(crate) fn timeline(cx: &Input) -> Vec<Step> {
             } else {
                 format!("{} while compiling, so none of the script mods loaded.", plural(errors.len(), "error", "errors"))
             };
-            s.fix = errors.iter().find_map(|i| i.fix.clone()).or(Some("Compile errors like these come from a mod built for another game or framework version, or one missing a requirement. Update the mods named here, or turn them off.".into()));
+            s.fix = errors.iter().find_map(|i| i.fix.clone()).or(Some("Compile errors like these come from a mod built for another game or framework version, or one missing a requirement. Update the mods named here, or disable them.".into()));
             for i in errors.iter().take(5) {
                 s.details.push(i.line.clone());
                 add_mods(&mut s, &i.mod_ids, &i.mod_names);
@@ -300,7 +300,7 @@ pub(crate) fn timeline(cx: &Input) -> Vec<Step> {
             step(id, title, Status::NotRun, "Not loaded, because RED4ext didn't run.")
         } else if !errors.is_empty() {
             let mut s = step(id, title, Status::Warning, format!("Loaded with {}.", plural(errors.len(), "error", "errors")));
-            s.fix = errors.iter().find_map(|i| i.fix.clone()).or(Some("The plugin logged errors naming these mods. Update them, or turn them off.".into()));
+            s.fix = errors.iter().find_map(|i| i.fix.clone()).or(Some("The plugin logged errors naming these mods. Update them, or disable them.".into()));
             for i in errors.iter().take(5) {
                 s.details.push(i.line.clone());
                 add_mods(&mut s, &i.mod_ids, &i.mod_names);
@@ -309,7 +309,7 @@ pub(crate) fn timeline(cx: &Input) -> Vec<Step> {
         } else if fresh {
             step(id, title, Status::Ok, "Loaded.")
         } else if known {
-            step(id, title, Status::Warning, "No log written during the last session, so loading is not confirmed.")
+            step(id, title, Status::Warning, "No log written during the last session; loading not confirmed.")
         } else {
             step(id, title, Status::Unknown, "No log yet.")
         };
