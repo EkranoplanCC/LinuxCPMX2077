@@ -15,6 +15,7 @@ pub mod game;
 pub mod game_versions;
 pub mod hash;
 pub mod install;
+pub mod known_issues;
 pub mod linux_setup;
 pub mod mcp;
 pub mod modpacks;
@@ -26,6 +27,7 @@ pub mod paths;
 pub mod secrets;
 pub mod sources;
 pub mod sso;
+pub mod startup;
 #[cfg(test)]
 mod testutil;
 pub mod updates;

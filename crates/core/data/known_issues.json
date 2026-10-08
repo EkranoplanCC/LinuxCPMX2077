@@ -1,0 +1,139 @@
+{
+  "_about": "Known problem mods and log messages, from the Cyberpunk 2077 modding wiki's troubleshooting pages (wiki.redmodding.org, for-mod-users/user-guide-troubleshooting, January 2026). Edit this file to add entries; no code change is needed. Paths are game-relative and matched without regard to case.",
+  "rules": [
+    {
+      "id": "cybercmd-with-red4ext",
+      "severity": "error",
+      "title": "cybercmd is installed together with RED4ext",
+      "explanation": "RED4ext has done cybercmd's job since version 1.13 (May 2023). The two can't be used together and can stop the game from starting.",
+      "fix": "Uninstall cybercmd. Keep RED4ext.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting",
+      "all": [
+        { "path": "red4ext/RED4ext.dll", "blame": false },
+        { "any": [ { "nexus_mod": 5176 }, { "name_in": ["bin/x64/plugins", "red4ext/plugins"], "contains": "cybercmd" } ] }
+      ]
+    },
+    {
+      "id": "ctd-helper",
+      "severity": "warning",
+      "title": "CTD Helper is installed",
+      "explanation": "This mod has been broken for a long time and doesn't work with the current game.",
+      "fix": "Uninstall CTD Helper.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#outdated-mods",
+      "all": [ { "nexus_mod": 5205 } ]
+    },
+    {
+      "id": "npcs-gone-wild",
+      "severity": "warning",
+      "title": "NPCs Gone Wild is installed",
+      "explanation": "Since game version 2.0 this mod causes missing characters, missing body parts and exploding limbs.",
+      "fix": "Uninstall NPCs Gone Wild.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#outdated-mods",
+      "all": [ { "nexus_mod": 1436 } ]
+    },
+    {
+      "id": "system-ex",
+      "severity": "warning",
+      "title": "System-Ex is installed",
+      "explanation": "System-Ex is no longer available and is badly outdated. Cyberware-Ex replaced it.",
+      "fix": "Uninstall System-Ex and use Cyberware-Ex (Nexus mod 9429) instead.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#outdated-mods",
+      "all": [ { "any": [ { "mod_name": "system-ex" }, { "name_in": ["r6/scripts", "red4ext/plugins", "archive/pc/mod"], "contains": "systemex" }, { "name_in": ["r6/scripts", "red4ext/plugins", "archive/pc/mod"], "contains": "system-ex" } ] } ]
+    },
+    {
+      "id": "respector",
+      "severity": "warning",
+      "title": "Respector is installed",
+      "explanation": "Respector is no longer available and is badly outdated. It still causes problems for people who have it.",
+      "fix": "Uninstall Respector.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#outdated-mods",
+      "all": [ { "any": [ { "mod_name": "respector" }, { "name_in": ["r6/scripts", "bin/x64/plugins/cyber_engine_tweaks/mods"], "contains": "respector" } ] } ]
+    },
+    {
+      "id": "old-mto",
+      "severity": "info",
+      "title": "The old Material and Texture Override is installed",
+      "explanation": "The old version of this mod is known to crash the game in Japantown. Most mods only list it as optional.",
+      "fix": "If you crash during play, remove it. If a mod really needs it, use the updated version (Nexus mod 25246).",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#known-issues",
+      "all": [ { "nexus_mod": 5266 } ]
+    },
+    {
+      "id": "two-body-frameworks",
+      "severity": "error",
+      "title": "Two body frameworks are installed (KSUV and VTK)",
+      "explanation": "Only one body framework can work at a time. Having both causes grey skin, clipping and missing body parts.",
+      "fix": "Keep either KSUV or VTK, not both, and use clothing refits made for that one.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#common-issues",
+      "all": [ { "nexus_mod": 3783 }, { "nexus_mod": 7054 } ]
+    },
+    {
+      "id": "virtual-atelier-twice",
+      "severity": "error",
+      "title": "Two versions of Virtual Atelier are installed",
+      "explanation": "Both the old virtual-atelier and the new virtual-atelier-full script folders exist. This breaks script compilation for every Atelier store.",
+      "fix": "Remove every Virtual Atelier file, then install the newest version once.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#redscript-compilation-error",
+      "all": [ { "path": "r6/scripts/virtual-atelier" }, { "path": "r6/scripts/virtual-atelier-full" } ]
+    },
+    {
+      "id": "modlist-txt",
+      "severity": "warning",
+      "title": "A modlist.txt file changes your archive load order",
+      "explanation": "When archive/pc/mod/modlist.txt exists, the game loads .archive mods in the order that file lists instead of by name. That makes conflicts hard to predict, and the wiki advises against it.",
+      "fix": "Delete archive/pc/mod/modlist.txt unless you created it on purpose.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/users-modding-cyberpunk-2077/load-order",
+      "all": [ { "path": "archive/pc/mod/modlist.txt" } ]
+    },
+    {
+      "id": "external-tools",
+      "severity": "info",
+      "title": "ReShade or OptiScaler files are in the game folder",
+      "explanation": "Frame generation, DLSS/FSR replacements and ReShade are a common cause of crashes and of the game not starting.",
+      "fix": "Remove them while you troubleshoot. Put them back once the game works.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting",
+      "all": [ { "any": [ { "path": "bin/x64/ReShade.ini" }, { "path": "bin/x64/reshade-shaders" }, { "path": "bin/x64/OptiScaler.ini" } ] } ]
+    },
+    {
+      "id": "too-many-mods",
+      "severity": "info",
+      "title": "You have a very large number of mods",
+      "explanation": "With more than about 460 mods the game can crash because of its analytics feature.",
+      "fix": "In the game's settings, turn off Enable Analytics.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting#known-issues",
+      "all": [ { "mod_count_over": 460 } ]
+    },
+    {
+      "id": "script-installed-twice",
+      "severity": "warning",
+      "title": "A script mod seems to be installed twice",
+      "explanation": "The script compiler reported that a mod adds a field that already exists. That usually means the same script mod is in two folders, often after its author renamed the folder.",
+      "fix": "Remove both copies and install the latest version once.",
+      "link": "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-users/user-guide-troubleshooting/finding-and-reading-log-files#field-with-this-name-is-already-defined",
+      "all": [ { "log_contains": "field with this name is already defined" } ]
+    }
+  ],
+  "explain": [
+    { "contains": "exception_access_violation", "meaning": "The game tried to read memory it couldn't. This usually means a broken mod file.", "fix": "Find the broken mod by turning off half your mods at a time." },
+    { "contains": "inaccessible data", "meaning": "The game tried to read memory it couldn't. This usually means a broken mod file.", "fix": "Find the broken mod by turning off half your mods at a time." },
+    { "contains": "integer overflow", "meaning": "Something made the game ask for more memory than it can use, usually a mod.", "fix": "Find the broken mod by turning off half your mods at a time." },
+    { "contains": "gpu crash", "meaning": "The graphics card driver crashed. This is rarely a script mod; graphics mods, overclocks and drivers are more likely.", "fix": "Turn off graphics mods and check your GPU driver." },
+    { "contains": "watchdog timeout", "meaning": "The game took too long to load something and stopped itself.", "fix": "Make sure the game is on an SSD. If it happens with mods only, find the mod by turning off half at a time." },
+    { "contains": "ensure your game is updated to patch", "meaning": "This RED4ext is newer than your game.", "fix": "Update the game." },
+    { "contains": "could not attach the hook for the main function", "meaning": "RED4ext couldn't hook into the game, usually because the game or a framework is out of date.", "fix": "Update the game and all six core frameworks." },
+    { "contains": "failed to resolve address for hash", "meaning": "A framework doesn't match your game version.", "fix": "Update the game and the core frameworks (RED4ext, ArchiveXL, TweakXL, Codeware, redscript, CET)." },
+    { "contains": "validatescripts.cpp", "meaning": "The compiled script cache is out of date or broken.", "fix": "Delete the r6/cache folder, verify the game files in your launcher, then reinstall redscript." },
+    { "contains": "corrupted or missing archives", "meaning": "One of your .archive mods is broken.", "fix": "Find it by turning off half of your archive mods at a time." },
+    { "contains": "corrupted or missing scripts", "meaning": "The game's own script files are missing or changed.", "fix": "Verify the game files in your launcher." },
+    { "contains": "tweakdb file", "meaning": "The game's TweakDB cache is missing or out of date.", "fix": "Copy r6/cache/tweakdb.bin (and tweakdb_ep1.bin if you have Phantom Liberty) into r6/cache/modded." },
+    { "contains": "redscript compilation has failed", "meaning": "One or more script mods don't compile, so none of the script mods load.", "fix": "Check the script errors below. Mods listed there may be outdated or missing a requirement." },
+    { "contains": "unresolved", "meaning": "A script mod uses something that doesn't exist, usually because a requirement is missing or the mod is outdated.", "fix": "Install the mod's requirements, or update the mod." },
+    { "contains": "this method replacement overwrites a previous annotation", "meaning": "Two script mods replace the same game function; only one of them works.", "fix": "Keep one of the two mods, or look for a compatibility patch." },
+    { "contains": "is incompatible with the current", "meaning": "This RED4ext plugin was built for a different game version.", "fix": "Update the mod that ships this plugin, or remove it until it's updated." }
+  ],
+  "noise": [
+    "failed to create record",
+    "[amm error] non-localized string found",
+    "invalid object handle"
+  ]
+}
