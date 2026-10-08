@@ -46,6 +46,9 @@ pub struct ModInfo {
     pub updated_timestamp: Option<i64>,
     pub created_timestamp: Option<i64>,
     pub uploaded_by: Option<String>,
+    /// The uploader's member account (for their mod list).
+    #[serde(default)]
+    pub user: Option<Member>,
     pub endorsement_count: Option<i64>,
     pub mod_downloads: Option<i64>,
     pub mod_unique_downloads: Option<i64>,
@@ -54,6 +57,12 @@ pub struct ModInfo {
     pub description: Option<String>,
     #[serde(default = "yes")]
     pub available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Member {
+    pub member_id: i64,
+    pub name: String,
 }
 
 fn yes() -> bool {

@@ -251,6 +251,7 @@
           <button data-source="nexus" class="active" role="tab">Nexus Mods</button>
         </div>
       </header>
+      <div id="nexus-progress" class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <div id="source-nexus">
       <div id="nxm-prompt" class="card finding info hidden">
         <p>Downloads you start on nexusmods.com in your normal browser don't reach CPMX2077 yet. Downloads from CPMX2077's own Nexus window work either way.</p>
@@ -318,6 +319,7 @@
           <div id="nexus-debug-list" class="req-list"></div>
         </details>
         <div id="nexus-list">
+          <div id="author-head" class="card row hidden"></div>
           <div class="row list-head">
             <p id="nexus-list-title" class="muted"></p>
             <span id="nexus-fresh" class="muted small"></span>
@@ -394,7 +396,7 @@
       </header>
       <p class="muted small">Saved in <span id="downloads-where" class="mono"></span>, one folder per mod.
         <button class="link inline" data-goto="settings">Change</button></p>
-      <div id="progress" class="hidden"><div id="progress-bar"></div><span id="progress-text"></span></div>
+      <div id="progress" class="progress hidden"><div class="progress-bar"></div><span class="progress-text"></span></div>
       <table class="tree">
         <thead><tr><th>Mod</th><th>Version</th><th>Game version</th><th>Source</th><th>Size</th><th>Verified</th><th></th></tr></thead>
         <tbody id="downloads-body"></tbody>

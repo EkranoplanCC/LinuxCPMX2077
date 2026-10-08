@@ -67,9 +67,9 @@ code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size:
 .badge.bad { color: var(--red); }
 .file { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
 .file:first-of-type { border-top: 0; }
-#progress { position: relative; height: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
-#progress-bar { height: 100%; width: 0; background: var(--cyan); opacity: .35; }
-#progress-text { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 10px; font-size: 12px; }
+.progress { position: relative; height: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0; background: var(--cyan); opacity: .35; }
+.progress-text { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 10px; font-size: 12px; }
 #toast { position: fixed; right: 20px; bottom: 20px; max-width: 460px; background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--cyan); padding: 12px 14px; border-radius: 4px; white-space: pre-wrap; }
 #toast.error { border-left-color: var(--red); }
 #game-info, .warnings li { overflow-wrap: anywhere; }
@@ -397,3 +397,20 @@ table.tree td.actions { white-space: nowrap; }
 .step-fix, .issue-hint { color: var(--muted); }
 .issue-hint { margin-top: 2px; }
 .step-badge { margin-left: 8px; padding: 1px 6px; font-size: 11px; background: var(--red); color: var(--bg); border-radius: 3px; }
+
+/* Get mods: download straight from a card, author lists. */
+div.mod-card { border: 1px solid var(--border); cursor: pointer; color: var(--text); }
+div.mod-card:hover, div.mod-card:focus-visible { border-color: var(--cyan); outline: none; }
+.thumb-wrap { position: relative; }
+.quick-dl { position: absolute; top: 8px; left: 8px; padding: 3px 9px; background: rgba(21, 21, 32, .9); font-size: 15px; line-height: 1.2; }
+.quick-menu { position: absolute; top: 40px; left: 8px; right: 8px; z-index: 3; display: flex; flex-direction: column; gap: 4px;
+  background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; padding: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
+.quick-menu > button:not(.link) { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 2px; }
+.quick-menu > button b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.quick-menu .link { margin: 0; align-self: flex-start; }
+.card-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: rgba(10, 10, 16, .85); }
+.card-progress .progress-bar { height: 100%; width: 0; background: var(--cyan); opacity: .45; }
+.card-progress .progress-text { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 8px; font-size: 11px; }
+button.link.author { padding: 0; margin: 0; font-size: inherit; }
+#author-head { align-items: baseline; }
+#author-head h3 { margin: 0; }

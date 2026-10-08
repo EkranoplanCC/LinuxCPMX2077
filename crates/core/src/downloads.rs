@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, DownloadRow};
 use crate::{Error, Result, paths};
@@ -266,6 +266,75 @@ pub fn row_channel(d: &DownloadRow) -> Channel {
         .unwrap_or_else(|| channel_of(&[d.version.as_deref(), Some(d.file_name.as_str())], false))
 }
 
+// ---- duplicates --------------------------------------------------------------
+
+/// One file at its source: the same key means the same download.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileKey {
+    Nexus { mod_id: i64, file_id: i64 },
+    Source { source: String, id: String, file: String },
+}
+
+impl FileKey {
+    pub fn matches(&self, d: &DownloadRow) -> bool {
+        match self {
+            FileKey::Nexus { mod_id, file_id } => {
+                (d.source.is_empty() || d.source == "nexus") && d.nexus_mod_id == Some(*mod_id) && d.nexus_file_id == Some(*file_id)
+            }
+            FileKey::Source { source, id, file } => {
+                d.source == *source && d.source_ref.as_deref() == Some(id) && d.source_file.as_deref() == Some(file)
+            }
+        }
+    }
+}
+
+/// The file is still on disk, whole: there, and as big as when it was saved.
+pub fn intact(d: &DownloadRow) -> bool {
+    std::fs::metadata(&d.path).is_ok_and(|m| m.is_file() && m.len() as i64 == d.size)
+}
+
+/// The copy of `key` already in the downloads, if one is still intact.
+/// `rows` come newest first, so the newest copy wins.
+pub fn existing<'a>(rows: &'a [DownloadRow], key: &FileKey) -> Option<&'a DownloadRow> {
+    rows.iter().find(|d| key.matches(d) && intact(d))
+}
+
+/// An intact download with exactly this content, other than the file at
+/// `except` (a file the same bytes came in under another name or id).
+pub fn same_content<'a>(rows: &'a [DownloadRow], sha256: &str, except: &Path) -> Option<&'a DownloadRow> {
+    if sha256.is_empty() {
+        return None;
+    }
+    rows.iter().find(|d| d.sha256.eq_ignore_ascii_case(sha256) && Path::new(&d.path) != except && intact(d))
+}
+
+/// Files being downloaded right now, so the same file isn't fetched twice
+/// at once (two clicks, or a click while the queue has it).
+#[derive(Debug, Default)]
+pub struct InFlight(std::sync::Mutex<std::collections::HashSet<FileKey>>);
+
+/// Holds a file's place in [`InFlight`] until dropped.
+pub struct InFlightGuard<'a> {
+    set: &'a InFlight,
+    key: FileKey,
+}
+
+impl InFlight {
+    pub fn begin(&self, key: FileKey) -> Result<InFlightGuard<'_>> {
+        if !self.0.lock().unwrap().insert(key.clone()) {
+            return Err(Error::Other("this file is already downloading".into()));
+        }
+        Ok(InFlightGuard { set: self, key })
+    }
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.set.0.lock().unwrap().remove(&self.key);
+    }
+}
+
 // ---- grouping --------------------------------------------------------------
 
 /// One version of a mod in the Downloads tab.
@@ -328,6 +397,76 @@ pub fn group(rows: Vec<DownloadRow>) -> Vec<DownloadGroup> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn keyed(id: i64, path: &Path, size: i64, sha: &str) -> DownloadRow {
+        DownloadRow {
+            id,
+            nexus_mod_id: Some(7),
+            nexus_file_id: Some(9),
+            file_name: "f.zip".into(),
+            path: path.to_string_lossy().into_owned(),
+            size,
+            sha256: sha.into(),
+            source: "nexus".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn existing_copy_is_found_only_while_it_is_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("7-9-f.zip");
+        std::fs::write(&path, b"hello").unwrap();
+        let key = FileKey::Nexus { mod_id: 7, file_id: 9 };
+        let rows = vec![keyed(2, &path, 5, "ab")];
+        assert_eq!(existing(&rows, &key).map(|d| d.id), Some(2));
+        assert!(existing(&rows, &FileKey::Nexus { mod_id: 7, file_id: 10 }).is_none(), "another file of the mod");
+        let github = FileKey::Source { source: "github".into(), id: "a/b".into(), file: "1".into() };
+        assert!(existing(&rows, &github).is_none());
+
+        std::fs::write(&path, b"hell").unwrap();
+        assert!(existing(&rows, &key).is_none(), "a cut-short file is downloaded again");
+        std::fs::remove_file(&path).unwrap();
+        assert!(existing(&rows, &key).is_none(), "a deleted file is downloaded again");
+    }
+
+    #[test]
+    fn source_keys_match_source_rows() {
+        let d = DownloadRow {
+            source: "github".into(),
+            source_ref: Some("psiberx/cp2077-archive-xl".into()),
+            source_file: Some("123".into()),
+            ..Default::default()
+        };
+        let key = |file: &str| FileKey::Source { source: "github".into(), id: "psiberx/cp2077-archive-xl".into(), file: file.into() };
+        assert!(key("123").matches(&d));
+        assert!(!key("124").matches(&d));
+        assert!(!FileKey::Nexus { mod_id: 0, file_id: 0 }.matches(&d));
+    }
+
+    #[test]
+    fn same_content_skips_the_new_file_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.zip");
+        let new = dir.path().join("new.zip");
+        std::fs::write(&old, b"hello").unwrap();
+        std::fs::write(&new, b"hello").unwrap();
+        let rows = vec![keyed(1, &old, 5, "ABCD")];
+        assert_eq!(same_content(&rows, "abcd", &new).map(|d| d.id), Some(1));
+        assert!(same_content(&rows, "abcd", &old).is_none(), "the same path is not a duplicate of itself");
+        assert!(same_content(&rows, "", &new).is_none());
+    }
+
+    #[test]
+    fn in_flight_blocks_a_second_download_until_the_first_ends() {
+        let set = InFlight::default();
+        let key = FileKey::Nexus { mod_id: 1, file_id: 2 };
+        let first = set.begin(key.clone()).unwrap();
+        assert!(set.begin(key.clone()).is_err());
+        assert!(set.begin(FileKey::Nexus { mod_id: 1, file_id: 3 }).is_ok());
+        drop(first);
+        assert!(set.begin(key).is_ok());
+    }
 
     fn row(id: i64, nexus: Option<i64>, name: &str, version: &str, path: &str) -> DownloadRow {
         DownloadRow {

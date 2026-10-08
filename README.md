@@ -161,8 +161,9 @@ Screenshots show sample data, with file locations blurred.
   endorsements, downloads or date (paged), and open Nexus' Trending, Latest
   added and Latest updated lists. A mod's page shows its description as plain
   text, stats and files grouped as on the website (old versions folded away),
-  with mods you already have marked “installed”. Adult-flagged mods are hidden
-  unless you turn them on in Settings.
+  with mods you already have marked “installed”. Click an author's name to list
+  all their mods. Adult-flagged mods are hidden unless you turn them on in
+  Settings.
 - **Nexus downloads**: Premium accounts download and install straight from a
   mod's file list. Free accounts click “Get from Nexus”: the file's page opens
   in a Nexus window inside the app, you sign in and click “Slow download”
@@ -171,7 +172,10 @@ Screenshots show sample data, with file locations blurred.
   download through its API, so that one click on their page is required. “Or
   use your browser” opens the page in your normal browser instead; the app
   offers to register itself as the `nxm://` handler first (also in
-  Settings). Pasting a mod URL, ID or `nxm://` link still works.
+  Settings). Pasting a mod URL, ID or `nxm://` link still works. The ⬇ button
+  on a mod's card offers its two newest main files, and the download's
+  progress shows right in Get mods. A file you already downloaded is never
+  fetched twice: the app installs the copy you have.
 - **GitHub as a second source**: the core frameworks (CET, RED4ext,
   redscript, ArchiveXL, TweakXL, Codeware) and many mods ship as GitHub
   releases. Switch “Get mods” to GitHub to search, or paste `owner/repo` or a
