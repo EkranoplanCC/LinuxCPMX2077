@@ -152,7 +152,8 @@ If the game crashes or a framework does not load, see
 [Troubleshooting](user-guide.md#troubleshooting).
 To watch what the app does step by step (API requests, downloads,
 extractions, files moved), tick *Debug mode* in **Settings**: the
-[debug terminal](user-guide.md#debug-terminal) opens.
+[debug terminal](user-guide.md#debug-terminal) opens at the foot of the
+sidebar. **Pop out** moves it to its own window.
 
 ## Next steps
 

@@ -857,13 +857,23 @@ fn open_debug_terminal(app: AppHandle) -> Result<()> {
         let _ = w.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, DEBUG_WINDOW, tauri::WebviewUrl::App("debug.html".into()))
         .title("CPMX2077 debug terminal")
         .inner_size(1000.0, 620.0)
         .min_inner_size(520.0, 300.0)
         .build()
         .map_err(|e| Error::Other(format!("could not open the debug terminal: {e}")))?;
+    let _ = window.set_focus();
     Ok(())
+}
+
+/// Close the debug terminal window and show it in the main window's sidebar.
+#[tauri::command]
+fn dock_debug_terminal(app: AppHandle) {
+    let _ = app.emit_to("main", "debug-dock", ());
+    if let Some(w) = app.get_webview_window(DEBUG_WINDOW) {
+        let _ = w.close();
+    }
 }
 
 #[derive(Serialize)]
@@ -1529,6 +1539,7 @@ fn main() {
             activity_clear,
             save_debug_log,
             open_debug_terminal,
+            dock_debug_terminal,
             nexus_cache_info,
             nexus_clear_cache,
             open_web_link,
