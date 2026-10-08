@@ -364,6 +364,20 @@ logs are only readable from a fixed list of known locations.
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
 | Nexus API key | System keyring (Secret Service) only |
 
+On Windows the library folders are under `%APPDATA%\cp2077-modmanager\`,
+saved Nexus pages under `%LOCALAPPDATA%\cp2077-modmanager\nexus\`, and the
+API key is in Windows Credential Manager.
+
+### Windows differences (preview)
+
+- The Game panel has no Linux setup items; the game runs natively.
+- Crash reports are read from `%LOCALAPPDATA%\REDEngine\ReportQueue`.
+- **Handle nxm:// links** in Settings writes a per-user registry entry.
+  Installing CPMX2077 doesn't take the links over from Vortex or Mod
+  Organizer on its own.
+- `.rar` archives are unpacked with the `tar.exe` built into Windows 10
+  and 11.
+
 ## Troubleshooting
 
 **CET or RED4ext doesn't start.** Almost always the Visual C++ runtime.

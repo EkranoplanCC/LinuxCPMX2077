@@ -27,6 +27,15 @@ For what every button does, see the [user guide](user-guide.md).
 The app keeps its library in `~/.local/share/cp2077-modmanager/`, so you can
 replace the AppImage with a newer one at any time without losing anything.
 
+**On Windows (preview)**: download `CPMX2077_<version>_x64-setup.exe` and run
+it. It installs for your user only, without admin rights. It isn't code-signed
+yet, so SmartScreen asks once: choose *More info*, then *Run anyway*. Steam,
+GOG Galaxy and Epic installs are found automatically, and step 5 below
+doesn't apply: the game runs natively, so there's nothing Linux-side to fix.
+If CET or RED4ext don't start, install the latest Microsoft Visual C++
+2015-2022 Redistributable (x64). The Windows build is still an early preview
+and hasn't been tried on a real Windows PC yet.
+
 ## 2. Check the game was found
 
 The **Game** panel on the left lists every Cyberpunk 2077 install it found in
