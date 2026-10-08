@@ -1,7 +1,8 @@
 # CPMX2077 user guide
 
 A reference for how CPMX2077 works and what each part of the window does.
-New here? Start with [Getting started](getting-started.md).
+New here? Start with [Getting started](getting-started.md). Screenshots
+show sample data, with file locations blurred.
 
 - [How it works](#how-it-works)
 - [Game panel](#game-panel)
@@ -95,6 +96,8 @@ The left-hand panel shows the install the rest of the app works on.
 
 ## Installed mods
 
+![The Installed mods tab with the game panel on the left](images/installed-mods.png)
+
 The list of mods CPMX2077 installed in the selected game.
 
 | Column / control | What it does |
@@ -157,6 +160,8 @@ connected Nexus account for collections.
 
 ## Netrunner
 
+![The top of the Netrunner tab: crashes and errors, compatibility, and the file map](images/netrunner.png)
+
 One place to see whether your setup is healthy (called Diagnostics in
 earlier versions). **Check again** reruns every check. The top of the
 tab summarises what needs attention: game setup problems, where the last
@@ -168,6 +173,8 @@ title (**Files**, **Graph**, **Compatibility**, **Crashes & logs**) jump to
 each section.
 
 ### File map
+
+![The file map showing the archive/pc/mod folder and which mod each file came from](images/file-map.png)
 
 Every file your mods put into the game, laid out like the game folder, in
 the style of a registry editor. Folders are on the left: click one to open
@@ -199,6 +206,8 @@ files or mods installed by hand.
 
 ### Graph
 
+![The graph in the Flowchart (left to right) layout](images/graph.png)
+
 How your mods connect: mods, the frameworks they need, game classes, tweak
 records and resources they touch, and the base game. Clashes are drawn in
 red.
@@ -225,6 +234,8 @@ resources are shown by hash. *What each mod changes* is a per-mod summary
 table. No AI is involved: this is a local index of the mods' files.
 
 ### Crashes & logs
+
+![Crashes & logs with the startup timeline and Start here on the step that failed](images/crashes.png)
 
 Reads the crash reports in the Proton prefix (`REDEngine/ReportQueue`), the
 CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs, per-mod CET
@@ -299,6 +310,8 @@ Browse and download mods. The switch at the top right picks the source:
 - Adult-flagged mods are hidden unless you turn them on in Settings.
 
 ### GitHub
+
+![Get mods switched to GitHub, showing the featured frameworks](images/get-mods-github.png)
 
 The core frameworks and many mods ship as GitHub releases.
 

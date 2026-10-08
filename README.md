@@ -1,18 +1,55 @@
 # CPMX2077
 
-CPMX2077 is a Linux-native mod manager for Cyberpunk 2077 running under Proton (Steam) or
-Heroic (GOG), shipped as an AppImage.
+**A Linux-native mod manager for Cyberpunk 2077**, for the game running under
+Proton (Steam) or Heroic (GOG). It finds your game, installs mods the way
+each one expects, keeps track of every file, and tells you which mod broke
+your game when something goes wrong.
 
-Download the AppImage from [Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases),
-make it executable (`chmod +x`) and run it. A Windows installer
-(`CPMX2077_<version>_x64-setup.exe`) is built too; see [Windows](#windows-preview).
+[![build](https://github.com/EkranoplanCC/LinuxCPMX2077/actions/workflows/build.yml/badge.svg)](https://github.com/EkranoplanCC/LinuxCPMX2077/actions/workflows/build.yml)
+[![latest release](https://img.shields.io/github/v/release/EkranoplanCC/LinuxCPMX2077?include_prereleases&label=release)](https://github.com/EkranoplanCC/LinuxCPMX2077/releases)
+[![license: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
+![Installed mods: every mod with its category, version, source and the game version it was installed on](docs/images/installed-mods.png)
+
+## Download
+
+Get the AppImage (`CPMX2077_<version>_amd64.AppImage`) from
+[Releases](https://github.com/EkranoplanCC/LinuxCPMX2077/releases), make it
+executable (`chmod +x`) and run it. Each release has a `SHA256SUMS` file to
+check the download against. A Windows installer
+(`CPMX2077_<version>_x64-setup.exe`) is built too; see
+[Windows](#windows-preview).
 
 - **New here?** Follow [Getting started](docs/getting-started.md): install,
   connect Nexus, set up the frameworks and Proton, and install your first mod.
 - **Reference:** the [user guide](docs/user-guide.md) explains how the app
   works and what every tab and button does, plus troubleshooting.
 
-![screenshot](docs/screenshot.png)
+## Highlights
+
+- **Installs mods properly**: FOMOD installers as an in-app wizard, REDmod,
+  CET, RED4ext, redscript, ArchiveXL and TweakXL layouts, loose files. Never
+  overwrites another mod's files without asking, and uninstalling puts back
+  what was there before.
+- **Fixes the Linux side for you**: the Visual C++ runtime in the Proton
+  prefix and the Steam launch options mods need, each with an Undo.
+- **Nexus Mods and GitHub in the app**: browse, download, verify and install,
+  with a download queue and update checks.
+- **Netrunner tab**: one place to see what's wrong. A file map of everything
+  mods installed, a graph of how mods connect, a compatibility check that
+  needs no AI, and crash and log analysis that names the mod behind an error.
+- **Safe downloads**: Nexus files must match the checksum Nexus knows for
+  them, GitHub files the SHA-256 GitHub publishes, and archives are unpacked
+  with zip-bomb and path checks.
+
+| | |
+|---|---|
+| ![Netrunner: a summary of crashes, log errors and compatibility problems](docs/images/netrunner.png) | ![File map: every file mods installed, by game folder, with the mod it came from and its status](docs/images/file-map.png) |
+| **Netrunner** sums up what needs attention. | **File map** shows which mod owns each file. |
+| ![Graph: mods, the frameworks they need and what they touch, as a flowchart with clashes in red](docs/images/graph.png) | ![Crashes and logs: the last game start step by step, with the first step that failed marked](docs/images/crashes.png) |
+| **Graph** shows how mods connect and where they clash. | **Crashes & logs** walks through the last start and marks where it broke. |
+
+Screenshots show sample data, with file locations blurred.
 
 ## What it does
 
@@ -243,5 +280,18 @@ and the Windows installer as a release with a SHA256SUMS file.
 
 ## Roadmap
 
-- A one-click list of the core frameworks from GitHub
 - Load order for `.archive` files
+- Applying a collection's own load order and settings files
+- Full Windows support
+
+## Contributing
+
+Bug reports and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md): run the tests and clippy before pushing,
+and update the user docs with every change users can see.
+
+## License and disclaimer
+
+CPMX2077 is free software under the [GNU GPL v3](LICENSE). It is a fan-made
+tool and is not made by, endorsed by or affiliated with CD PROJEKT RED or
+Nexus Mods. Cyberpunk 2077 is a trademark of CD PROJEKT S.A.
