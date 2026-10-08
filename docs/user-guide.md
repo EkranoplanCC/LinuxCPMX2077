@@ -1,7 +1,8 @@
 # CPMX2077 user guide
 
 A reference for how CPMX2077 works and what each part of the window does.
-New here? Start with [Getting started](getting-started.md).
+New here? Start with [Getting started](getting-started.md). Screenshots
+show sample data, with file locations blurred.
 
 - [How it works](#how-it-works)
 - [Game panel](#game-panel)
@@ -95,14 +96,17 @@ The left-hand panel shows the install the rest of the app works on.
 
 ## Installed mods
 
+![The Installed mods tab with the game panel on the left](images/installed-mods.png)
+
 The list of mods CPMX2077 installed in the selected game.
 
 | Column / control | What it does |
 |---|---|
 | **On** switch | Turns a mod off without uninstalling it: its files leave the game, whatever they replaced comes back, and a checked copy is kept. Turning it on puts them back without a download. Files the mod changed after install (its own settings) are kept. Disabled mods are left out of compatibility and crash checks. |
-| **Name / Category / Version / Source** | Click a heading to sort. The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
+| **Name / Category / Mod version / Source** | Click a heading to sort. **Mod version** is the mod's own version (the game version is under **Installed on game**). The category picker sets one of your own categories (see [Modpacks](#modpacks)); the Nexus category is shown under it. |
 | **Installed on game** | The game version when the mod went in. *game updated since* means the game has been patched since, so check the mod still works. |
 | **Update to …** | Appears when a newer file is available. *Switch to stable …* appears when you run a pre-release and a stable release is out. |
+| **Mod page** | Opens the mod's page in **Get mods** (description, files, requirements), for mods from Nexus or GitHub. From there **Open on nexusmods.com** opens the website. Not shown for mods installed from an archive on disk. |
 | **Verify** | Re-hashes the mod's files and reports missing, edited or overridden ones. |
 | **Uninstall** | Removes the mod and restores what it replaced. |
 
@@ -124,7 +128,11 @@ Above the list:
   `.reds`, ArchiveXL for `.xl`, …). Each is marked installed, turned off,
   already in the game folder, or missing, with a button to get it (**Turn
   on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
-  off-site requirements).
+  off-site requirements). The requirements come from each mod's Nexus page,
+  asked again once a day, so a requirement you have never installed still
+  shows up as missing. The line next to the checkbox counts what is missing
+  for your turned-on mods, and **Get missing (N)** queues all of it at once:
+  core frameworks from GitHub, everything else from Nexus.
 
 ## Modpacks
 
@@ -157,6 +165,8 @@ connected Nexus account for collections.
 
 ## Netrunner
 
+![The top of the Netrunner tab: crashes and errors, compatibility, and the file map](images/netrunner.png)
+
 One place to see whether your setup is healthy (called Diagnostics in
 earlier versions). **Check again** reruns every check. The top of the
 tab summarises what needs attention: game setup problems, where the last
@@ -168,6 +178,8 @@ title (**Files**, **Graph**, **Compatibility**, **Crashes & logs**) jump to
 each section.
 
 ### File map
+
+![The file map showing the archive/pc/mod folder and which mod each file came from](images/file-map.png)
 
 Every file your mods put into the game, laid out like the game folder, in
 the style of a registry editor. Folders are on the left: click one to open
@@ -199,6 +211,8 @@ files or mods installed by hand.
 
 ### Graph
 
+![The graph in the Flowchart (left to right) layout](images/graph.png)
+
 How your mods connect: mods, the frameworks they need, game classes, tweak
 records and resources they touch, and the base game. Clashes are drawn in
 red.
@@ -225,6 +239,8 @@ resources are shown by hash. *What each mod changes* is a per-mod summary
 table. No AI is involved: this is a local index of the mods' files.
 
 ### Crashes & logs
+
+![Crashes & logs with the startup timeline and Start here on the step that failed](images/crashes.png)
 
 Reads the crash reports in the Proton prefix (`REDEngine/ReportQueue`), the
 CET, RED4ext, ArchiveXL, TweakXL, Codeware and redscript logs, per-mod CET
@@ -292,7 +308,11 @@ Browse and download mods. The switch at the top right picks the source:
   mod page.
 - **Mod page**: description, stats, requirements and tags, and files grouped
   as on the website (old versions folded away). Mods you have are marked
-  installed. **Refresh** asks Nexus again instead of using the saved copy.
+  installed. Each Nexus requirement has a **You have** column (installed,
+  turned off, in the game folder, or missing) with a button to get or turn
+  on what you lack, and a line saying how many you're missing; **Get
+  missing** queues them all. This works before you install the mod, so you
+  can see what it will need. **Refresh** asks Nexus again instead of using the saved copy.
 - **Downloading a file**:
   - *Premium*: **Download & install** downloads through the API and
     installs.
@@ -323,6 +343,8 @@ Browse and download mods. The switch at the top right picks the source:
 - Adult-flagged mods are hidden unless you turn them on in Settings.
 
 ### GitHub
+
+![Get mods switched to GitHub, showing the featured frameworks](images/get-mods-github.png)
 
 The core frameworks and many mods ship as GitHub releases.
 

@@ -250,6 +250,8 @@ tr.dep button { padding: 2px 10px; font-size: 12px; margin: 0; }
 .mod-detail .requirements summary { margin-top: 0; }
 .req-table { width: 100%; margin-top: 8px; }
 .req-table th { text-align: left; }
+.req-table td.actions button { padding: 2px 10px; font-size: 12px; margin: 0; }
+.req-summary { margin: 8px 0 0; }
 .bbcode { overflow-wrap: anywhere; line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 14px 18px; }
 .bbcode h3, .bbcode h4, .bbcode h5 { color: var(--text); text-transform: none; font-size: 16px; margin: 12px 0 6px; }
 .bbcode blockquote { border-left: 3px solid var(--border); margin: 8px 0; padding: 4px 12px; color: var(--muted); }
