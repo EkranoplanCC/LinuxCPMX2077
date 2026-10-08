@@ -215,8 +215,8 @@ Screenshots show sample data, with file locations blurred.
   (or returns 429) until it resets, and pauses browsing when fewer than 25
   requests remain so downloads and checksum checks still work. Lists and mod
   pages are cached for a few minutes.
-- **Debug terminal**: Settings → *Debug mode* opens a terminal-style window
-  that streams every Nexus and GitHub API request and every operation on
+- **Debug terminal**: Settings → *Debug mode* opens a terminal, docked in
+  the sidebar or popped out into its own window, that streams every Nexus and GitHub API request and every operation on
   your machine (downloads, checksum checks, extractions, files copied,
   backed up, moved or deleted, Linux setup fixes), with filters, Copy and
   Save…. API keys and signed download links are never shown.

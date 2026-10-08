@@ -1355,6 +1355,7 @@ function setDebugMode(on) {
   $("#nexus-debug-mode").checked = on;
   $("#nexus-debug").classList.toggle("hidden", !on);
   $("#debug-terminal-side").classList.toggle("hidden", !on);
+  if (!on) showDock(false);
   clearInterval(debugTimer);
   debugTimer = null;
   if (on) {
@@ -1366,20 +1367,72 @@ function setDebugMode(on) {
   }
 }
 
+// ---- debug terminal: docked in the sidebar (default) or its own window ---
+let debugPlace = loadPref("debugPlace", "dock") === "window" ? "window" : "dock";
+let dockOpen = false;
+
+function showDock(on) {
+  dockOpen = on;
+  const box = $("#debug-dock");
+  box.classList.toggle("hidden", !on);
+  $("#sidebar").classList.toggle("has-dock", on);
+  $("#debug-terminal-side").classList.toggle("on", on);
+  // A fresh frame reads the whole log again; a hidden one isn't kept polling.
+  if (on && !box.querySelector("iframe")) box.append(el("iframe", { src: "debug.html?docked", title: "Debug terminal", allow: "clipboard-write" }));
+  if (!on) box.replaceChildren();
+}
+
+async function popOutDebugTerminal() {
+  try {
+    await invoke("open_debug_terminal");
+    showDock(false);
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+function openDebugTerminal() {
+  if (debugPlace === "window") popOutDebugTerminal();
+  else {
+    showDock(true);
+    savePref("debugDockHidden", false);
+  }
+}
+
+// Called by the docked terminal's Pop out and Hide buttons.
+window.cpmxDebugTerminal = {
+  popOut: popOutDebugTerminal,
+  hide: () => {
+    showDock(false);
+    savePref("debugDockHidden", true);
+  },
+};
+listen("debug-dock", () => {
+  showDock(true);
+  savePref("debugDockHidden", false);
+});
+
 $("#nexus-debug-mode").addEventListener("change", (e) => {
   setDebugMode(e.target.checked);
   if (e.target.checked) openDebugTerminal();
 });
-function openDebugTerminal() {
-  invoke("open_debug_terminal").catch((e) => toast(String(e), true));
-}
+$("#debug-place").value = debugPlace;
+$("#debug-place").addEventListener("change", (e) => {
+  debugPlace = e.target.value;
+  savePref("debugPlace", debugPlace);
+});
 for (const b of document.querySelectorAll("button.debug-open")) b.addEventListener("click", openDebugTerminal);
+$("#debug-terminal-side").addEventListener("click", () => {
+  if (debugPlace === "dock" && dockOpen) window.cpmxDebugTerminal.hide();
+  else openDebugTerminal();
+});
 $("#nexus-debug-clear").addEventListener("click", (e) => busy(e.target, async () => {
   await invoke("nexus_clear_requests");
   debugRequests = [];
   renderDebug();
 }));
 setDebugMode(debugMode);
+if (debugMode && debugPlace === "dock" && loadPref("debugDockHidden", false) !== true) showDock(true);
 
 async function refreshCacheInfo() {
   const c = await invoke("nexus_cache_info");
@@ -2526,6 +2579,62 @@ async function showLoadout() {
           el("td", {}, el("span", { class: `badge${m.change === "removed" ? " bad" : m.change === "same" ? "" : " ok"}` },
             m.change === "updated" ? `updated to ${m.now_version || "another file"}` : LABEL[m.change]))))))));
 }
+
+// ---- sidebar width ------------------------------------------------------
+// Drag the divider to resize the left menu; double-click resets it. A
+// dragged width is kept between launches; the docked debug terminal fills
+// whatever width the menu has.
+const SIDEBAR_MIN = 220, SIDEBAR_MAX = 640;
+function clampSidebar(px) {
+  // Leave the main area at least 360px however wide the menu is dragged.
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 360));
+  return Math.round(Math.min(max, Math.max(SIDEBAR_MIN, px)));
+}
+// null clears the user width, so the stylesheet default applies again.
+function setSidebarWidth(px, save = true) {
+  const root = document.documentElement.style;
+  if (px == null) root.removeProperty("--sidebar-width");
+  else root.setProperty("--sidebar-width", `${clampSidebar(px)}px`);
+  if (save) savePref("sidebarWidth", px == null ? null : clampSidebar(px));
+  $("#sidebar-resizer").setAttribute("aria-valuenow", Math.round($("#sidebar").getBoundingClientRect().width));
+}
+(() => {
+  const handle = $("#sidebar-resizer");
+  const current = () => $("#sidebar").getBoundingClientRect().width;
+  const saved = () => Number(loadPref("sidebarWidth", null)) || null;
+  handle.setAttribute("aria-valuemin", SIDEBAR_MIN);
+  handle.setAttribute("aria-valuemax", SIDEBAR_MAX);
+  setSidebarWidth(saved(), false);
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX, startW = current();
+    document.body.classList.add("resizing");
+    const move = (ev) => setSidebarWidth(startW + ev.clientX - startX, false);
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      document.body.classList.remove("resizing");
+      savePref("sidebarWidth", Math.round(current()));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  });
+  handle.addEventListener("dblclick", () => setSidebarWidth(null));
+  handle.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 50 : 10;
+    if (e.key === "ArrowLeft") setSidebarWidth(current() - step);
+    else if (e.key === "ArrowRight") setSidebarWidth(current() + step);
+    else if (e.key === "Home") setSidebarWidth(null);
+    else return;
+    e.preventDefault();
+  });
+  // A smaller window shrinks the menu if needed; the saved width is kept.
+  window.addEventListener("resize", () => setSidebarWidth(saved(), false));
+})();
 
 // ---- agent access ------------------------------------------------------
 $("#copy-mcp").addEventListener("click", async () => {

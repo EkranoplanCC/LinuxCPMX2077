@@ -22,8 +22,15 @@ h1 span { display: block; font-size: 11px; color: var(--cyan); letter-spacing: 4
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 0 0 8px; }
 main h2 { font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; margin: 0; }
 h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
-#sidebar { width: 290px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border); padding: 18px; overflow-y: auto; }
-main { flex: 1; overflow-y: auto; padding: 20px 26px; }
+#sidebar { width: var(--sidebar-width, 290px); flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border); padding: 18px; overflow-y: auto; }
+#sidebar-resizer {
+  flex: 0 0 6px; margin: 0 -3px; position: relative; z-index: 5; cursor: col-resize; touch-action: none;
+}
+#sidebar-resizer:hover, #sidebar-resizer:focus-visible, body.resizing #sidebar-resizer {
+  outline: none; background: linear-gradient(90deg, transparent 2px, var(--cyan) 2px, var(--cyan) 4px, transparent 4px);
+}
+body.resizing { cursor: col-resize; user-select: none; }
+main { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 26px; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--muted); }
@@ -47,6 +54,15 @@ nav { display: flex; flex-direction: column; gap: 4px; margin-top: 20px; }
 nav button { text-align: left; background: transparent; border-color: transparent; }
 nav button.active { border-left: 3px solid var(--yellow); background: var(--panel-2); }
 #debug-terminal-side { width: 100%; margin-top: 12px; text-align: left; font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace; color: var(--green); }
+#debug-terminal-side.on { border-color: #d2df45; color: #d2df45; }
+/* The docked debug terminal (debug.html in a frame) at the foot of the sidebar. */
+#debug-dock {
+  height: 380px; min-height: 180px; margin-top: 10px; resize: vertical; overflow: hidden;
+  border: 2px solid #9a9a9a; background: #000;
+}
+#debug-dock iframe { display: block; width: 100%; height: 100%; border: 0; }
+/* Keep the sidebar drag going when the pointer crosses the terminal frame. */
+body.resizing #debug-dock iframe { pointer-events: none; }
 .tab { display: none; }
 .tab.active { display: block; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }

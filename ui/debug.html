@@ -29,11 +29,14 @@
     </div>
   </section>
   <header id="bar">
+    <button id="filters-toggle" class="docked-only" aria-expanded="false">Filters</button>
+    <span id="groups">
     <label><input type="checkbox" data-group="api" checked> API</label>
     <label><input type="checkbox" data-group="download" checked> Downloads</label>
     <label><input type="checkbox" data-group="extract" checked> Extractions</label>
     <label><input type="checkbox" data-group="files" checked> File changes</label>
     <label><input type="checkbox" data-group="setup" checked> Setup &amp; summaries</label>
+    </span>
     <input id="filter" type="search" placeholder="Filter text…" spellcheck="false">
     <span class="spacer"></span>
     <label title="Keep the newest line in view"><input type="checkbox" id="follow" checked> Follow</label>
@@ -41,6 +44,9 @@
     <button id="copy">Copy</button>
     <button id="save">Save…</button>
     <button id="clear">Clear</button>
+    <button id="popout" class="docked-only" title="Open the terminal in its own window">Pop out</button>
+    <button id="hide" class="docked-only" title="Hide the terminal from the sidebar">Hide</button>
+    <button id="dock" class="window-only" title="Put the terminal back in the main window's sidebar">Dock</button>
   </header>
   <div id="out" role="log" aria-live="off"></div>
   <footer id="status"></footer>
