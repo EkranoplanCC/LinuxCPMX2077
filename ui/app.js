@@ -2580,8 +2580,7 @@ async function showLoadout() {
 
 // ---- sidebar width ------------------------------------------------------
 // Drag the divider to resize the left menu; double-click resets it. A
-// dragged width is kept between launches and wins over the default, which
-// is wider while the debug terminal is docked; the docked terminal fills
+// dragged width is kept between launches; the docked debug terminal fills
 // whatever width the menu has.
 const SIDEBAR_MIN = 220, SIDEBAR_MAX = 640;
 function clampSidebar(px) {

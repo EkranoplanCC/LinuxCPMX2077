@@ -80,9 +80,8 @@ The left-hand panel shows the install the rest of the app works on.
 To make the left-hand menu wider or narrower, drag the line between it and
 the main area left or right. The width is kept the next time you open the
 app, and a docked debug terminal fills whatever width you choose. Double-click
-the line to put it back to the default (wider while the debug terminal is
-docked). With the line
-selected (Tab to it), the left and right arrow keys also resize it.
+the line to put it back to the default. With the line selected (Tab to
+it), the left and right arrow keys also resize it.
 
 - **Game drop-down**: every install found. Steam libraries (native, Flatpak
   and Snap Steam) and Heroic's GOG installs are scanned. **Rescan** looks

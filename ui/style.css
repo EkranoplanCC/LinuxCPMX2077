@@ -56,13 +56,13 @@ nav button.active { border-left: 3px solid var(--yellow); background: var(--pane
 #debug-terminal-side { width: 100%; margin-top: 12px; text-align: left; font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace; color: var(--green); }
 #debug-terminal-side.on { border-color: #d2df45; color: #d2df45; }
 /* The docked debug terminal (debug.html in a frame) at the foot of the sidebar. */
-/* Wider while the terminal is docked, unless the user dragged a width. */
-#sidebar.has-dock { width: var(--sidebar-width, 360px); }
 #debug-dock {
   height: 380px; min-height: 180px; margin-top: 10px; resize: vertical; overflow: hidden;
   border: 2px solid #9a9a9a; background: #000;
 }
 #debug-dock iframe { display: block; width: 100%; height: 100%; border: 0; }
+/* Keep the sidebar drag going when the pointer crosses the terminal frame. */
+body.resizing #debug-dock iframe { pointer-events: none; }
 .tab { display: none; }
 .tab.active { display: block; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }
