@@ -71,6 +71,10 @@ make it executable (`chmod +x`) and run it. A Windows installer
   files use (redscript for `.reds`, ArchiveXL for `.xl`, …), marked
   installed, turned off, already in the game folder or missing, with a button
   to get what's missing, plus which mods need it.
+- **Ultra+ recommendations**: with the Ultra+ path tracing mod installed, a
+  card in Installed mods lists what the Ultra+ team's page recommends next to
+  it and what conflicts with it, marks what you have, and queues the missing
+  ones. Installed conflicts also show as known problems in Netrunner.
 - **Enable/disable** without uninstalling: switching a mod off takes its files
   out of the game (bringing back whatever they replaced) and keeps a checked
   copy, so switching it on again needs no re-download. Files the mod changed

@@ -152,4 +152,7 @@ If the game crashes or a framework does not load, see
   uninstalling them.
 - Click **Check for updates** in **Installed mods** now and then (it also
   runs at start-up).
+- Using Ultra+ for path tracing? Once it's installed, the **Ultra+
+  recommendations** card in **Installed mods** shows what its authors
+  recommend with it and what conflicts with it.
 - Read the [user guide](user-guide.md) for everything else.

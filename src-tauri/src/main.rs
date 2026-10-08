@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 mod modpacks_cmd;
+mod ultraplus_cmd;
 
 struct AppState {
     db: Mutex<Db>,
@@ -1389,6 +1390,8 @@ fn main() {
             modpacks_cmd::export_modlist,
             modpacks_cmd::import_modlist,
             modpacks_cmd::mod_dependencies,
+            ultraplus_cmd::ultraplus_report,
+            ultraplus_cmd::ultraplus_refresh,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

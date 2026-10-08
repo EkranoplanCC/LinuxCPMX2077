@@ -256,6 +256,7 @@ async function loadMods() {
   await loadVersionRibbon().catch(() => {});
   renderMods();
   showLoadout().catch(() => {});
+  loadUltraPlus().catch(() => {});
   refreshGame().catch(() => {});
 }
 
@@ -607,7 +608,7 @@ function knownIssueCard(k) {
     el("div", { class: "row" },
       k.mod_names.length ? el("span", { class: "muted" }, "Mods: " + k.mod_names.join(", ")) : null,
       graphButton(k.mod_ids, k.title),
-      docLink(k.link, ["Read more on the modding wiki"])));
+      docLink(k.link, [k.id.startsWith("ultraplus-") ? "Read more on the Ultra+ page" : "Read more on the modding wiki"])));
 }
 
 function renderTimeline(steps) {

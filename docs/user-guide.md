@@ -126,6 +126,42 @@ Above the list:
   on**, **Install** from GitHub, **Get from Nexus**, or **Open link** for
   off-site requirements).
 
+### Ultra+ recommendations
+
+When [Ultra+](https://www.nexusmods.com/cyberpunk2077/mods/10490) (the path
+tracing mod) is installed, through CPMX2077 or by hand or with Ultra+
+Manager, an **Ultra+ recommendations** card appears above the list. It shows
+what the Ultra+ team's
+[Cyberpunk page](https://theultraplace.com/games/cyberpunk2077/) lists, and
+where each mod stands in your game. The heading line sums it up (conflicting
+mods installed, how many recommended mods you have, and a missing
+requirement); click it to fold the card away.
+
+- **Conflicts with Ultra+ path tracing**: mods the Ultra+ team says don't
+  work with its path tracing. Ones you have are marked *installed* in red,
+  with **Turn off**. Also listed: RedHotTools, which Ultra+ itself checks for
+  at start-up because it turns Ultra+'s V5 lighting off.
+- **Recommended for path tracing and ray tracing**: mods the Ultra+ team
+  suggests alongside it, with notes such as The Nullifier's "set 'Fix Broken
+  PT Lights' to disabled". **Get** adds a missing one to the download queue,
+  **Turn on** switches one back on, and **Get all missing** queues them all.
+- **Also recommended for ray tracing only**: Ultra+ doesn't fix ray traced
+  lighting, so the Ultra+ team suggests these when you play with ray tracing.
+  Several of them are in the conflicts list too, since they don't belong in a
+  path tracing setup.
+- **Required** appears only when Cyber Engine Tweaks or RED4ext is missing.
+- **Refresh from Ultra+ page** reads the lists again from the Ultra+ team's
+  page (its public source on GitLab) and keeps them. Until you do, the card
+  uses a copy built into the app; the line under the heading says which.
+- **Open the Ultra+ page** opens the page in your browser. **Open Project
+  Ultrapunk modpack** opens the collection the page suggests instead of
+  adding mods one by one.
+
+*not installed* means CPMX2077 didn't install it; a mod you copied in by hand
+can't be told apart by name. Installed conflicts and the setting notes also
+show under **Known problems** in Netrunner's
+[Crashes & logs](#crashes--logs).
+
 ## Modpacks
 
 Nexus collections, your own categories, and mod list import/export. Needs a
@@ -250,7 +286,9 @@ logs and Proton's `steam-1091500.log`.
   Respector, the old Material and Texture Override, KSUV and VTK together, two
   copies of Virtual Atelier, a `modlist.txt` that changes the archive load
   order, ReShade or OptiScaler files, more than about 460 mods, and a script
-  mod installed twice.
+  mod installed twice. With Ultra+ installed, mods the Ultra+ team lists as
+  conflicting with it show here too, with **Read more on the Ultra+ page**
+  (see [Ultra+ recommendations](#ultra-recommendations)).
 - **Errors and warnings from the last session** come first, each matched to
   the installed mod it mentions, with the time it was written. Known messages
   (for example `EXCEPTION_ACCESS_VIOLATION`, `Gpu Crash`, "Failed to resolve
@@ -396,6 +434,7 @@ logs are only readable from a fixed list of known locations.
 | Backed-up game files | `~/.local/share/cp2077-modmanager/backups/` |
 | Linux setup records and backups | `~/.local/share/cp2077-modmanager/setup/<game>/` |
 | Saved Nexus pages | `~/.cache/cp2077-modmanager/nexus/` |
+| Refreshed Ultra+ recommendations | In the library database (settings) |
 | Nexus API key | System keyring (Secret Service) only |
 
 On Windows the library folders are under `%APPDATA%\cp2077-modmanager\`,

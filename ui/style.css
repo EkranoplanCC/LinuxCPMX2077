@@ -163,6 +163,12 @@ button.link { background: none; border: 0; color: var(--cyan); padding: 2px 0; m
 .mod-detail details summary { cursor: pointer; color: var(--muted); margin-top: 14px; }
 details.card summary { cursor: pointer; color: var(--muted); }
 details.card[open] summary { margin-bottom: 10px; }
+#ultraplus summary { cursor: pointer; }
+#ultraplus details[open] summary { margin-bottom: 10px; }
+#ultraplus .req-table { width: 100%; }
+#ultraplus td:first-child { width: 38%; }
+#ultraplus .badge, #ultraplus td.actions { white-space: nowrap; }
+#ultraplus td.actions { text-align: right; }
 
 /* Mods turned off without uninstalling. */
 tr.off td { color: var(--muted); }
