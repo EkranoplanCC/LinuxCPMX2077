@@ -257,7 +257,7 @@ fn not_a_game_mod(files: &[String]) -> String {
     if !files.is_empty() && files.iter().all(|f| DOCS.contains(&lower_ext(f).as_str())) {
         return "this download only has documents or pictures (instructions, previews), no game files".into();
     }
-    "unrecognised archive layout: no archive/, bin/, r6/ or red4ext/ folder and no .archive file, so the install location can't be determined".into()
+    "unrecognised archive layout: no archive/, bin/, r6/ or red4ext/ folder and no .archive file; install location can't be determined".into()
 }
 
 /// Where the game loads extra engine settings (`user.ini` and friends).

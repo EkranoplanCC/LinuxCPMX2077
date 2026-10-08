@@ -273,7 +273,7 @@ function renderImport(r) {
       el("button", { onclick: (e) => busy(e.target, async () => enqueue(other.map((m) => ({
         kind: "source", name: m.name, source: m.source, ref: m.source_ref,
       })))) }, `Get them (${other.length})`)) : null,
-    byHand.length ? el("p", { class: "muted" }, `No download source recorded (installed from a local archive), so get these yourself: ${names(byHand)}`) : null,
+    byHand.length ? el("p", { class: "muted" }, `No download source recorded (installed from a local archive); manual download required: ${names(byHand)}`) : null,
     ...r.collections.map((c) => el("div", { class: "row" },
       el("span", {}, `The list follows the collection ${c.name || c.slug}${c.revision ? ` (revision ${c.revision})` : ""}.`),
       el("button", { onclick: (e) => busy(e.target, () => showCollection(c.slug, c.revision ?? null)) }, "Open it")))));
@@ -516,7 +516,7 @@ function renderCollection(v) {
       }) }, `Turn on the ${plural(disabled.length, "mod")} you turned off`) : null),
     nexusUser.is_premium ? null : el("p", { class: "muted" },
       "Free account: the Nexus window opens each mod's file in turn. Click “Slow download” once per mod and the queue does the rest."),
-    c.external.length ? el("div", { class: "card notice" }, "Hosted outside Nexus, download these yourself: ", c.external.join(", ")) : null,
+    c.external.length ? el("div", { class: "card notice" }, "Hosted outside Nexus; manual download required: ", c.external.join(", ")) : null,
     el("p", { class: "muted" }, "Collections can also change load order and settings; only the mods themselves are installed here."),
     el("h3", {}, `Required (${required.length})`), ...required.map(row),
     optional.length ? el("details", {}, el("summary", {}, `Optional (${optional.length})`), ...optional.map(row)) : null));
