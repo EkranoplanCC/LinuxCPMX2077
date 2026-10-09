@@ -157,18 +157,22 @@
   // settles) the same way.
   function seed(list, near) {
     const mods = list.filter((n) => n.type === "mod"), rest = list.filter((n) => n.type !== "mod");
+    const fresh = new Set(list);
+    // An existing node each new one connects to, found in one pass.
+    const anchor = new Map();
+    if (near) for (const e of edges) {
+      if (fresh.has(e.a) && !fresh.has(e.b) && !anchor.has(e.a)) anchor.set(e.a, e.b);
+      if (fresh.has(e.b) && !fresh.has(e.a) && !anchor.has(e.b)) anchor.set(e.b, e.a);
+    }
     [...mods, ...rest].forEach((n, i) => {
       const r = 40 * Math.sqrt(i + 1), a = i * 2.39996;
       n.x = Math.cos(a) * r; n.y = Math.sin(a) * r;
       const t = groupTarget(n);
       if (t) { n.x = t.x + Math.cos(a) * 30; n.y = t.y + Math.sin(a) * 30; }
       // New nodes in an existing layout start next to what they connect to.
-      if (near) {
-        const e = edges.find((e) => (e.a === n && old(e.b)) || (e.b === n && old(e.a)));
-        if (e) { const o = e.a === n ? e.b : e.a; n.x = o.x + Math.cos(a) * 60; n.y = o.y + Math.sin(a) * 60; }
-      }
+      const o = anchor.get(n);
+      if (o) { n.x = o.x + Math.cos(a) * 60; n.y = o.y + Math.sin(a) * 60; }
     });
-    function old(n) { return !list.includes(n); }
   }
 
   // ---- groups ---------------------------------------------------------------
@@ -409,13 +413,17 @@
 
   // ---- view -----------------------------------------------------------------
   function rect() { return canvas.getBoundingClientRect(); }
+  // The canvas size, kept by resize(). Drawing converts tens of thousands of
+  // points a frame, and asking the page for the canvas box each time (a
+  // layout query) is what froze big graphs.
+  let box = { width: 0, height: 0 };
 
   function toScreen(p) {
-    const r = rect();
+    const r = box;
     return { x: r.width / 2 + (p.x + view.x) * view.k, y: r.height / 2 + (p.y + view.y) * view.k };
   }
   function toWorld(sx, sy) {
-    const r = rect();
+    const r = box;
     return { x: (sx - r.width / 2) / view.k - view.x, y: (sy - r.height / 2) / view.k - view.y };
   }
 
@@ -430,6 +438,7 @@
   // the canvas, left of the details panel.
   function fit(list = nodes) {
     const r = rect();
+    box = { width: r.width, height: r.height };
     if (!r.width || !r.height) { needsFit = true; return; }
     needsFit = false;
     if (!list.length) { view = { x: 0, y: 0, k: 1 }; updateZoom(); return; }
@@ -457,18 +466,20 @@
     view.x += after.x - before.x; view.y += after.y - before.y;
     userMoved = true;
     updateZoom();
-    draw();
+    requestDraw();
   }
   function zoomCenter(factor) {
     const r = rect();
     zoomAt(factor, r.width / 2, r.height / 2);
   }
   function updateZoom() {
-    zoomLabel.textContent = `${Math.round(view.k * 100)}%`;
+    const text = `${Math.round(view.k * 100)}%`;
+    if (zoomLabel.textContent !== text) zoomLabel.textContent = text;
   }
 
   function resize() {
     const r = rect();
+    box = { width: r.width, height: r.height };
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, r.width * dpr);
     canvas.height = Math.max(1, r.height * dpr);
@@ -545,8 +556,17 @@
     }
   }
 
+  // Input handlers ask for a frame instead of drawing on the spot: a
+  // touchpad or fast mouse sends dozens of events a frame, and drawing a big
+  // graph for each one queued up seconds of work.
+  let drawQueued = 0;
+  function requestDraw() {
+    if (!drawQueued) drawQueued = requestAnimationFrame(() => { drawQueued = 0; draw(); });
+  }
+
   function draw() {
-    const r = rect();
+    const r = box;
+    if (drawQueued) { cancelAnimationFrame(drawQueued); drawQueued = 0; }
     ctx.clearRect(0, 0, r.width, r.height);
     const focus = hover || selected;
     const near = focus ? neighbors(focus) : lit?.mods.size ? lit.near : null;
@@ -561,6 +581,9 @@
         ctx.fillText(h.label, p.x, p.y);
       }
     }
+    // Edges and web nodes are drawn in batches, one stroke or fill per
+    // style: a stroke per edge took most of each frame on big graphs.
+    const strokes = new Map(), edgeLabels = [];
     for (const e of edges) {
       let [a, b] = edgeEnds(e);
       if (Math.max(a.x, b.x) < 0 || Math.min(a.x, b.x) > r.width || Math.max(a.y, b.y) < 0 || Math.min(a.y, b.y) > r.height) continue;
@@ -574,60 +597,102 @@
         label = edgeEnds(e);
       }
       const bright = !near || (near.has(e.a) && near.has(e.b) && onFocus(e));
-      ctx.strokeStyle = e.conflict ? "rgba(255,77,94," + (bright ? 0.9 : 0.15) + ")" : "rgba(140,140,170," + (bright ? 0.55 : 0.08) + ")";
-      ctx.lineWidth = Math.min(4, 1 + Math.log2(e.weight || 1) * 0.5) * (e.conflict ? 1.4 : 1);
-      ctx.setLineDash(e.label === "requires" && !huge ? [4, 4] : []);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y);
-      if (flow) { const mx = (a.x + b.x) / 2; ctx.bezierCurveTo(mx, a.y, mx, b.y, b.x, b.y); } else ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      if (near && bright && view.k > 0.5) {
-        ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(232,232,240,.75)";
-        ctx.font = "11px system-ui, sans-serif";
-        ctx.fillText(e.label, (label[0].x + label[1].x) / 2 + 4, (label[0].y + label[1].y) / 2 - 4);
+      const color = e.conflict ? "rgba(255,77,94," + (bright ? 0.9 : 0.15) + ")" : "rgba(140,140,170," + (bright ? 0.55 : 0.08) + ")";
+      const width = Math.round(Math.min(4, 1 + Math.log2(e.weight || 1) * 0.5) * (e.conflict ? 1.4 : 1) * 2) / 2;
+      const dashed = e.label === "requires" && !huge;
+      const key = `${color}|${width}|${dashed}`;
+      if (!strokes.has(key)) strokes.set(key, { color, width, dashed, bright, conflict: e.conflict, segs: [] });
+      strokes.get(key).segs.push(a, b);
+      if (near && bright && view.k > 0.5) edgeLabels.push([e.label, (label[0].x + label[1].x) / 2 + 4, (label[0].y + label[1].y) / 2 - 4]);
+    }
+    // Dim lines first, bright and conflicting ones on top.
+    const order = [...strokes.values()].sort((x, y) => x.bright - y.bright || x.conflict - y.conflict);
+    for (const st of order) {
+      ctx.strokeStyle = st.color;
+      ctx.lineWidth = st.width;
+      ctx.setLineDash(st.dashed ? [4, 4] : []);
+      ctx.beginPath();
+      for (let i = 0; i < st.segs.length; i += 2) {
+        const a = st.segs[i], b = st.segs[i + 1];
+        ctx.moveTo(a.x, a.y);
+        if (flow) { const mx = (a.x + b.x) / 2; ctx.bezierCurveTo(mx, a.y, mx, b.y, b.x, b.y); } else ctx.lineTo(b.x, b.y);
       }
+      ctx.stroke();
     }
     ctx.setLineDash([]);
+    if (edgeLabels.length) {
+      ctx.fillStyle = "rgba(232,232,240,.75)";
+      ctx.font = "11px system-ui, sans-serif";
+      for (const [t, x, y] of edgeLabels) ctx.fillText(t, x, y);
+    }
+    if (flow) drawFlowNodes(r, focus, near);
+    else drawWebNodes(r, focus, near);
+  }
+
+  function drawFlowNodes(r, focus, near) {
     for (const n of nodes) {
       const p = toScreen(n);
       const dim = near && !near.has(n);
       const ring = n === selected || (!focus && lit?.mods.has(n));
-      if (flow) {
-        const w = n.w * view.k, h = n.h * view.k;
-        const x = p.x - w / 2, y = p.y - h / 2;
-        if (x > r.width || x + w < 0 || y > r.height || y + h < 0) continue;
-        ctx.globalAlpha = dim ? 0.2 : 1;
-        const solid = n.type === "mod" || n.type === "framework";
-        roundRect(x, y, w, h, Math.min(6, 6 * view.k));
-        ctx.fillStyle = solid ? COLORS[n.type] : "#151520";
-        ctx.fill();
-        ctx.lineWidth = n.missing ? 3 : ring ? 2.5 : 1.5;
-        ctx.strokeStyle = n.missing ? "#ff4d5e" : ring ? "#fff" : solid ? "rgba(0,0,0,.4)" : COLORS[n.type] || "#888";
-        ctx.stroke();
-        if (view.k * 12 >= 5) {
-          ctx.fillStyle = solid ? "#0a0a10" : "#e8e8f0";
-          ctx.font = font(n, 12 * view.k);
-          ctx.fillText(n.text, x + 10 * view.k, p.y + 4 * view.k);
-        }
-        badge(n, x + w, y, Math.max(3, Math.min(8, 7 * view.k)));
-      } else {
-        const rad = radius(n) * Math.max(0.6, Math.min(1.6, view.k));
-        if (p.x + rad + (n.tw || 0) + 10 < 0 || p.x - rad > r.width || p.y + rad < 0 || p.y - rad > r.height) continue;
-        ctx.globalAlpha = dim ? 0.2 : 1;
-        ctx.fillStyle = COLORS[n.type] || "#888";
-        ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, Math.PI * 2); ctx.fill();
-        if (n.missing) { ctx.strokeStyle = "#ff4d5e"; ctx.lineWidth = 3; ctx.stroke(); }
-        if (ring) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
-        const showLabel = (big(n) && view.k > 0.35) || n === focus || (near && near.has(n)) || view.k > 1.3;
-        if (showLabel) {
-          ctx.fillStyle = n.type === "mod" ? "#fff" : "#c8c8d8";
-          ctx.font = n.type === "mod" ? "600 12px system-ui, sans-serif" : "11px system-ui, sans-serif";
-          ctx.fillText(n.text, p.x + rad + 4, p.y + 4);
-        }
-        badge(n, p.x + rad * 0.75, p.y - rad * 0.75, Math.max(3.5, rad * 0.45));
+      const w = n.w * view.k, h = n.h * view.k;
+      const x = p.x - w / 2, y = p.y - h / 2;
+      if (x > r.width || x + w < 0 || y > r.height || y + h < 0) continue;
+      ctx.globalAlpha = dim ? 0.2 : 1;
+      const solid = n.type === "mod" || n.type === "framework";
+      roundRect(x, y, w, h, Math.min(6, 6 * view.k));
+      ctx.fillStyle = solid ? COLORS[n.type] : "#151520";
+      ctx.fill();
+      ctx.lineWidth = n.missing ? 3 : ring ? 2.5 : 1.5;
+      ctx.strokeStyle = n.missing ? "#ff4d5e" : ring ? "#fff" : solid ? "rgba(0,0,0,.4)" : COLORS[n.type] || "#888";
+      ctx.stroke();
+      if (view.k * 12 >= 5) {
+        ctx.fillStyle = solid ? "#0a0a10" : "#e8e8f0";
+        ctx.font = font(n, 12 * view.k);
+        ctx.fillText(n.text, x + 10 * view.k, p.y + 4 * view.k);
       }
+      badge(n, x + w, y, Math.max(3, Math.min(8, 7 * view.k)));
       ctx.globalAlpha = 1;
     }
+  }
+
+  function drawWebNodes(r, focus, near) {
+    const scale = Math.max(0.6, Math.min(1.6, view.k));
+    const fills = new Map(), shown = [];
+    for (const n of nodes) {
+      const p = toScreen(n);
+      const rad = radius(n) * scale;
+      if (p.x + rad + (n.tw || 0) + 10 < 0 || p.x - rad > r.width || p.y + rad < 0 || p.y - rad > r.height) continue;
+      const dim = !!(near && !near.has(n));
+      const key = `${COLORS[n.type] || "#888"}|${dim}`;
+      if (!fills.has(key)) fills.set(key, []);
+      fills.get(key).push(p.x, p.y, rad);
+      shown.push([n, p, rad, dim]);
+    }
+    for (const [key, list] of fills) {
+      const [color, dim] = key.split("|");
+      ctx.globalAlpha = dim === "true" ? 0.2 : 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (let i = 0; i < list.length; i += 3) { ctx.moveTo(list[i] + list[i + 2], list[i + 1]); ctx.arc(list[i], list[i + 1], list[i + 2], 0, Math.PI * 2); }
+      ctx.fill();
+    }
+    for (const [n, p, rad, dim] of shown) {
+      ctx.globalAlpha = dim ? 0.2 : 1;
+      const ring = n === selected || (!focus && lit?.mods.has(n));
+      if (n.missing || ring) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+        if (n.missing) { ctx.strokeStyle = "#ff4d5e"; ctx.lineWidth = 3; ctx.stroke(); }
+        if (ring) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+      }
+      const showLabel = (big(n) && view.k > 0.35) || n === focus || (near && near.has(n)) || view.k > 1.3;
+      if (showLabel) {
+        ctx.fillStyle = n.type === "mod" ? "#fff" : "#c8c8d8";
+        ctx.font = n.type === "mod" ? "600 12px system-ui, sans-serif" : "11px system-ui, sans-serif";
+        ctx.fillText(n.text, p.x + rad + 4, p.y + 4);
+      }
+      badge(n, p.x + rad * 0.75, p.y - rad * 0.75, Math.max(3.5, rad * 0.45));
+    }
+    ctx.globalAlpha = 1;
   }
 
   function rgba(hex, a) {
@@ -637,7 +702,7 @@
 
   // A ring around each group's nodes, with its name on top.
   function drawRings() {
-    const { width: w, height: h } = rect();
+    const { width: w, height: h } = box;
     const members = new Map();
     for (const n of nodes) for (const k of n.groups) (members.get(k) || members.set(k, []).get(k)).push(n);
     for (const [k, list] of members) {
@@ -721,7 +786,7 @@
       note.textContent = lit.mods.size ? "Click a node for details, or empty space to clear." : "None of these mods are in the graph (disabled or uninstalled).";
       const clear = document.createElement("button");
       clear.textContent = "Clear";
-      clear.addEventListener("click", () => { lit = null; showInfo(selected); draw(); });
+      clear.addEventListener("click", () => { lit = null; showInfo(selected); requestDraw(); });
       info.replaceChildren(heading(lit.label), ul, note, clear);
       return;
     }
@@ -813,12 +878,12 @@
       } else {
         view.x = drag.vx + dx / view.k; view.y = drag.vy + dy / view.k;
       }
-      draw();
+      requestDraw();
       return;
     }
     if (ev.target !== canvas) return;
     const n = nodeAt(ev.clientX - r.left, ev.clientY - r.top);
-    if (n !== hover) { hover = n; canvas.classList.toggle("over-node", !!n); draw(); }
+    if (n !== hover) { hover = n; canvas.classList.toggle("over-node", !!n); requestDraw(); }
   });
   function endDrag(click) {
     if (!drag) return;
@@ -826,14 +891,14 @@
       selected = drag.node;
       if (!selected) lit = null;
       showInfo(selected);
-      draw();
+      requestDraw();
     }
     drag = null;
     canvas.classList.remove("dragging");
   }
   window.addEventListener("mouseup", () => endDrag(true));
   window.addEventListener("blur", () => endDrag(false));
-  canvas.addEventListener("mouseleave", () => { hover = null; draw(); });
+  canvas.addEventListener("mouseleave", () => { hover = null; requestDraw(); });
   canvas.addEventListener("wheel", (ev) => {
     ev.preventDefault();
     const r = rect();
@@ -846,7 +911,7 @@
   document.getElementById("graph-zoom-in").addEventListener("click", () => zoomCenter(1.25));
   document.getElementById("graph-zoom-out").addEventListener("click", () => zoomCenter(1 / 1.25));
   zoomLabel.addEventListener("click", () => zoomCenter(1 / view.k));
-  document.getElementById("graph-fit").addEventListener("click", () => { userMoved = false; fit(); draw(); });
+  document.getElementById("graph-fit").addEventListener("click", () => { userMoved = false; fit(); requestDraw(); });
   document.getElementById("graph-hide-hooks").addEventListener("change", () => lastReport && build(lastReport, true));
   layoutPick.addEventListener("change", () => {
     layout = layoutPick.value === "flow" ? "flow" : "force";
@@ -900,7 +965,7 @@
       userMoved = true;
     }
     showInfo(null);
-    draw();
+    requestDraw();
   };
 
   window.showGraph = (report, crash) => {

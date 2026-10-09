@@ -377,8 +377,9 @@ red.
   conflict.
 - Drag to pan, scroll or use the zoom bar (− / 100% / + / **Fit**), drag a
   node to move it, click a node for its details. **Re-layout** starts over.
-- Large libraries (several thousand nodes) stay responsive: far-off groups
-  of nodes are counted together while the web layout settles. If the graph
+- Large libraries (several thousand nodes) stay responsive: zooming and
+  panning redraw at most once per screen refresh, and far-off groups of
+  nodes are counted together while the web layout settles. If the graph
   stops drawing, it says so in red and the error is listed in the
   [debug terminal](#debug-terminal).
 
