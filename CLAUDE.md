@@ -73,6 +73,13 @@ Things that span several files:
 
 ## Rules for changes
 
+### Working rules
+
+- When something is unclear, ask the user instead of guessing.
+- Check your work before calling it done. Step back and ask whether the
+  change makes sense for the app as a whole, and whether it is intuitive for
+  players and efficient.
+
 ### Security of downloads and installs
 
 The guarantees listed under "Download safety" in `README.md` (magic-byte
